@@ -1,0 +1,48 @@
+@import url("https://fonts.googleapis.com/css2?family=DM+Sans:wght@400;500;700&family=Space+Grotesk:wght@500;600;700&display=swap");
+@import "tailwindcss";
+
+:root {
+  --background: #f8fafc;
+  --foreground: #1e293b;
+  --panel: #ffffff;
+  --panel-muted: #f1f5f9;
+  --border: #dbe3ee;
+  --primary: #475569;
+  --secondary: #64748b;
+  --cta: #2563eb;
+  --success: #0f766e;
+  --warning: #b45309;
+  --danger: #b91c1c;
+}
+
+* {
+  box-sizing: border-box;
+}
+
+html {
+  min-width: 320px;
+  background: var(--background);
+}
+
+body {
+  min-height: 100vh;
+  margin: 0;
+  background:
+    linear-gradient(180deg, rgba(37, 99, 235, 0.08), transparent 280px),
+    var(--background);
+  color: var(--foreground);
+  font-family: "DM Sans", ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+}
+
+button,
+a {
+  -webkit-tap-highlight-color: transparent;
+}
+
+::selection {
+  background: rgba(37, 99, 235, 0.18);
+}
+
+.font-heading {
+  font-family: "Space Grotesk", "DM Sans", ui-sans-serif, system-ui, sans-serif;
+}
