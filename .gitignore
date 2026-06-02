@@ -29,3 +29,6 @@ Thumbs.db
 .turbo/
 .cache/
 *.tsbuildinfo
+
+# Local research artifacts
+.firecrawl/
