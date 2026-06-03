@@ -50,6 +50,26 @@ interface TemplateItem {
   icon: LucideIcon;
 }
 
+type SessionHistoryStatus = "进行中" | "已完成";
+type SessionHistoryFilter = "全部" | SessionHistoryStatus;
+
+interface WorkflowSnapshotItem {
+  id: string;
+  title: string;
+  status: SessionHistoryStatus;
+  updatedAt: string;
+  summary: string;
+  artifactCount: number;
+  approvalCount: number;
+  contextCount: number;
+  lastAction: string;
+  mode: AppMode;
+  tags: string[];
+  icon: LucideIcon;
+}
+
+type SessionHistoryItem = WorkflowSnapshotItem;
+
 type ArtifactState = "计划中" | "排队中" | "草稿" | "可复用" | "待复核";
 type ArtifactFilter = "全部" | "草稿" | "可复用";
 
@@ -154,6 +174,67 @@ const templates: TemplateItem[] = [
     prompt:
       "请仅基于我提供的上下文回答问题。如果上下文不足，请说明缺少什么，并只追问最少必要信息。\n\n问题：\n上下文：\n",
     icon: FileText
+  }
+];
+
+const sessionHistoryFilters: SessionHistoryFilter[] = ["全部", "进行中", "已完成"];
+
+const sessionHistoryItems: SessionHistoryItem[] = [
+  {
+    id: "daily-weekly-report-risk",
+    title: "周报与风险同步",
+    status: "进行中",
+    updatedAt: "今天 11:20",
+    summary: "已把项目简报、会议记录和团队备忘合并成周报骨架，风险段落还需要补齐负责人和截止时间。",
+    artifactCount: 2,
+    approvalCount: 1,
+    contextCount: 3,
+    lastAction: "继续补齐风险说明，并把待复核会议结论标记为需要确认。",
+    mode: "daily_work",
+    tags: ["周报", "风险", "待复核"],
+    icon: CalendarClock
+  },
+  {
+    id: "daily-customer-email",
+    title: "客户更新邮件",
+    status: "进行中",
+    updatedAt: "今天 09:55",
+    summary: "已根据客户邮件整理交付时间线和范围变化说明，外发语气仍需审批后再润色。",
+    artifactCount: 1,
+    approvalCount: 2,
+    contextCount: 2,
+    lastAction: "确认外发授权边界，再生成克制专业的客户版回复。",
+    mode: "daily_work",
+    tags: ["客户沟通", "审批", "邮件"],
+    icon: Mail
+  },
+  {
+    id: "daily-meeting-summary",
+    title: "例会纪要压缩",
+    status: "已完成",
+    updatedAt: "昨天 18:10",
+    summary: "会议记录已压缩为可分享摘要，保留关键决策、负责人、开放问题和审批追踪。",
+    artifactCount: 3,
+    approvalCount: 1,
+    contextCount: 2,
+    lastAction: "将最终纪要复制到项目同步渠道，并保留上下文来源说明。",
+    mode: "daily_work",
+    tags: ["会议纪要", "可复用", "决策"],
+    icon: Presentation
+  },
+  {
+    id: "daily-research-brief",
+    title: "资料研究简报",
+    status: "已完成",
+    updatedAt: "周一 16:40",
+    summary: "公开资料已整理为研究简报，结论、引用依据和仍需验证的问题已经分组。",
+    artifactCount: 2,
+    approvalCount: 0,
+    contextCount: 1,
+    lastAction: "把可引用依据同步到简报，并在下一轮补充二次验证结论。",
+    mode: "daily_work",
+    tags: ["研究", "公开资料", "引用"],
+    icon: Search
   }
 ];
 
@@ -388,6 +469,11 @@ export default function Page() {
   const [input, setInput] = useState("");
   const [status, setStatus] = useState<ChatStatus>("idle");
   const [error, setError] = useState<string | null>(null);
+  const [sessionHistoryFilter, setSessionHistoryFilter] =
+    useState<SessionHistoryFilter>("全部");
+  const [selectedSessionHistoryId, setSelectedSessionHistoryId] = useState<
+    string | null
+  >(sessionHistoryItems[0]?.id ?? null);
   const [selectedContextId, setSelectedContextId] = useState<string | null>(null);
   const [selectedArtifactId, setSelectedArtifactId] = useState<string | null>(
     artifacts[0]?.id ?? null
@@ -418,6 +504,20 @@ export default function Page() {
 
     return selectedInFilter ?? filteredArtifacts[0] ?? artifacts[0] ?? null;
   }, [filteredArtifacts, selectedArtifactId]);
+  const filteredSessionHistory = useMemo(
+    () =>
+      sessionHistoryFilter === "全部"
+        ? sessionHistoryItems
+        : sessionHistoryItems.filter((item) => item.status === sessionHistoryFilter),
+    [sessionHistoryFilter]
+  );
+  const selectedSessionHistory = useMemo(() => {
+    const selectedInFilter = filteredSessionHistory.find(
+      (item) => item.id === selectedSessionHistoryId
+    );
+
+    return selectedInFilter ?? filteredSessionHistory[0] ?? sessionHistoryItems[0] ?? null;
+  }, [filteredSessionHistory, selectedSessionHistoryId]);
 
   async function handleSubmit(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
@@ -529,6 +629,11 @@ export default function Page() {
   function applyPrompt(prompt: string) {
     setInput(prompt);
     inputRef.current?.focus();
+  }
+
+  function restoreSessionHistory(item: SessionHistoryItem) {
+    setSelectedSessionHistoryId(item.id);
+    applyPrompt(buildSessionRestorePrompt(item));
   }
 
   function useContextItem(item: ContextItem) {
@@ -671,6 +776,168 @@ export default function Page() {
                   text="把最新资料整理成简报，指出已知信息、缺口和建议下一步。"
                   onClick={applyPrompt}
                 />
+              </div>
+
+              <div className="rounded-[8px] border border-teal-100 bg-teal-50 p-3">
+                <div className="flex flex-col gap-3 md:flex-row md:items-start md:justify-between">
+                  <div className="min-w-0">
+                    <div className="flex items-center gap-2 text-sm font-semibold text-teal-950">
+                      <Workflow className="size-4 shrink-0 text-teal-700" aria-hidden="true" />
+                      <span className="min-w-0 break-words">最近工作流 / 会话历史</span>
+                    </div>
+                    <p className="mt-1 text-xs leading-5 text-teal-700">
+                      本地示例摘要，帮助你从日常工作会话的上次状态继续，不连接真实存储。
+                    </p>
+                  </div>
+
+                  <div
+                    className="flex shrink-0 flex-wrap gap-2"
+                    aria-label="会话历史筛选"
+                  >
+                    {sessionHistoryFilters.map((filter) => {
+                      const isActive = sessionHistoryFilter === filter;
+
+                      return (
+                        <button
+                          key={filter}
+                          type="button"
+                          aria-pressed={isActive}
+                          onClick={() => setSessionHistoryFilter(filter)}
+                          className={cn(
+                            "inline-flex min-h-8 cursor-pointer items-center gap-1.5 rounded-[8px] border px-2.5 py-1 text-xs font-medium transition-colors duration-200 focus-visible:outline focus-visible:outline-2 focus-visible:outline-teal-600",
+                            isActive
+                              ? "border-teal-600 bg-teal-600 text-white"
+                              : "border-teal-100 bg-white text-teal-700 hover:border-teal-300 hover:bg-teal-50"
+                          )}
+                        >
+                          <span>{filter}</span>
+                          <span
+                            className={cn(
+                              "rounded-[999px] px-1.5 py-0.5 text-[10px]",
+                              isActive
+                                ? "bg-white/20 text-white"
+                                : "bg-teal-50 text-teal-700"
+                            )}
+                          >
+                            {sessionHistoryFilterCount(filter)}
+                          </span>
+                        </button>
+                      );
+                    })}
+                  </div>
+                </div>
+
+                <div className="mt-3 grid gap-3 xl:grid-cols-[minmax(0,1.1fr)_minmax(0,0.9fr)]">
+                  <div className="space-y-2">
+                    {filteredSessionHistory.map((item) => {
+                      const Icon = item.icon;
+                      const isSelected = selectedSessionHistory?.id === item.id;
+
+                      return (
+                        <button
+                          key={item.id}
+                          type="button"
+                          onClick={() => restoreSessionHistory(item)}
+                          className={cn(
+                            "flex w-full cursor-pointer items-start gap-3 rounded-[8px] border px-3 py-3 text-left transition-colors duration-200 focus-visible:outline focus-visible:outline-2 focus-visible:outline-teal-600",
+                            isSelected
+                              ? "border-teal-400 bg-white shadow-sm"
+                              : "border-teal-100 bg-white hover:border-teal-300 hover:bg-teal-50"
+                          )}
+                        >
+                          <span className="mt-0.5 grid size-9 shrink-0 place-items-center rounded-[8px] bg-white text-teal-700 ring-1 ring-teal-100">
+                            <Icon className="size-4" aria-hidden="true" />
+                          </span>
+                          <span className="min-w-0 flex-1">
+                            <span className="flex flex-wrap items-start justify-between gap-2">
+                              <span className="min-w-0">
+                                <span className="block break-words text-sm font-medium text-teal-950">
+                                  {item.title}
+                                </span>
+                                <span className="mt-0.5 block break-words text-[11px] leading-4 text-teal-700">
+                                  {item.updatedAt} / {item.mode}
+                                </span>
+                              </span>
+                              <SessionStatusPill status={item.status} />
+                            </span>
+                            <span className="mt-2 block break-words text-xs leading-5 text-slate-700">
+                              {item.summary}
+                            </span>
+                            <span className="mt-2 block break-words text-[11px] leading-4 text-orange-700">
+                              上次动作：{item.lastAction}
+                            </span>
+                          </span>
+                        </button>
+                      );
+                    })}
+                  </div>
+
+                  {selectedSessionHistory ? (
+                    <div className="rounded-[8px] border border-teal-100 bg-white p-3">
+                      <div className="flex items-start justify-between gap-3">
+                        <div className="min-w-0">
+                          <div className="text-[11px] font-medium text-teal-700">
+                            可恢复会话
+                          </div>
+                          <div className="mt-1 break-words text-sm font-semibold text-teal-950">
+                            {selectedSessionHistory.title}
+                          </div>
+                          <div className="mt-1 break-words text-xs leading-5 text-slate-700">
+                            {selectedSessionHistory.summary}
+                          </div>
+                        </div>
+                        <SessionStatusPill status={selectedSessionHistory.status} />
+                      </div>
+
+                      <div className="mt-3 grid grid-cols-3 gap-2">
+                        <SessionMetric
+                          label="产物"
+                          value={`${selectedSessionHistory.artifactCount}`}
+                        />
+                        <SessionMetric
+                          label="审批"
+                          value={`${selectedSessionHistory.approvalCount}`}
+                        />
+                        <SessionMetric
+                          label="上下文"
+                          value={`${selectedSessionHistory.contextCount}`}
+                        />
+                      </div>
+
+                      <ArtifactDetailBlock
+                        icon={<Target className="size-4" aria-hidden="true" />}
+                        title="上次动作"
+                      >
+                        {selectedSessionHistory.lastAction}
+                      </ArtifactDetailBlock>
+
+                      <div className="mt-3 flex flex-wrap gap-2">
+                        {selectedSessionHistory.tags.map((tag) => (
+                          <span
+                            key={`${selectedSessionHistory.id}-${tag}`}
+                            className="max-w-full rounded-[999px] bg-teal-50 px-2 py-0.5 text-[11px] font-medium text-teal-700"
+                          >
+                            <span className="break-words">{tag}</span>
+                          </span>
+                        ))}
+                      </div>
+
+                      <div className="mt-3 rounded-[8px] border border-orange-200 bg-orange-50 px-3 py-2 text-xs leading-5 text-orange-800">
+                        恢复提示会填入输入框，由你确认后再发送；当前不会读取真实历史记录。
+                      </div>
+
+                      <Button
+                        type="button"
+                        size="sm"
+                        className="mt-3 w-full bg-orange-500 hover:bg-orange-600"
+                        onClick={() => restoreSessionHistory(selectedSessionHistory)}
+                      >
+                        <Play className="size-4" aria-hidden="true" />
+                        恢复到输入框
+                      </Button>
+                    </div>
+                  ) : null}
+                </div>
               </div>
 
               {messages.map((message, index) => (
@@ -1158,6 +1425,30 @@ function PromptCard({
   );
 }
 
+function SessionStatusPill({ status }: { status: SessionHistoryStatus }) {
+  return (
+    <span
+      className={cn(
+        "shrink-0 whitespace-nowrap rounded-[999px] px-2 py-0.5 text-[11px] font-medium",
+        sessionHistoryStatusClass(status)
+      )}
+    >
+      {status}
+    </span>
+  );
+}
+
+function SessionMetric({ label, value }: { label: string; value: string }) {
+  return (
+    <div className="min-w-0 rounded-[8px] border border-teal-100 bg-teal-50 px-2.5 py-2 text-center">
+      <div className="truncate text-[11px] font-medium text-teal-700">{label}</div>
+      <div className="mt-0.5 truncate text-sm font-semibold text-teal-950">
+        {value}
+      </div>
+    </div>
+  );
+}
+
 function ArtifactStatePill({ state }: { state: ArtifactState }) {
   return (
     <span
@@ -1288,6 +1579,23 @@ function approvalStatusConfig(status: ApprovalStatus) {
   }
 }
 
+function sessionHistoryFilterCount(filter: SessionHistoryFilter) {
+  if (filter === "全部") {
+    return sessionHistoryItems.length;
+  }
+
+  return sessionHistoryItems.filter((item) => item.status === filter).length;
+}
+
+function sessionHistoryStatusClass(status: SessionHistoryStatus) {
+  switch (status) {
+    case "进行中":
+      return "bg-orange-100 text-orange-800";
+    case "已完成":
+      return "bg-emerald-100 text-emerald-800";
+  }
+}
+
 function artifactFilterCount(filter: ArtifactFilter) {
   if (filter === "全部") {
     return artifacts.length;
@@ -1314,4 +1622,19 @@ function artifactStateClass(state: ArtifactState) {
 function selectedContextLabel(contextId: string) {
   const item = contextItems.find((entry) => entry.id === contextId);
   return item ? item.title : "未知上下文";
+}
+
+function buildSessionRestorePrompt(item: SessionHistoryItem) {
+  return [
+    `请帮我恢复「${item.title}」这个日常工作会话。`,
+    "",
+    `会话摘要：${item.summary}`,
+    `上次动作：${item.lastAction}`,
+    `关联产物：${item.artifactCount} 项`,
+    `审批记录：${item.approvalCount} 项`,
+    `上下文数量：${item.contextCount} 项`,
+    `标签：${item.tags.join("、")}`,
+    "",
+    "请先复述当前可继续的工作状态，再建议下一步行动。"
+  ].join("\n");
 }
