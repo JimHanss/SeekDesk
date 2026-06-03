@@ -50,10 +50,29 @@ interface TemplateItem {
   icon: LucideIcon;
 }
 
+type ArtifactState = "计划中" | "排队中" | "草稿" | "可复用" | "待复核";
+type ArtifactFilter = "全部" | "草稿" | "可复用";
+
+interface ArtifactTraceItem {
+  label: string;
+  value: string;
+}
+
 interface ArtifactItem {
+  id: string;
+  artifactType: string;
   title: string;
   description: string;
-  state: string;
+  summary: string;
+  state: ArtifactState;
+  owner: string;
+  updatedAt: string;
+  source: string;
+  templateTitle: string;
+  tags: string[];
+  trace: ArtifactTraceItem[];
+  nextAction: string;
+  permissionStatus: string;
   icon: LucideIcon;
 }
 
@@ -201,30 +220,113 @@ const contextItems: ContextItem[] = [
   }
 ];
 
+const artifactFilters: ArtifactFilter[] = ["全部", "草稿", "可复用"];
+
 const artifacts: ArtifactItem[] = [
   {
+    id: "meeting-summary-artifact",
+    artifactType: "会议纪要",
     title: "会议摘要",
     description: "关键决策、风险和下一步行动的清晰回顾",
-    state: "planned",
+    summary:
+      "已把周三例会压缩为项目同步版本，保留关键决策、待办负责人和两个开放风险，适合复核后分享。",
+    state: "待复核",
+    owner: "产品组",
+    updatedAt: "今天 10:30",
+    source: "会议记录 / 周三例会",
+    templateTitle: "会议纪要",
+    tags: ["决策", "待办", "风险"],
+    trace: [
+      { label: "上下文", value: "引用会话知识上下文：会议记录" },
+      { label: "审批", value: "使用内部会议记录：允许一次" }
+    ],
+    nextAction: "复核负责人和风险措辞，确认后复制到项目同步渠道。",
+    permissionStatus: "允许一次，可在本次会话内复用",
     icon: FileText
   },
   {
+    id: "task-list-artifact",
+    artifactType: "任务计划",
     title: "任务清单",
     description: "带负责人、时限和依赖关系的可执行事项",
-    state: "queued",
+    summary:
+      "从团队备忘中拆出 5 个下一步行动，包含优先级、依赖和验收口径，等待补齐负责人。",
+    state: "排队中",
+    owner: "运营同学",
+    updatedAt: "今天 09:45",
+    source: "团队备忘 / 个人笔记",
+    templateTitle: "任务计划",
+    tags: ["行动项", "依赖", "优先级"],
+    trace: [
+      { label: "上下文", value: "引用会话知识上下文：团队备忘" },
+      { label: "审批", value: "内部草稿，不用于外发" }
+    ],
+    nextAction: "补齐负责人后重新生成排序，并把阻塞项标为待确认。",
+    permissionStatus: "仅内部草稿，不可外发",
     icon: Workflow
   },
   {
+    id: "email-draft-artifact",
+    artifactType: "客户沟通",
     title: "邮件草稿",
     description: "可继续润色或复制给利益相关人的更新",
-    state: "draft",
+    summary:
+      "已形成客户更新邮件的初稿，包含交付时间线、范围变更说明和下一步确认事项。",
+    state: "草稿",
+    owner: "客户成功",
+    updatedAt: "昨天 17:20",
+    source: "客户邮件 / support@customer.com",
+    templateTitle: "邮件起草",
+    tags: ["外部回复", "交付", "需确认"],
+    trace: [
+      { label: "上下文", value: "引用会话知识上下文：客户邮件" },
+      { label: "审批", value: "起草外部回复：已阻断" }
+    ],
+    nextAction: "确认外发授权边界，再把语气调整为更克制的客户版本。",
+    permissionStatus: "需审批后外发",
     icon: Mail
   },
   {
+    id: "research-notes-artifact",
+    artifactType: "资料研究",
     title: "研究笔记",
     description: "浓缩发现、引用方向和待验证问题",
-    state: "ready",
+    summary:
+      "公开资料已整理成一页研究笔记，列出可引用依据、竞品观察和仍需验证的问题。",
+    state: "可复用",
+    owner: "研究同学",
+    updatedAt: "昨天 15:10",
+    source: "公开资料 / 行业报告",
+    templateTitle: "资料研究",
+    tags: ["公开来源", "引用", "竞品"],
+    trace: [
+      { label: "上下文", value: "引用会话知识上下文：研究链接" },
+      { label: "审批", value: "公开来源，可直接引用" }
+    ],
+    nextAction: "把可引用依据同步到简报，并标注仍需二次验证的结论。",
+    permissionStatus: "公开来源，可在工作区复用",
     icon: Search
+  },
+  {
+    id: "weekly-report-artifact",
+    artifactType: "工作汇报",
+    title: "周报框架",
+    description: "围绕进展、风险和下周重点搭好的汇报结构",
+    summary:
+      "周报结构已经按本周进展、主要成果、风险阻塞和下周优先级搭好，等待填入最新数据。",
+    state: "计划中",
+    owner: "你",
+    updatedAt: "今天 08:40",
+    source: "项目简报 / 内部周报",
+    templateTitle: "周报整理",
+    tags: ["汇报", "里程碑", "下周计划"],
+    trace: [
+      { label: "上下文", value: "引用会话知识上下文：项目简报" },
+      { label: "审批", value: "仅项目成员可见" }
+    ],
+    nextAction: "补充本周完成项和阻塞风险，再生成可发送版本。",
+    permissionStatus: "项目成员可见，外发前需复核",
+    icon: CalendarClock
   }
 ];
 
@@ -287,6 +389,10 @@ export default function Page() {
   const [status, setStatus] = useState<ChatStatus>("idle");
   const [error, setError] = useState<string | null>(null);
   const [selectedContextId, setSelectedContextId] = useState<string | null>(null);
+  const [selectedArtifactId, setSelectedArtifactId] = useState<string | null>(
+    artifacts[0]?.id ?? null
+  );
+  const [artifactFilter, setArtifactFilter] = useState<ArtifactFilter>("全部");
   const [approvalRequests, setApprovalRequests] = useState<ApprovalRequestItem[]>(
     initialApprovalRequests
   );
@@ -298,6 +404,20 @@ export default function Page() {
     () => `${apiBaseUrl.replace(/\/$/, "")}/api/chat`,
     []
   );
+  const filteredArtifacts = useMemo(
+    () =>
+      artifactFilter === "全部"
+        ? artifacts
+        : artifacts.filter((artifact) => artifact.state === artifactFilter),
+    [artifactFilter]
+  );
+  const selectedArtifact = useMemo(() => {
+    const selectedInFilter = filteredArtifacts.find(
+      (artifact) => artifact.id === selectedArtifactId
+    );
+
+    return selectedInFilter ?? filteredArtifacts[0] ?? artifacts[0] ?? null;
+  }, [filteredArtifacts, selectedArtifactId]);
 
   async function handleSubmit(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
@@ -748,39 +868,175 @@ export default function Page() {
               </div>
 
               <div className="rounded-[8px] border border-teal-100 bg-teal-50 p-3">
-                <div className="mb-3 flex items-center gap-2 text-sm font-medium text-teal-950">
-                  <CheckCircle2 className="size-4 text-teal-700" aria-hidden="true" />
-                  计划产物
+                <div className="mb-3 flex flex-col gap-3">
+                  <div className="flex items-center justify-between gap-3">
+                    <div className="min-w-0 flex items-center gap-2 text-sm font-medium text-teal-950">
+                      <CheckCircle2
+                        className="size-4 shrink-0 text-teal-700"
+                        aria-hidden="true"
+                      />
+                      <span className="min-w-0 break-words">日常工作产物</span>
+                    </div>
+                    <span className="shrink-0 rounded-[999px] bg-white px-2 py-0.5 text-[11px] font-medium text-teal-700">
+                      {filteredArtifacts.length}/{artifacts.length}
+                    </span>
+                  </div>
+
+                  <div className="flex flex-wrap gap-2" aria-label="产物筛选">
+                    {artifactFilters.map((filter) => {
+                      const isActive = artifactFilter === filter;
+
+                      return (
+                        <button
+                          key={filter}
+                          type="button"
+                          aria-pressed={isActive}
+                          onClick={() => setArtifactFilter(filter)}
+                          className={cn(
+                            "inline-flex min-h-8 cursor-pointer items-center gap-1.5 rounded-[8px] border px-2.5 py-1 text-xs font-medium transition-colors duration-200 focus-visible:outline focus-visible:outline-2 focus-visible:outline-teal-600",
+                            isActive
+                              ? "border-teal-600 bg-teal-600 text-white"
+                              : "border-teal-100 bg-white text-teal-700 hover:border-teal-300 hover:bg-teal-50"
+                          )}
+                        >
+                          <span>{filter}</span>
+                          <span
+                            className={cn(
+                              "rounded-[999px] px-1.5 py-0.5 text-[10px]",
+                              isActive
+                                ? "bg-white/20 text-white"
+                                : "bg-teal-50 text-teal-700"
+                            )}
+                          >
+                            {artifactFilterCount(filter)}
+                          </span>
+                        </button>
+                      );
+                    })}
+                  </div>
                 </div>
+
                 <div className="space-y-2">
-                  {artifacts.map((artifact) => {
+                  {filteredArtifacts.map((artifact) => {
                     const Icon = artifact.icon;
+                    const isSelected = selectedArtifact?.id === artifact.id;
 
                     return (
-                      <div
-                        key={artifact.title}
-                        className="flex items-start gap-3 rounded-[8px] border border-teal-100 bg-white px-3 py-2"
+                      <button
+                        key={artifact.id}
+                        type="button"
+                        onClick={() => setSelectedArtifactId(artifact.id)}
+                        className={cn(
+                          "flex w-full cursor-pointer items-start gap-3 rounded-[8px] border px-3 py-3 text-left transition-colors duration-200 focus-visible:outline focus-visible:outline-2 focus-visible:outline-teal-600",
+                          isSelected
+                            ? "border-teal-400 bg-white shadow-sm"
+                            : "border-teal-100 bg-white hover:border-teal-300 hover:bg-teal-50"
+                        )}
                       >
                         <span className="mt-0.5 grid size-8 shrink-0 place-items-center rounded-[8px] bg-teal-50 text-teal-700">
                           <Icon className="size-4" aria-hidden="true" />
                         </span>
                         <span className="min-w-0 flex-1">
-                          <span className="flex items-center justify-between gap-2">
-                            <span className="truncate text-sm font-medium text-teal-950">
-                              {artifact.title}
+                          <span className="flex items-start justify-between gap-2">
+                            <span className="min-w-0">
+                              <span className="block break-words text-sm font-medium text-teal-950">
+                                {artifact.title}
+                              </span>
+                              <span className="mt-0.5 block break-words text-[11px] leading-4 text-teal-700">
+                                {artifact.artifactType} / {artifact.owner}
+                              </span>
                             </span>
-                            <span className="shrink-0 rounded-[999px] bg-teal-50 px-2 py-0.5 text-[11px] font-medium uppercase tracking-wide text-teal-700">
-                              {artifact.state}
-                            </span>
+                            <ArtifactStatePill state={artifact.state} />
                           </span>
-                          <span className="mt-1 block text-xs leading-5 text-teal-700">
+                          <span className="mt-2 block break-words text-xs leading-5 text-teal-700">
                             {artifact.description}
                           </span>
+                          <span className="mt-2 block break-words text-[11px] leading-4 text-slate-500">
+                            更新：{artifact.updatedAt}
+                          </span>
                         </span>
-                      </div>
+                      </button>
                     );
                   })}
                 </div>
+
+                {selectedArtifact ? (
+                  <div className="mt-3 border-t border-teal-100 pt-3">
+                    <div className="flex items-start justify-between gap-3">
+                      <div className="min-w-0">
+                        <div className="text-[11px] font-medium text-teal-700">
+                          {selectedArtifact.artifactType}
+                        </div>
+                        <div className="mt-1 break-words text-sm font-semibold text-teal-950">
+                          {selectedArtifact.title}
+                        </div>
+                        <div className="mt-1 break-words text-xs leading-5 text-teal-700">
+                          {selectedArtifact.description}
+                        </div>
+                      </div>
+                      <ArtifactStatePill state={selectedArtifact.state} />
+                    </div>
+
+                    <ArtifactDetailBlock
+                      icon={<FileText className="size-4" aria-hidden="true" />}
+                      title="摘要"
+                    >
+                      {selectedArtifact.summary}
+                    </ArtifactDetailBlock>
+
+                    <div className="mt-3 grid gap-2">
+                      <ArtifactDetailRow label="来源模板" value={selectedArtifact.templateTitle} />
+                      <ArtifactDetailRow label="来源上下文" value={selectedArtifact.source} />
+                    </div>
+
+                    <div className="mt-3">
+                      <div className="mb-2 flex items-center gap-2 text-xs font-medium text-teal-950">
+                        <ShieldCheck className="size-4 text-teal-700" aria-hidden="true" />
+                        上下文 / 审批追踪
+                      </div>
+                      <div className="space-y-2">
+                        {selectedArtifact.trace.map((traceItem) => (
+                          <div
+                            key={`${selectedArtifact.id}-${traceItem.label}`}
+                            className="rounded-[8px] border border-teal-100 bg-white px-3 py-2"
+                          >
+                            <div className="text-[11px] font-medium text-teal-700">
+                              {traceItem.label}
+                            </div>
+                            <div className="mt-1 break-words text-xs leading-5 text-slate-700">
+                              {traceItem.value}
+                            </div>
+                          </div>
+                        ))}
+                      </div>
+                    </div>
+
+                    <ArtifactDetailBlock
+                      icon={<Target className="size-4" aria-hidden="true" />}
+                      title="下一步行动"
+                    >
+                      {selectedArtifact.nextAction}
+                    </ArtifactDetailBlock>
+
+                    <div className="mt-3 flex flex-wrap gap-2">
+                      {selectedArtifact.tags.map((tag) => (
+                        <span
+                          key={`${selectedArtifact.id}-${tag}`}
+                          className="max-w-full rounded-[999px] bg-white px-2 py-0.5 text-[11px] font-medium text-teal-700"
+                        >
+                          <span className="break-words">{tag}</span>
+                        </span>
+                      ))}
+                    </div>
+
+                    <div className="mt-3 flex items-start gap-2 rounded-[8px] border border-orange-200 bg-white px-3 py-2 text-xs leading-5 text-orange-800">
+                      <Lock className="mt-0.5 size-4 shrink-0" aria-hidden="true" />
+                      <span className="min-w-0 break-words">
+                        权限状态：{selectedArtifact.permissionStatus}
+                      </span>
+                    </div>
+                  </div>
+                ) : null}
               </div>
 
               <div className="rounded-[8px] border border-teal-100 bg-white p-3">
@@ -902,6 +1158,52 @@ function PromptCard({
   );
 }
 
+function ArtifactStatePill({ state }: { state: ArtifactState }) {
+  return (
+    <span
+      className={cn(
+        "shrink-0 whitespace-nowrap rounded-[999px] px-2 py-0.5 text-[11px] font-medium",
+        artifactStateClass(state)
+      )}
+    >
+      {state}
+    </span>
+  );
+}
+
+function ArtifactDetailBlock({
+  icon,
+  title,
+  children
+}: {
+  icon: ReactNode;
+  title: string;
+  children: ReactNode;
+}) {
+  return (
+    <div className="mt-3 rounded-[8px] border border-teal-100 bg-white px-3 py-2">
+      <div className="flex items-center gap-2 text-xs font-medium text-teal-950">
+        <span className="shrink-0 text-teal-700">{icon}</span>
+        <span className="min-w-0 break-words">{title}</span>
+      </div>
+      <div className="mt-1 break-words text-xs leading-5 text-slate-700">
+        {children}
+      </div>
+    </div>
+  );
+}
+
+function ArtifactDetailRow({ label, value }: { label: string; value: string }) {
+  return (
+    <div className="rounded-[8px] border border-teal-100 bg-white px-3 py-2">
+      <div className="text-[11px] font-medium text-teal-700">{label}</div>
+      <div className="mt-1 break-words text-xs leading-5 text-teal-950">
+        {value}
+      </div>
+    </div>
+  );
+}
+
 function StatusPill({ status }: { status: ApprovalStatus }) {
   const config = approvalStatusConfig(status);
 
@@ -983,6 +1285,29 @@ function approvalStatusConfig(status: ApprovalStatus) {
         label: "已阻断",
         className: "bg-red-100 text-red-800"
       };
+  }
+}
+
+function artifactFilterCount(filter: ArtifactFilter) {
+  if (filter === "全部") {
+    return artifacts.length;
+  }
+
+  return artifacts.filter((artifact) => artifact.state === filter).length;
+}
+
+function artifactStateClass(state: ArtifactState) {
+  switch (state) {
+    case "计划中":
+      return "bg-teal-100 text-teal-800";
+    case "排队中":
+      return "bg-slate-100 text-slate-700";
+    case "草稿":
+      return "bg-orange-100 text-orange-800";
+    case "可复用":
+      return "bg-emerald-100 text-emerald-800";
+    case "待复核":
+      return "bg-amber-100 text-amber-800";
   }
 }
 
