@@ -108,6 +108,26 @@ interface ContextItem {
   icon: LucideIcon;
 }
 
+type ConnectorCategory = "文档" | "日历" | "邮箱" | "笔记" | "团队知识";
+type ConnectorFilter = "全部" | "需审批" | "可预览";
+type ConnectorPermissionState = "未连接" | "需审批" | "可预览";
+type ConnectorRiskLevel = "低" | "中" | "高";
+
+interface ConnectorItem {
+  id: string;
+  name: string;
+  category: ConnectorCategory;
+  provider: string;
+  status: string;
+  permissionState: ConnectorPermissionState;
+  description: string;
+  lastSyncLabel: string;
+  riskLevel: ConnectorRiskLevel;
+  availableActions: string[];
+  notes: string[];
+  icon: LucideIcon;
+}
+
 type ApprovalStatus = "waiting" | "allowed_once" | "denied" | "blocked";
 type ApprovalRisk = "低" | "中" | "高" | "极高";
 type ModelRouteMode = "fast" | "pro";
@@ -324,6 +344,101 @@ const contextItems: ContextItem[] = [
     prompt:
       "请基于「团队备忘」整理出下一步行动清单，标出优先级、负责人和依赖关系。",
     icon: ShieldCheck
+  }
+];
+
+const connectorFilters: ConnectorFilter[] = ["全部", "需审批", "可预览"];
+
+const connectorItems: ConnectorItem[] = [
+  {
+    id: "docs-catalog",
+    name: "文档库入口",
+    category: "文档",
+    provider: "SeekDesk Docs Preview",
+    status: "示例未连接",
+    permissionState: "需审批",
+    description:
+      "用于预演从工作文档中选择范围、生成摘要和引用说明的入口，不读取真实文件内容。",
+    lastSyncLabel: "未同步，仅目录示例",
+    riskLevel: "中",
+    availableActions: ["预览授权范围", "生成引用提示", "记录审批原因"],
+    notes: [
+      "当前只展示目录和权限预演，不读取真实文档。",
+      "正式接入前需要确认工作区、文件夹范围和最小权限。"
+    ],
+    icon: FileText
+  },
+  {
+    id: "calendar-catalog",
+    name: "日历日程入口",
+    category: "日历",
+    provider: "SeekDesk Calendar Preview",
+    status: "权限预演",
+    permissionState: "可预览",
+    description:
+      "用于规划会议准备、日程摘要和待办提醒的字段预览，不连接真实日历账户。",
+    lastSyncLabel: "未同步，仅字段预览",
+    riskLevel: "中",
+    availableActions: ["预览日程字段", "生成会议准备提示", "标记审批点"],
+    notes: [
+      "当前不会读取真实日程、参会人或会议链接。",
+      "正式接入前需要确认可见时间范围和敏感会议处理方式。"
+    ],
+    icon: CalendarClock
+  },
+  {
+    id: "mail-catalog",
+    name: "邮箱收件入口",
+    category: "邮箱",
+    provider: "SeekDesk Mail Preview",
+    status: "示例未连接",
+    permissionState: "需审批",
+    description:
+      "用于预演邮件摘要、回复草稿和外发审批路径，不读取真实邮件或附件。",
+    lastSyncLabel: "未同步，仅权限说明",
+    riskLevel: "高",
+    availableActions: ["预览收件范围", "生成回复草稿提示", "配置外发审批"],
+    notes: [
+      "当前不会登录邮箱、读取邮件正文或扫描附件。",
+      "正式接入前需要明确发件权限、敏感客户信息和拒绝路径。"
+    ],
+    icon: Mail
+  },
+  {
+    id: "notes-catalog",
+    name: "个人笔记入口",
+    category: "笔记",
+    provider: "SeekDesk Notes Preview",
+    status: "权限预演",
+    permissionState: "可预览",
+    description:
+      "用于把用户主动选择的笔记整理成行动清单和周报素材，不读取真实笔记库。",
+    lastSyncLabel: "未同步，仅示例卡片",
+    riskLevel: "低",
+    availableActions: ["预览笔记字段", "生成整理提示", "保留来源说明"],
+    notes: [
+      "当前只使用示例字段，不读取真实笔记或本地文件。",
+      "正式接入前需要确认用户手动选择范围和撤销入口。"
+    ],
+    icon: MessageSquare
+  },
+  {
+    id: "knowledge-catalog",
+    name: "团队知识库入口",
+    category: "团队知识",
+    provider: "SeekDesk Knowledge Preview",
+    status: "示例未连接",
+    permissionState: "可预览",
+    description:
+      "用于预演团队知识库索引、引用和权限边界，不访问真实知识库或内部页面。",
+    lastSyncLabel: "未同步，仅索引预演",
+    riskLevel: "中",
+    availableActions: ["预览索引字段", "生成知识库接入提示", "标记引用边界"],
+    notes: [
+      "当前不读取真实团队知识库、Wiki 或内部网页。",
+      "正式接入前需要确认空间范围、引用策略和成员权限。"
+    ],
+    icon: Globe
   }
 ];
 
@@ -563,6 +678,10 @@ export default function Page() {
     string | null
   >(sessionHistoryItems[0]?.id ?? null);
   const [selectedContextId, setSelectedContextId] = useState<string | null>(null);
+  const [connectorFilter, setConnectorFilter] = useState<ConnectorFilter>("全部");
+  const [selectedConnectorId, setSelectedConnectorId] = useState<string | null>(
+    connectorItems[0]?.id ?? null
+  );
   const [selectedArtifactId, setSelectedArtifactId] = useState<string | null>(
     artifacts[0]?.id ?? null
   );
@@ -588,6 +707,22 @@ export default function Page() {
     modelRouteMode === "fast"
       ? "快速模式示例：适合写客户更新、整理会议纪要、把笔记转成任务计划"
       : "深度模式示例：适合复杂资料归纳、风险复核和长上下文分析";
+  const filteredConnectors = useMemo(
+    () =>
+      connectorFilter === "全部"
+        ? connectorItems
+        : connectorItems.filter((item) =>
+            connectorMatchesFilter(item, connectorFilter)
+          ),
+    [connectorFilter]
+  );
+  const selectedConnector = useMemo(() => {
+    const selectedInFilter = filteredConnectors.find(
+      (connector) => connector.id === selectedConnectorId
+    );
+
+    return selectedInFilter ?? filteredConnectors[0] ?? connectorItems[0] ?? null;
+  }, [filteredConnectors, selectedConnectorId]);
   const filteredArtifacts = useMemo(
     () =>
       artifactFilter === "全部"
@@ -737,6 +872,11 @@ export default function Page() {
   function useContextItem(item: ContextItem) {
     setSelectedContextId(item.id);
     applyPrompt(item.prompt);
+  }
+
+  function applyConnectorPrompt(item: ConnectorItem) {
+    setSelectedConnectorId(item.id);
+    applyPrompt(buildConnectorAccessPrompt(item));
   }
 
   function switchModelRoute(nextMode: ModelRouteMode) {
@@ -1406,6 +1546,179 @@ export default function Page() {
                 <div className="mb-3 flex flex-col gap-3">
                   <div className="flex items-center justify-between gap-3">
                     <div className="min-w-0 flex items-center gap-2 text-sm font-medium text-teal-950">
+                      <Globe className="size-4 shrink-0 text-teal-700" aria-hidden="true" />
+                      <span className="min-w-0 break-words">连接器目录</span>
+                    </div>
+                    <span className="shrink-0 rounded-[999px] bg-white px-2 py-0.5 text-[11px] font-medium text-teal-700">
+                      {filteredConnectors.length}/{connectorItems.length}
+                    </span>
+                  </div>
+                  <p className="text-xs leading-5 text-teal-700">
+                    当前只做目录和权限预演，不读取真实文档、日历、邮件、笔记或团队知识库。
+                  </p>
+                  <div className="flex flex-wrap gap-2" aria-label="连接器筛选">
+                    {connectorFilters.map((filter) => {
+                      const isActive = connectorFilter === filter;
+
+                      return (
+                        <button
+                          key={filter}
+                          type="button"
+                          aria-pressed={isActive}
+                          onClick={() => setConnectorFilter(filter)}
+                          className={cn(
+                            "inline-flex min-h-8 items-center gap-1.5 rounded-[8px] border px-2.5 py-1 text-xs font-medium transition-colors duration-200 focus-visible:outline focus-visible:outline-2 focus-visible:outline-teal-600",
+                            isActive
+                              ? "border-teal-600 bg-teal-600 text-white"
+                              : "border-teal-200 bg-white text-teal-700 hover:border-teal-300 hover:bg-teal-50"
+                          )}
+                        >
+                          <span>{filter}</span>
+                          <span
+                            className={cn(
+                              "rounded-[999px] px-1.5 py-0.5 text-[10px]",
+                              isActive ? "bg-white/20 text-white" : "bg-teal-100 text-teal-700"
+                            )}
+                          >
+                            {connectorFilterCount(filter)}
+                          </span>
+                        </button>
+                      );
+                    })}
+                  </div>
+                </div>
+
+                <div className="space-y-2">
+                  {filteredConnectors.map((connector) => {
+                    const Icon = connector.icon;
+                    const isSelected = selectedConnector?.id === connector.id;
+
+                    return (
+                      <button
+                        key={connector.id}
+                        type="button"
+                        onClick={() => setSelectedConnectorId(connector.id)}
+                        className={cn(
+                          "w-full rounded-[8px] border px-3 py-3 text-left transition-colors duration-200 focus-visible:outline focus-visible:outline-2 focus-visible:outline-teal-600",
+                          isSelected
+                            ? "border-teal-300 bg-white shadow-sm"
+                            : "border-teal-100 bg-white hover:border-teal-300 hover:bg-teal-50"
+                        )}
+                      >
+                        <span className="flex items-start gap-3">
+                          <span className="mt-0.5 grid size-8 shrink-0 place-items-center rounded-[8px] bg-teal-50 text-teal-700">
+                            <Icon className="size-4" aria-hidden="true" />
+                          </span>
+                          <span className="min-w-0 flex-1">
+                            <span className="flex flex-wrap items-start justify-between gap-2">
+                              <span className="min-w-0">
+                                <span className="block break-words text-sm font-medium text-teal-950">
+                                  {connector.name}
+                                </span>
+                                <span className="mt-0.5 block break-words text-[11px] leading-4 text-teal-700">
+                                  {connector.category} / {connector.provider}
+                                </span>
+                              </span>
+                              <ConnectorPermissionPill state={connector.permissionState} />
+                            </span>
+                            <span className="mt-2 block break-words text-xs leading-5 text-slate-700">
+                              {connector.description}
+                            </span>
+                            <span className="mt-2 flex flex-wrap items-center gap-2">
+                              <ConnectorRiskPill riskLevel={connector.riskLevel} />
+                              <span className="inline-flex min-w-0 items-center gap-1 rounded-[999px] bg-slate-100 px-2 py-0.5 text-[11px] font-medium text-slate-700">
+                                <Lock className="size-3.5 shrink-0" aria-hidden="true" />
+                                <span className="min-w-0 break-words">{connector.status}</span>
+                              </span>
+                            </span>
+                          </span>
+                        </span>
+                      </button>
+                    );
+                  })}
+                </div>
+
+                {selectedConnector ? (
+                  <div className="mt-3 border-t border-teal-100 pt-3">
+                    <div className="flex items-start justify-between gap-3">
+                      <div className="min-w-0">
+                        <div className="text-[11px] font-medium text-teal-700">
+                          {selectedConnector.category} 连接器
+                        </div>
+                        <div className="mt-1 break-words text-sm font-semibold text-teal-950">
+                          {selectedConnector.name}
+                        </div>
+                        <div className="mt-1 break-words text-xs leading-5 text-teal-700">
+                          {selectedConnector.lastSyncLabel}
+                        </div>
+                      </div>
+                      <ConnectorRiskPill riskLevel={selectedConnector.riskLevel} />
+                    </div>
+
+                    <div className="mt-3 grid gap-2">
+                      <StatusRow label="权限状态" value={selectedConnector.permissionState} />
+                      <StatusRow label="Provider" value={selectedConnector.provider} />
+                      <StatusRow label="目录状态" value={selectedConnector.status} />
+                    </div>
+
+                    <div className="mt-3">
+                      <div className="mb-2 flex items-center gap-2 text-xs font-medium text-teal-950">
+                        <ShieldCheck className="size-4 text-teal-700" aria-hidden="true" />
+                        可用动作
+                      </div>
+                      <div className="flex flex-wrap gap-2">
+                        {selectedConnector.availableActions.map((action) => (
+                          <span
+                            key={`${selectedConnector.id}-${action}`}
+                            className="max-w-full rounded-[999px] bg-white px-2 py-0.5 text-[11px] font-medium text-teal-700"
+                          >
+                            <span className="break-words">{action}</span>
+                          </span>
+                        ))}
+                      </div>
+                    </div>
+
+                    <div className="mt-3 rounded-[8px] border border-teal-100 bg-white px-3 py-2">
+                      <div className="mb-2 flex items-center gap-2 text-xs font-medium text-teal-950">
+                        <AlertCircle className="size-4 text-orange-600" aria-hidden="true" />
+                        下一步接入提示
+                      </div>
+                      <ul className="space-y-1">
+                        {selectedConnector.notes.map((note) => (
+                          <li
+                            key={`${selectedConnector.id}-${note}`}
+                            className="flex items-start gap-2 text-xs leading-5 text-slate-700"
+                          >
+                            <CheckCircle2
+                              className="mt-0.5 size-3.5 shrink-0 text-teal-700"
+                              aria-hidden="true"
+                            />
+                            <span className="min-w-0 break-words">{note}</span>
+                          </li>
+                        ))}
+                      </ul>
+                    </div>
+
+                    <Button
+                      type="button"
+                      size="sm"
+                      className="mt-3 w-full bg-orange-500 hover:bg-orange-600"
+                      onClick={() => applyConnectorPrompt(selectedConnector)}
+                    >
+                      <Send className="size-4" aria-hidden="true" />
+                      填入接入提示
+                    </Button>
+                    <p className="mt-2 text-xs leading-5 text-teal-700">
+                      该操作只填充输入框，不接真实授权、登录或外部服务。
+                    </p>
+                  </div>
+                ) : null}
+              </div>
+
+              <div className="rounded-[8px] border border-teal-100 bg-teal-50 p-3">
+                <div className="mb-3 flex flex-col gap-3">
+                  <div className="flex items-center justify-between gap-3">
+                    <div className="min-w-0 flex items-center gap-2 text-sm font-medium text-teal-950">
                       <CheckCircle2
                         className="size-4 shrink-0 text-teal-700"
                         aria-hidden="true"
@@ -1741,6 +2054,36 @@ function ArtifactStatePill({ state }: { state: ArtifactState }) {
   );
 }
 
+function ConnectorPermissionPill({
+  state
+}: {
+  state: ConnectorPermissionState;
+}) {
+  return (
+    <span
+      className={cn(
+        "shrink-0 whitespace-nowrap rounded-[999px] px-2 py-0.5 text-[11px] font-medium",
+        connectorPermissionClass(state)
+      )}
+    >
+      {state}
+    </span>
+  );
+}
+
+function ConnectorRiskPill({ riskLevel }: { riskLevel: ConnectorRiskLevel }) {
+  return (
+    <span
+      className={cn(
+        "shrink-0 whitespace-nowrap rounded-[999px] px-2 py-0.5 text-[11px] font-medium",
+        connectorRiskClass(riskLevel)
+      )}
+    >
+      风险 {riskLevel}
+    </span>
+  );
+}
+
 function ArtifactDetailBlock({
   icon,
   title,
@@ -1883,6 +2226,25 @@ function artifactFilterCount(filter: ArtifactFilter) {
   return artifacts.filter((artifact) => artifact.state === filter).length;
 }
 
+function connectorFilterCount(filter: ConnectorFilter) {
+  if (filter === "全部") {
+    return connectorItems.length;
+  }
+
+  return connectorItems.filter((item) => connectorMatchesFilter(item, filter)).length;
+}
+
+function connectorMatchesFilter(item: ConnectorItem, filter: ConnectorFilter) {
+  switch (filter) {
+    case "全部":
+      return true;
+    case "需审批":
+      return item.permissionState === "需审批";
+    case "可预览":
+      return item.permissionState === "可预览";
+  }
+}
+
 function artifactStateClass(state: ArtifactState) {
   switch (state) {
     case "计划中":
@@ -1895,6 +2257,28 @@ function artifactStateClass(state: ArtifactState) {
       return "bg-emerald-100 text-emerald-800";
     case "待复核":
       return "bg-amber-100 text-amber-800";
+  }
+}
+
+function connectorPermissionClass(state: ConnectorPermissionState) {
+  switch (state) {
+    case "未连接":
+      return "bg-slate-100 text-slate-700";
+    case "需审批":
+      return "bg-orange-100 text-orange-800";
+    case "可预览":
+      return "bg-emerald-100 text-emerald-800";
+  }
+}
+
+function connectorRiskClass(riskLevel: ConnectorRiskLevel) {
+  switch (riskLevel) {
+    case "低":
+      return "bg-emerald-100 text-emerald-800";
+    case "中":
+      return "bg-amber-100 text-amber-800";
+    case "高":
+      return "bg-red-100 text-red-800";
   }
 }
 
@@ -1925,6 +2309,26 @@ function buildModelSwitchPrompt(
       usageSnapshot.outputTokens
     )} tokens，${usageSnapshot.estimatedCost}。`,
     "说明：这是前端估算 / 示例 / 未接真实余额，不要作为真实计费或预算依据。"
+  ].join("\n");
+}
+
+function buildConnectorAccessPrompt(item: ConnectorItem) {
+  return [
+    `请为「${item.name}」设计 daily_work 连接器接入方案。`,
+    "",
+    "重要边界：当前 SeekDesk 只做连接器目录和权限预演，未接真实授权、登录或外部服务；不要读取真实文档、日历、邮件、笔记或团队知识库。",
+    "",
+    `类别：${item.category}`,
+    `Provider：${item.provider}`,
+    `当前状态：${item.status}`,
+    `权限状态：${item.permissionState}`,
+    `风险等级：${item.riskLevel}`,
+    `最近同步：${item.lastSyncLabel}`,
+    `可用动作：${item.availableActions.join("、")}`,
+    `说明：${item.description}`,
+    `注意事项：${item.notes.join("；")}`,
+    "",
+    "请输出：最小权限范围、用户审批点、可预览字段、拒绝/撤销路径，以及接入前需要补齐的产品文案。"
   ].join("\n");
 }
 
