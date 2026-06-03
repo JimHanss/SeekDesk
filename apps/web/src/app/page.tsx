@@ -9,7 +9,9 @@ import {
   CheckCircle2,
   Code2,
   FileText,
+  Globe,
   Loader2,
+  Lock,
   Mail,
   MessageSquare,
   PanelLeft,
@@ -17,6 +19,7 @@ import {
   Presentation,
   Search,
   Send,
+  ShieldCheck,
   Square,
   Sparkles,
   Target,
@@ -51,6 +54,18 @@ interface ArtifactItem {
   title: string;
   description: string;
   state: string;
+  icon: LucideIcon;
+}
+
+interface ContextItem {
+  id: string;
+  title: string;
+  source: string;
+  sourceType: string;
+  status: string;
+  summary: string;
+  privacy: string;
+  prompt: string;
   icon: LucideIcon;
 }
 
@@ -109,6 +124,69 @@ const templates: TemplateItem[] = [
   }
 ];
 
+const contextItems: ContextItem[] = [
+  {
+    id: "project-brief",
+    title: "项目简报",
+    source: "内部周报 / 产品组",
+    sourceType: "Brief",
+    status: "已确认",
+    summary: "本周目标、里程碑、风险和依赖已经对齐，适合扩展为日常更新。",
+    privacy: "仅项目成员可见",
+    prompt:
+      "请基于「项目简报」帮我整理一版日常工作更新，重点说明本周目标、当前进展、风险和下一步动作。",
+    icon: Target
+  },
+  {
+    id: "meeting-notes",
+    title: "会议记录",
+    source: "周三例会 / 语音转写",
+    sourceType: "Meeting",
+    status: "待核验",
+    summary: "记录了关键决策、行动项和负责人，适合继续压缩成可分享摘要。",
+    privacy: "仅当前会话可用",
+    prompt:
+      "请基于「会议记录」整理一份可分享的会议摘要，输出关键决策、待办事项、负责人和开放问题。",
+    icon: Presentation
+  },
+  {
+    id: "customer-email",
+    title: "客户邮件",
+    source: "support@customer.com",
+    sourceType: "Email",
+    status: "需确认",
+    summary: "客户询问交付时间、范围变更和验收口径，适合生成克制且专业的回复草稿。",
+    privacy: "敏感信息，需确认引用范围",
+    prompt:
+      "请基于「客户邮件」帮我起草回复，先确认客户关心的交付时间、范围变更和验收口径，再给出专业且克制的回应。",
+    icon: Mail
+  },
+  {
+    id: "research-links",
+    title: "研究链接",
+    source: "公开资料 / 行业报告",
+    sourceType: "Links",
+    status: "已归档",
+    summary: "包含竞品分析、行业报告和参考文章，适合整理成研究简报或引用清单。",
+    privacy: "公开来源，可直接引用",
+    prompt:
+      "请基于「研究链接」整理一份研究简报，概括结论、可引用依据和仍需验证的点。",
+    icon: Globe
+  },
+  {
+    id: "team-notes",
+    title: "团队备忘",
+    source: "团队群 / 个人笔记",
+    sourceType: "Notes",
+    status: "草稿",
+    summary: "散落的讨论点、待同步事项和后续跟进，适合转换成任务清单。",
+    privacy: "内部草稿，不可外发",
+    prompt:
+      "请基于「团队备忘」整理出下一步行动清单，标出优先级、负责人和依赖关系。",
+    icon: ShieldCheck
+  }
+];
+
 const artifacts: ArtifactItem[] = [
   {
     title: "会议摘要",
@@ -141,7 +219,7 @@ const initialMessages: ChatMessage[] = [
     id: "assistant-welcome",
     role: "assistant",
     content:
-      "SeekDesk 当前运行在日常工作模式。你可以从左侧模板快速开始，也可以直接输入需求；输出会沉淀为会议摘要、任务清单、邮件草稿或研究笔记等可复用产物。编码模式保留在架构中，本阶段不开放编码工具。"
+      "SeekDesk 当前运行在日常工作模式。你可以从左侧模板快速开始，也可以从右侧选择会话知识上下文；当前版本只引用会话级示例，不读取真实文件或外部文档。"
   }
 ];
 
@@ -150,6 +228,7 @@ export default function Page() {
   const [input, setInput] = useState("");
   const [status, setStatus] = useState<ChatStatus>("idle");
   const [error, setError] = useState<string | null>(null);
+  const [selectedContextId, setSelectedContextId] = useState<string | null>(null);
   const abortRef = useRef<AbortController | null>(null);
   const inputRef = useRef<HTMLInputElement | null>(null);
 
@@ -178,6 +257,7 @@ export default function Page() {
       content: ""
     };
     const controller = new AbortController();
+    const nextMessages = [...messages, userMessage];
 
     abortRef.current = controller;
     setInput("");
@@ -193,7 +273,7 @@ export default function Page() {
         },
         body: JSON.stringify({
           mode: activeMode,
-          messages: [...messages, userMessage].map((message) => ({
+          messages: nextMessages.map((message) => ({
             role: message.role,
             content: message.content
           }))
@@ -265,9 +345,14 @@ export default function Page() {
     abortRef.current?.abort();
   }
 
-  function usePrompt(prompt: string) {
+  function applyPrompt(prompt: string) {
     setInput(prompt);
     inputRef.current?.focus();
+  }
+
+  function useContextItem(item: ContextItem) {
+    setSelectedContextId(item.id);
+    applyPrompt(item.prompt);
   }
 
   return (
@@ -283,7 +368,7 @@ export default function Page() {
                 SeekDesk
               </h1>
               <p className="truncate text-sm text-teal-700">
-                日常工作模板、流式 AI 对话与可复用产物
+                日常工作模板、会话知识上下文与流式 AI 对话
               </p>
             </div>
           </div>
@@ -314,7 +399,7 @@ export default function Page() {
               <div className="rounded-[8px] border border-teal-100 bg-teal-50 px-3 py-3 text-sm text-teal-900">
                 <div className="font-medium text-teal-950">日常工作模式</div>
                 <div className="mt-1 text-xs leading-5 text-teal-700">
-                  选择模板会自动填入输入框，你可以继续调整上下文后发送。
+                  选择模板会自动填入输入框，你可以继续补充上下文后再发送。
                 </div>
               </div>
 
@@ -326,7 +411,7 @@ export default function Page() {
                     <button
                       key={template.id}
                       type="button"
-                      onClick={() => usePrompt(template.prompt)}
+                      onClick={() => applyPrompt(template.prompt)}
                       className="flex min-h-16 w-full items-start gap-3 rounded-[8px] border border-teal-100 bg-white px-3 py-3 text-left transition-colors duration-200 hover:border-teal-300 hover:bg-teal-50 focus-visible:outline focus-visible:outline-2 focus-visible:outline-teal-600"
                     >
                       <span className="grid size-9 shrink-0 place-items-center rounded-[8px] bg-teal-50 text-teal-700">
@@ -351,7 +436,7 @@ export default function Page() {
                   编码模式兼容
                 </div>
                 <p className="text-xs leading-5">
-                  架构保留 Coding Agent 能力位，当前版本只开放日常工作模式。
+                  架构保留 Coding Agent 能力位，当前页面只开放日常工作模式，不暴露编码工具。
                 </p>
               </div>
             </div>
@@ -379,20 +464,20 @@ export default function Page() {
                 <PromptCard
                   icon={<Mail className="size-4" aria-hidden="true" />}
                   title="邮件起草"
-                  text="帮我写一封客户项目进展邮件，包含结果、时间线和明确下一步。"
-                  onClick={usePrompt}
+                  text="帮我写一封给客户的更新邮件，包含结果、时间线和下一步。"
+                  onClick={applyPrompt}
                 />
                 <PromptCard
                   icon={<Presentation className="size-4" aria-hidden="true" />}
                   title="会议纪要"
-                  text="把这些会议记录整理成可分享纪要，包含决策、负责人、风险和后续行动。"
-                  onClick={usePrompt}
+                  text="把这些会议记录整理成可分享纪要，包含决策、负责人和风险。"
+                  onClick={applyPrompt}
                 />
                 <PromptCard
                   icon={<Search className="size-4" aria-hidden="true" />}
                   title="研究简报"
-                  text="把最新资料整理成简报，指出已知信息、信息缺口和建议下一步。"
-                  onClick={usePrompt}
+                  text="把最新资料整理成简报，指出已知信息、缺口和建议下一步。"
+                  onClick={applyPrompt}
                 />
               </div>
 
@@ -421,7 +506,7 @@ export default function Page() {
                 <input
                   ref={inputRef}
                   className="min-w-0 flex-1 bg-transparent text-sm text-teal-950 outline-none placeholder:text-teal-500"
-                  placeholder="输入日常工作请求，例如：写客户更新、整理会议、把笔记转成任务计划"
+                  placeholder="输入日常工作请求，例如：写客户更新、整理会议纪要、把笔记转成任务计划"
                   aria-label="日常工作输入"
                   value={input}
                   onChange={(event) => setInput(event.target.value)}
@@ -449,6 +534,9 @@ export default function Page() {
                 <span>Endpoint: {endpoint}</span>
                 <span>模式: daily_work</span>
                 <span>状态: {statusLabel(status)}</span>
+                {selectedContextId ? (
+                  <span>上下文: {selectedContextLabel(selectedContextId)}</span>
+                ) : null}
               </div>
             </form>
           </section>
@@ -456,9 +544,65 @@ export default function Page() {
           <aside className="border-t border-teal-100 bg-white lg:border-l lg:border-t-0">
             <PanelHeader
               icon={<Workflow className="size-4" aria-hidden="true" />}
-              title="产物与状态"
+              title="上下文与产物"
             />
             <div className="space-y-4 px-3 pb-4 pt-3">
+              <div className="rounded-[8px] border border-teal-100 bg-teal-50 p-3">
+                <div className="mb-3 flex items-center gap-2 text-sm font-medium text-teal-950">
+                  <ShieldCheck className="size-4 text-teal-700" aria-hidden="true" />
+                  会话知识上下文
+                </div>
+                <div className="space-y-2">
+                  {contextItems.map((item) => {
+                    const Icon = item.icon;
+                    const isSelected = selectedContextId === item.id;
+
+                    return (
+                      <button
+                        key={item.id}
+                        type="button"
+                        onClick={() => useContextItem(item)}
+                        className={cn(
+                          "w-full rounded-[8px] border px-3 py-3 text-left transition-colors duration-200 focus-visible:outline focus-visible:outline-2 focus-visible:outline-teal-600",
+                          isSelected
+                            ? "border-teal-300 bg-white shadow-sm"
+                            : "border-teal-100 bg-white hover:border-teal-300 hover:bg-teal-50"
+                        )}
+                      >
+                        <div className="flex items-start gap-3">
+                          <span className="mt-0.5 grid size-8 shrink-0 place-items-center rounded-[8px] bg-teal-50 text-teal-700">
+                            <Icon className="size-4" aria-hidden="true" />
+                          </span>
+                          <span className="min-w-0 flex-1">
+                            <span className="flex items-center justify-between gap-2">
+                              <span className="truncate text-sm font-medium text-teal-950">
+                                {item.title}
+                              </span>
+                              <span className="shrink-0 rounded-[999px] bg-teal-100 px-2 py-0.5 text-[11px] font-medium text-teal-800">
+                                {item.status}
+                              </span>
+                            </span>
+                            <span className="mt-1 block text-xs leading-5 text-teal-700">
+                              {item.source} / {item.sourceType}
+                            </span>
+                            <span className="mt-2 block text-xs leading-5 text-slate-700">
+                              {item.summary}
+                            </span>
+                            <span className="mt-2 inline-flex items-center gap-1 rounded-[999px] bg-slate-100 px-2 py-0.5 text-[11px] font-medium text-slate-700">
+                              <Lock className="size-3.5" aria-hidden="true" />
+                              {item.privacy}
+                            </span>
+                          </span>
+                        </div>
+                      </button>
+                    );
+                  })}
+                </div>
+                <p className="mt-3 text-xs leading-5 text-teal-700">
+                  点击任一上下文会把它带入输入框。当前版本只做会话级示意，不读取真实文件或文档内容。
+                </p>
+              </div>
+
               <div className="rounded-[8px] border border-teal-100 bg-teal-50 p-3">
                 <div className="mb-3 flex items-center gap-2 text-sm font-medium text-teal-950">
                   <CheckCircle2 className="size-4 text-teal-700" aria-hidden="true" />
@@ -503,7 +647,7 @@ export default function Page() {
                 <div className="space-y-2 text-sm text-teal-700">
                   <StatusRow label="当前模式" value="daily_work" />
                   <StatusRow label="对话传输" value="Streaming" />
-                  <StatusRow label="产物来源" value="MVP 预览" />
+                  <StatusRow label="上下文来源" value="会话级预览" />
                 </div>
               </div>
 
@@ -633,4 +777,9 @@ function statusLabel(status: ChatStatus) {
     case "error":
       return "出错";
   }
+}
+
+function selectedContextLabel(contextId: string) {
+  const item = contextItems.find((entry) => entry.id === contextId);
+  return item ? item.title : "未知上下文";
 }
