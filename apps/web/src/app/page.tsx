@@ -3,28 +3,27 @@
 import type { FormEvent, ReactNode } from "react";
 import { useMemo, useRef, useState } from "react";
 import {
-  Activity,
   AlertCircle,
   Bot,
-  Brain,
   CalendarClock,
   CheckCircle2,
   Code2,
   FileText,
-  Library,
   Loader2,
+  Mail,
   MessageSquare,
-  Network,
+  PanelLeft,
   Play,
+  Presentation,
   Search,
   Send,
-  Settings,
-  ShieldCheck,
-  Sparkles,
   Square,
+  Sparkles,
+  Target,
   User,
   Wand2,
-  Workflow
+  Workflow,
+  type LucideIcon
 } from "lucide-react";
 
 import { Button } from "@/components/ui/button";
@@ -40,22 +39,101 @@ interface ChatMessage {
   content: string;
 }
 
+interface TemplateItem {
+  id: string;
+  title: string;
+  description: string;
+  prompt: string;
+  icon: LucideIcon;
+}
+
+interface ArtifactItem {
+  title: string;
+  description: string;
+  state: string;
+  icon: LucideIcon;
+}
+
 const activeMode: AppMode = "daily_work";
 const apiBaseUrl =
   process.env.NEXT_PUBLIC_SEEKDESK_API_URL ?? "http://127.0.0.1:4000";
 
-const workModes = [
-  { icon: FileText, label: "写作润色", detail: "邮件、方案、报告、周报" },
-  { icon: Search, label: "资料研究", detail: "检索、摘要、对比、出处" },
-  { icon: CalendarClock, label: "会议整理", detail: "纪要、待办、跟进提醒" },
-  { icon: Workflow, label: "流程自动化", detail: "跨应用任务和模板" },
-  { icon: Library, label: "知识库问答", detail: "文档、链接、个人资料库" }
+const templates: TemplateItem[] = [
+  {
+    id: "email-draft",
+    title: "Email Draft",
+    description: "Polished note to a client or teammate",
+    prompt:
+      "Draft a concise, professional email that summarizes the update below, highlights the main decision, and ends with a clear next step.\n\nContext:\n- Project:\n- Audience:\n- Key update:\n- Action requested:\n- Tone: clear, warm, professional",
+    icon: Mail
+  },
+  {
+    id: "meeting-summary",
+    title: "Meeting Summary",
+    description: "Turn notes into decisions and action items",
+    prompt:
+      "Turn these meeting notes into a structured summary with sections for overview, key decisions, open questions, and action items. Make it ready to share with the team.\n\nNotes:\n",
+    icon: Presentation
+  },
+  {
+    id: "research-brief",
+    title: "Research Brief",
+    description: "Condense findings into a one-page brief",
+    prompt:
+      "Create a research brief with the problem statement, what we know, what we still need to verify, and a recommended next step. Keep it concise and decision-oriented.\n\nResearch topic:\nEvidence:\nConstraints:\n",
+    icon: Search
+  },
+  {
+    id: "weekly-report",
+    title: "Weekly Report",
+    description: "Summarize progress, risks, and priorities",
+    prompt:
+      "Write a weekly report for the team using this structure: progress this week, blockers or risks, notable wins, and priorities for next week.\n\nProject context:\nWins:\nRisks:\nNext priorities:\n",
+    icon: CalendarClock
+  },
+  {
+    id: "task-plan",
+    title: "Task Plan",
+    description: "Break a goal into practical next actions",
+    prompt:
+      "Create a task plan for the goal below. Break it into phases, list the next 5 actionable tasks, and call out dependencies or risks.\n\nGoal:\nDeadline:\nConstraints:\n",
+    icon: Target
+  },
+  {
+    id: "knowledge-qa",
+    title: "Knowledge Q&A",
+    description: "Answer from notes, docs, or context",
+    prompt:
+      "Answer the question below using only the provided context. If the context is incomplete, say what is missing and ask for the minimum extra detail needed.\n\nQuestion:\nContext:\n",
+    icon: FileText
+  }
 ];
 
-const ecosystemSignals = [
-  { label: "DeepSeek", status: "默认模型", tone: "text-teal-700" },
-  { label: "日常工作模式", status: "当前开发", tone: "text-orange-700" },
-  { label: "编码模式", status: "兼容预留", tone: "text-slate-600" }
+const artifacts: ArtifactItem[] = [
+  {
+    title: "Summary",
+    description: "A clean recap with decisions and next steps",
+    state: "planned",
+    icon: FileText
+  },
+  {
+    title: "Task list",
+    description: "Actionable follow-up items with owners and timing",
+    state: "queued",
+    icon: Workflow
+  },
+  {
+    title: "Email draft",
+    description: "A ready-to-send update for stakeholders",
+    state: "draft",
+    icon: Mail
+  },
+  {
+    title: "Research note",
+    description: "Concise findings and open questions",
+    state: "ready",
+    icon: Search
+  }
 ];
 
 const initialMessages: ChatMessage[] = [
@@ -63,7 +141,7 @@ const initialMessages: ChatMessage[] = [
     id: "assistant-welcome",
     role: "assistant",
     content:
-      "SeekDesk 当前运行在日常工作模式。你可以让我起草邮件、整理会议纪要、研究主题、拆解任务，或规划一个跨工具的工作流。编码模式会保留在架构中，后续再扩展。"
+      "Welcome to SeekDesk daily work mode. Use a template on the left to prefill the composer, then refine the prompt and stream the result into the chat. The coding-agent experience remains reserved in the architecture, but it is not exposed in this milestone."
   }
 ];
 
@@ -73,6 +151,7 @@ export default function Page() {
   const [status, setStatus] = useState<ChatStatus>("idle");
   const [error, setError] = useState<string | null>(null);
   const abortRef = useRef<AbortController | null>(null);
+  const inputRef = useRef<HTMLInputElement | null>(null);
 
   const isBusy = status === "submitting" || status === "streaming";
   const endpoint = useMemo(
@@ -123,11 +202,11 @@ export default function Page() {
       });
 
       if (!response.ok) {
-        throw new Error(`请求失败：${response.status}`);
+        throw new Error(`Request failed with status ${response.status}.`);
       }
 
       if (!response.body) {
-        throw new Error("后端没有返回可读取的流。");
+        throw new Error("The backend did not return a readable stream.");
       }
 
       setStatus("streaming");
@@ -153,13 +232,13 @@ export default function Page() {
       setStatus("idle");
     } catch (requestError) {
       if (controller.signal.aborted) {
-        appendAssistantDelta(assistantMessage.id, "\n\n任务已取消。");
+        appendAssistantDelta(assistantMessage.id, "\n\nRequest canceled.");
         setStatus("idle");
       } else {
         const message =
           requestError instanceof Error
             ? requestError.message
-            : "发送请求时出现未知错误。";
+            : "An unknown error occurred while sending the request.";
 
         setError(message);
         setStatus("error");
@@ -188,10 +267,11 @@ export default function Page() {
 
   function usePrompt(prompt: string) {
     setInput(prompt);
+    inputRef.current?.focus();
   }
 
   return (
-    <main className="min-h-screen px-4 py-4 text-teal-950 md:px-6">
+    <main className="min-h-screen overflow-x-hidden px-4 py-4 text-teal-950 md:px-6">
       <div className="mx-auto flex min-h-[calc(100vh-2rem)] w-full max-w-7xl flex-col overflow-hidden rounded-[8px] border border-teal-100 bg-white shadow-[0_18px_70px_rgba(15,118,110,0.12)]">
         <header className="flex flex-col gap-4 border-b border-teal-100 bg-white/95 px-4 py-4 backdrop-blur md:flex-row md:items-center md:justify-between md:px-5">
           <div className="flex min-w-0 items-center gap-3">
@@ -203,7 +283,7 @@ export default function Page() {
                 SeekDesk
               </h1>
               <p className="truncate text-sm text-teal-700">
-                面向日常工作的 AI 生态工作台
+                Daily work templates, streaming chat, and reusable outputs
               </p>
             </div>
           </div>
@@ -211,73 +291,81 @@ export default function Page() {
           <div className="flex flex-wrap items-center gap-2">
             <Button variant="secondary" size="sm">
               <Search className="size-4" aria-hidden="true" />
-              搜索
+              Search
             </Button>
             <Button variant="secondary" size="sm">
-              <Settings className="size-4" aria-hidden="true" />
-              设置
+              <PanelLeft className="size-4" aria-hidden="true" />
+              Templates
             </Button>
             <Button size="sm" className="bg-orange-500 hover:bg-orange-600">
               <Play className="size-4" aria-hidden="true" />
-              新建工作流
+              New work run
             </Button>
           </div>
         </header>
 
-        <section className="grid flex-1 grid-cols-1 bg-teal-50/40 lg:grid-cols-[290px_minmax(0,1fr)_320px]">
+        <section className="grid flex-1 grid-cols-1 bg-teal-50/40 lg:grid-cols-[304px_minmax(0,1fr)_336px]">
           <aside className="border-b border-teal-100 bg-white lg:border-b-0 lg:border-r">
             <PanelHeader
-              icon={<Network className="size-4" aria-hidden="true" />}
-              title="AI 生态"
+              icon={<Wand2 className="size-4" aria-hidden="true" />}
+              title="Template Library"
             />
-            <div className="space-y-3 px-3 pb-4">
+            <div className="space-y-3 px-3 pb-4 pt-3">
               <div className="rounded-[8px] border border-teal-100 bg-teal-50 px-3 py-3 text-sm text-teal-900">
-                <div className="font-medium text-teal-950">日常工作空间</div>
-                <div className="mt-1 text-xs text-teal-700">
-                  汇聚模型、知识、工具与自动化流程
+                <div className="font-medium text-teal-950">Daily work mode</div>
+                <div className="mt-1 text-xs leading-5 text-teal-700">
+                  Pick a template to seed the composer with a realistic prompt, then edit it for the task at hand.
                 </div>
               </div>
 
-              <div className="space-y-1">
-                {workModes.map((mode) => (
-                  <button
-                    key={mode.label}
-                    className="flex min-h-12 w-full cursor-pointer items-start gap-2 rounded-[6px] px-2 py-2 text-left text-sm text-teal-900 transition-colors duration-200 hover:bg-teal-50 hover:text-teal-700 focus-visible:outline focus-visible:outline-2 focus-visible:outline-teal-600"
-                    type="button"
-                    onClick={() => usePrompt(`帮我处理一个${mode.label}任务：`)}
-                  >
-                    <mode.icon className="mt-0.5 size-4 shrink-0" aria-hidden="true" />
-                    <span className="min-w-0">
-                      <span className="block font-medium">{mode.label}</span>
-                      <span className="block truncate text-xs text-teal-600">
-                        {mode.detail}
+              <div className="space-y-2">
+                {templates.map((template) => {
+                  const Icon = template.icon;
+
+                  return (
+                    <button
+                      key={template.id}
+                      type="button"
+                      onClick={() => usePrompt(template.prompt)}
+                      className="flex min-h-16 w-full items-start gap-3 rounded-[8px] border border-teal-100 bg-white px-3 py-3 text-left transition-colors duration-200 hover:border-teal-300 hover:bg-teal-50 focus-visible:outline focus-visible:outline-2 focus-visible:outline-teal-600"
+                    >
+                      <span className="grid size-9 shrink-0 place-items-center rounded-[8px] bg-teal-50 text-teal-700">
+                        <Icon className="size-4" aria-hidden="true" />
                       </span>
-                    </span>
-                  </button>
-                ))}
+                      <span className="min-w-0">
+                        <span className="block font-medium text-teal-950">
+                          {template.title}
+                        </span>
+                        <span className="block text-xs leading-5 text-teal-700">
+                          {template.description}
+                        </span>
+                      </span>
+                    </button>
+                  );
+                })}
               </div>
 
               <div className="rounded-[8px] border border-slate-200 bg-slate-50 px-3 py-3 text-sm text-slate-700">
                 <div className="mb-2 flex items-center gap-2 font-medium text-slate-900">
                   <Code2 className="size-4" aria-hidden="true" />
-                  编码模式
+                  Coding agent compatibility
                 </div>
                 <p className="text-xs leading-5">
-                  架构保留 Coding Agent 能力位，当前版本只开发日常工作模式。
+                  The coding-agent mode remains part of the product architecture, but this branch only exposes daily work.
                 </p>
               </div>
             </div>
           </aside>
 
-          <section className="flex min-h-[680px] flex-col bg-white">
+          <section className="flex min-h-[680px] min-w-0 flex-col bg-white">
             <PanelHeader
               icon={<MessageSquare className="size-4" aria-hidden="true" />}
-              title="AI 工作助理"
+              title="Daily Work Chat"
               action={
                 <Button
                   variant="ghost"
                   size="icon"
-                  aria-label="取消任务"
+                  aria-label="Cancel request"
                   disabled={!isBusy}
                   onClick={cancelRequest}
                 >
@@ -289,21 +377,21 @@ export default function Page() {
             <div className="flex-1 space-y-4 overflow-y-auto px-4 pb-4 pt-4">
               <div className="grid gap-3 md:grid-cols-3">
                 <PromptCard
-                  icon={<Wand2 className="size-4" aria-hidden="true" />}
-                  title="起草邮件"
-                  text="帮我写一封给客户的项目进展邮件，语气专业、简洁。"
+                  icon={<Mail className="size-4" aria-hidden="true" />}
+                  title="Email draft"
+                  text="Write a concise status email for a client update, including the result, the timeline, and a clear next step."
                   onClick={usePrompt}
                 />
                 <PromptCard
-                  icon={<Brain className="size-4" aria-hidden="true" />}
-                  title="研究主题"
-                  text="帮我梳理一个新行业主题，给出关键问题、资料方向和行动清单。"
+                  icon={<Presentation className="size-4" aria-hidden="true" />}
+                  title="Meeting summary"
+                  text="Turn these notes into a shareable summary with decisions, owners, risks, and follow-up actions."
                   onClick={usePrompt}
                 />
                 <PromptCard
-                  icon={<CalendarClock className="size-4" aria-hidden="true" />}
-                  title="整理会议"
-                  text="把这段会议记录整理成纪要、决策和待办事项。"
+                  icon={<Search className="size-4" aria-hidden="true" />}
+                  title="Research brief"
+                  text="Condense the latest findings into a crisp brief that calls out what is known, what is missing, and the recommended next step."
                   onClick={usePrompt}
                 />
               </div>
@@ -326,16 +414,15 @@ export default function Page() {
                   <span>{error}</span>
                 </div>
               ) : null}
-
-              <WorkflowPreview />
             </div>
 
             <form className="border-t border-teal-100 bg-white p-4" onSubmit={handleSubmit}>
               <div className="flex min-h-14 items-center gap-3 rounded-[8px] border border-teal-200 bg-white px-3 py-2 shadow-inner focus-within:border-teal-500 focus-within:ring-2 focus-within:ring-teal-100">
                 <input
+                  ref={inputRef}
                   className="min-w-0 flex-1 bg-transparent text-sm text-teal-950 outline-none placeholder:text-teal-500"
-                  placeholder="输入日常工作任务，例如：整理会议纪要、写邮件、做资料研究"
-                  aria-label="输入日常工作任务"
+                  placeholder="Type a daily work request, for example: draft a client update, summarize a meeting, or turn notes into a task plan"
+                  aria-label="Daily work prompt"
                   value={input}
                   onChange={(event) => setInput(event.target.value)}
                   disabled={isBusy}
@@ -352,58 +439,82 @@ export default function Page() {
                     <Send className="size-4" aria-hidden="true" />
                   )}
                   {status === "submitting"
-                    ? "连接中"
+                    ? "Connecting"
                     : status === "streaming"
-                      ? "接收中"
-                      : "发送"}
+                      ? "Receiving"
+                      : "Send"}
                 </Button>
               </div>
               <div className="mt-2 flex flex-wrap items-center gap-x-3 gap-y-1 text-xs text-teal-600">
                 <span>Endpoint: {endpoint}</span>
-                <span>模式: 日常工作</span>
-                <span>状态: {statusLabel(status)}</span>
+                <span>Mode: daily_work</span>
+                <span>Status: {statusLabel(status)}</span>
               </div>
             </form>
           </section>
 
           <aside className="border-t border-teal-100 bg-white lg:border-l lg:border-t-0">
             <PanelHeader
-              icon={<Activity className="size-4" aria-hidden="true" />}
-              title="生态状态"
+              icon={<Workflow className="size-4" aria-hidden="true" />}
+              title="Artifacts & Status"
             />
-            <div className="space-y-4 px-3 pb-4">
+            <div className="space-y-4 px-3 pb-4 pt-3">
               <div className="rounded-[8px] border border-teal-100 bg-teal-50 p-3">
                 <div className="mb-3 flex items-center gap-2 text-sm font-medium text-teal-950">
-                  <ShieldCheck className="size-4 text-teal-700" aria-hidden="true" />
-                  工作数据边界
+                  <CheckCircle2 className="size-4 text-teal-700" aria-hidden="true" />
+                  Planned outputs
                 </div>
-                <div className="rounded-[6px] border border-teal-200 bg-white px-3 py-2 text-sm text-teal-900">
-                  默认仅处理当前会话输入，连接器需要单独授权。
-                </div>
-              </div>
-
               <div className="space-y-2">
-                {ecosystemSignals.map((event) => (
-                  <div
-                    key={event.label}
-                    className="flex items-center justify-between rounded-[8px] border border-teal-100 bg-white px-3 py-2 text-sm"
-                  >
-                    <span className="text-teal-900">{event.label}</span>
-                    <span className={event.tone}>{event.status}</span>
-                  </div>
-                ))}
+                  {artifacts.map((artifact) => {
+                    const Icon = artifact.icon;
+
+                    return (
+                      <div
+                        key={artifact.title}
+                        className="flex items-start gap-3 rounded-[8px] border border-teal-100 bg-white px-3 py-2"
+                      >
+                        <span className="mt-0.5 grid size-8 shrink-0 place-items-center rounded-[8px] bg-teal-50 text-teal-700">
+                          <Icon className="size-4" aria-hidden="true" />
+                        </span>
+                        <span className="min-w-0 flex-1">
+                          <span className="flex items-center justify-between gap-2">
+                            <span className="truncate text-sm font-medium text-teal-950">
+                              {artifact.title}
+                            </span>
+                            <span className="shrink-0 rounded-[999px] bg-teal-50 px-2 py-0.5 text-[11px] font-medium uppercase tracking-wide text-teal-700">
+                              {artifact.state}
+                            </span>
+                          </span>
+                          <span className="mt-1 block text-xs leading-5 text-teal-700">
+                            {artifact.description}
+                          </span>
+                        </span>
+                      </div>
+                    );
+                  })}
+                </div>
               </div>
 
               <div className="rounded-[8px] border border-teal-100 bg-white p-3">
                 <div className="mb-3 flex items-center gap-2 text-sm font-medium text-teal-950">
-                  <CheckCircle2 className="size-4 text-orange-600" aria-hidden="true" />
-                  下一步能力
+                  <Sparkles className="size-4 text-orange-600" aria-hidden="true" />
+                  Mode snapshot
                 </div>
                 <div className="space-y-2 text-sm text-teal-700">
-                  <p>个人知识库导入</p>
-                  <p>常用工作流模板</p>
-                  <p>会议、邮件、日程连接器</p>
+                  <StatusRow label="Current mode" value="daily_work" />
+                  <StatusRow label="Chat transport" value="Streaming" />
+                  <StatusRow label="Artifact source" value="Client-side preview" />
                 </div>
+              </div>
+
+              <div className="rounded-[8px] border border-slate-200 bg-slate-50 p-3 text-sm text-slate-700">
+                <div className="mb-2 flex items-center gap-2 font-medium text-slate-900">
+                  <Code2 className="size-4" aria-hidden="true" />
+                  Coding mode compatibility
+                </div>
+                <p className="text-xs leading-5">
+                  The app architecture still reserves space for coding-agent mode, but there are no exposed tools or controls in this daily-work branch.
+                </p>
               </div>
             </div>
           </aside>
@@ -443,7 +554,7 @@ function ChatBubble({
           ) : (
             <Sparkles className="size-3.5" aria-hidden="true" />
           )}
-          {isUser ? "你" : "SeekDesk"}
+          {isUser ? "You" : "SeekDesk"}
           {streaming ? (
             <Loader2 className="size-3.5 animate-spin" aria-hidden="true" />
           ) : null}
@@ -502,45 +613,11 @@ function PromptCard({
   );
 }
 
-function WorkflowPreview() {
-  const codeLines = [
-    { token: "const", text: "const workflow = createDailyWorkflow({" },
-    { token: "key", text: "  mode: " },
-    { token: "string", text: "\"daily_work\"," },
-    { token: "key", text: "  inputs: " },
-    { token: "string", text: "[\"meeting_notes\", \"customer_email\"]," },
-    { token: "key", text: "  outputs: " },
-    { token: "string", text: "[\"summary\", \"tasks\", \"reply_draft\"]" },
-    { token: "plain", text: "});" }
-  ];
-
+function StatusRow({ label, value }: { label: string; value: string }) {
   return (
-    <div className="rounded-[8px] border border-teal-100 bg-slate-950 p-4 text-sm text-slate-100 shadow-sm">
-      <div className="mb-3 flex items-center justify-between text-xs text-slate-400">
-        <span>daily-workflow.ts</span>
-        <span>syntax highlighted</span>
-      </div>
-      <pre className="overflow-x-auto">
-        <code>
-          {codeLines.map((line, index) => (
-            <span key={`${line.text}-${index}`} className="block">
-              <span className="mr-4 select-none text-slate-600">
-                {String(index + 1).padStart(2, "0")}
-              </span>
-              <span
-                className={cn(
-                  line.token === "const" && "text-orange-300",
-                  line.token === "key" && "text-teal-300",
-                  line.token === "string" && "text-lime-300",
-                  line.token === "plain" && "text-slate-200"
-                )}
-              >
-                {line.text}
-              </span>
-            </span>
-          ))}
-        </code>
-      </pre>
+    <div className="flex items-center justify-between gap-4 rounded-[8px] border border-teal-100 bg-teal-50 px-3 py-2">
+      <span className="text-xs font-medium text-teal-700">{label}</span>
+      <span className="truncate text-sm text-teal-950">{value}</span>
     </div>
   );
 }
@@ -548,12 +625,12 @@ function WorkflowPreview() {
 function statusLabel(status: ChatStatus) {
   switch (status) {
     case "idle":
-      return "空闲";
+      return "Idle";
     case "submitting":
-      return "连接中";
+      return "Connecting";
     case "streaming":
-      return "接收中";
+      return "Streaming";
     case "error":
-      return "出错";
+      return "Error";
   }
 }
