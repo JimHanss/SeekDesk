@@ -1,5 +1,6 @@
 export * from "./app-modes.js";
 export * from "./approvals.js";
+export * from "./connectors.js";
 export * from "./daily-work.js";
 export * from "./model-usage.js";
 export * from "./permissions.js";

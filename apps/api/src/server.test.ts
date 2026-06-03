@@ -238,6 +238,169 @@ describe("api server", () => {
     await app.close();
   });
 
+  it("returns the default daily-work connector catalog", async () => {
+    const app = await buildServer();
+    const response = await app.inject({
+      method: "GET",
+      url: "/api/daily/connectors"
+    });
+    const body = response.json();
+
+    expect(response.statusCode).toBe(200);
+    expect(body).toEqual({
+      mode: "daily_work",
+      connectors: expect.arrayContaining([
+        expect.objectContaining({
+          id: "workspace-documents",
+          mode: "daily_work",
+          category: "documents",
+          provider: "google_drive",
+          status: "available",
+          permissionState: "workspace_shared",
+          riskLevel: "medium",
+          availableActions: ["search", "read_context", "draft_document"],
+          relatedContextItemIds: ["project-brief", "meeting-notes"],
+          requiredApprovalRequestIds: ["use-internal-meeting-notes"]
+        }),
+        expect.objectContaining({
+          id: "team-calendar",
+          category: "calendar",
+          status: "requires_setup",
+          permissionState: "requires_review",
+          riskLevel: "medium",
+          availableActions: [
+            "read_context",
+            "prepare_calendar_follow_up"
+          ],
+          relatedContextItemIds: ["meeting-notes"],
+          requiredApprovalRequestIds: ["schedule-calendar-follow-up"]
+        }),
+        expect.objectContaining({
+          id: "customer-email",
+          category: "email",
+          provider: "gmail",
+          status: "preview",
+          permissionState: "requires_review",
+          riskLevel: "high",
+          availableActions: ["read_context", "prepare_email_draft"],
+          relatedContextItemIds: ["customer-email", "meeting-notes"],
+          requiredApprovalRequestIds: [
+            "read-customer-email-context",
+            "draft-external-reply"
+          ]
+        }),
+        expect.objectContaining({
+          id: "workspace-notes",
+          category: "notes",
+          provider: "notion",
+          permissionState: "workspace_shared",
+          riskLevel: "low"
+        }),
+        expect.objectContaining({
+          id: "team-knowledge-base",
+          category: "knowledge",
+          provider: "confluence",
+          permissionState: "public",
+          riskLevel: "low"
+        })
+      ])
+    });
+    expect(body.connectors).toHaveLength(5);
+    expect(body.connectors).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          notes: expect.arrayContaining([
+            expect.stringContaining("Mock catalog entry only")
+          ])
+        })
+      ])
+    );
+
+    await app.close();
+  });
+
+  it("returns one daily-work connector by id", async () => {
+    const app = await buildServer();
+    const response = await app.inject({
+      method: "GET",
+      url: "/api/daily/connectors/customer-email"
+    });
+
+    expect(response.statusCode).toBe(200);
+    expect(response.json()).toEqual({
+      mode: "daily_work",
+      connector: expect.objectContaining({
+        id: "customer-email",
+        displayName: "Customer Email",
+        status: "preview",
+        permissionState: "requires_review",
+        riskLevel: "high",
+        lastSyncAt: "2026-06-02T09:45:00.000Z",
+        availableActions: ["read_context", "prepare_email_draft"],
+        relatedContextItemIds: ["customer-email", "meeting-notes"],
+        requiredApprovalRequestIds: [
+          "read-customer-email-context",
+          "draft-external-reply"
+        ]
+      })
+    });
+
+    await app.close();
+  });
+
+  it("returns 404 when a daily-work connector is missing", async () => {
+    const app = await buildServer();
+    const response = await app.inject({
+      method: "GET",
+      url: "/api/daily/connectors/missing-connector"
+    });
+
+    expect(response.statusCode).toBe(404);
+    expect(response.json()).toEqual({
+      mode: "daily_work",
+      error: "Daily-work connector not found."
+    });
+
+    await app.close();
+  });
+
+  it("keeps the reserved coding-agent compatibility path for daily connectors", async () => {
+    const app = await buildServer();
+    const response = await app.inject({
+      method: "GET",
+      url: "/api/daily/connectors?mode=coding_agent"
+    });
+
+    expect(response.statusCode).toBe(200);
+    expect(response.json()).toEqual({
+      mode: "coding_agent",
+      connectors: []
+    });
+
+    await app.close();
+  });
+
+  it("handles CORS preflight for daily connectors", async () => {
+    const app = await buildServer();
+    const response = await app.inject({
+      method: "OPTIONS",
+      url: "/api/daily/connectors",
+      headers: {
+        origin: "http://localhost:3000"
+      }
+    });
+
+    expect(response.statusCode).toBe(204);
+    expect(response.headers["access-control-allow-origin"]).toBe(
+      "http://localhost:3000"
+    );
+    expect(response.headers["access-control-allow-methods"]).toBe(
+      "GET,POST,OPTIONS"
+    );
+
+    await app.close();
+  });
+
   it("returns the default daily-work model usage snapshot", async () => {
     const app = await buildServer();
     const response = await app.inject({
