@@ -401,6 +401,214 @@ describe("api server", () => {
     await app.close();
   });
 
+  it("returns the default daily-work workflow previews", async () => {
+    const app = await buildServer();
+    const response = await app.inject({
+      method: "GET",
+      url: "/api/daily/workflows"
+    });
+    const body = response.json();
+
+    expect(response.statusCode).toBe(200);
+    expect(body).toEqual({
+      mode: "daily_work",
+      workflows: expect.arrayContaining([
+        expect.objectContaining({
+          id: "customer-email-draft-workflow",
+          mode: "daily_work",
+          status: "waiting_for_approval",
+          previewOnly: true,
+          safetyBoundary: expect.objectContaining({
+            previewOnly: true,
+            externalEffects: ["none"],
+            prohibitedExternalActions: expect.arrayContaining([
+              "send_email",
+              "write_document",
+              "schedule_calendar_event"
+            ])
+          }),
+          connectorLinks: expect.arrayContaining([
+            expect.objectContaining({
+              connectorId: "customer-email",
+              permissionState: "requires_review",
+              riskLevel: "high"
+            })
+          ]),
+          contextLinks: expect.arrayContaining([
+            expect.objectContaining({
+              contextItemId: "customer-email",
+              permissionState: "requires_review"
+            })
+          ]),
+          artifactLinks: expect.arrayContaining([
+            expect.objectContaining({
+              artifactId: "email-draft-artifact",
+              artifactType: "email_draft"
+            })
+          ]),
+          approvalLinks: expect.arrayContaining([
+            expect.objectContaining({
+              approvalRequestId: "draft-external-reply",
+              requiredPermissionMode: "confirm_writes_and_commands"
+            })
+          ]),
+          actionQueue: expect.arrayContaining([
+            expect.objectContaining({
+              id: "queue-email-draft",
+              actionType: "draft_email",
+              status: "needs_approval",
+              previewOnly: true,
+              externalEffects: ["none"],
+              riskLevel: "high",
+              permissionState: "requires_explicit_approval"
+            })
+          ])
+        }),
+        expect.objectContaining({
+          id: "meeting-summary-workflow",
+          actionQueue: expect.arrayContaining([
+            expect.objectContaining({
+              actionType: "summarize_meeting",
+              riskLevel: "low",
+              permissionState: "workspace_shared"
+            })
+          ])
+        }),
+        expect.objectContaining({
+          id: "calendar-follow-up-workflow",
+          actionQueue: expect.arrayContaining([
+            expect.objectContaining({
+              actionType: "prepare_calendar_follow_up",
+              riskLevel: "medium",
+              permissionState: "requires_explicit_approval"
+            })
+          ])
+        }),
+        expect.objectContaining({
+          id: "weekly-report-task-plan-workflow",
+          actionQueue: expect.arrayContaining([
+            expect.objectContaining({
+              actionType: "compile_weekly_report"
+            }),
+            expect.objectContaining({
+              actionType: "create_task_plan"
+            })
+          ])
+        })
+      ])
+    });
+    expect(body.workflows).toHaveLength(4);
+    expect(
+      body.workflows.flatMap(
+        (workflow: { actionQueue: unknown[] }) => workflow.actionQueue
+      )
+    ).toHaveLength(5);
+
+    await app.close();
+  });
+
+  it("returns one daily-work workflow preview by id", async () => {
+    const app = await buildServer();
+    const response = await app.inject({
+      method: "GET",
+      url: "/api/daily/workflows/weekly-report-task-plan-workflow"
+    });
+
+    expect(response.statusCode).toBe(200);
+    expect(response.json()).toEqual({
+      mode: "daily_work",
+      workflow: expect.objectContaining({
+        id: "weekly-report-task-plan-workflow",
+        previewOnly: true,
+        safetyBoundary: expect.objectContaining({
+          statement: expect.stringContaining("never sends, writes, schedules")
+        }),
+        actionQueue: expect.arrayContaining([
+          expect.objectContaining({
+            id: "queue-weekly-report",
+            actionType: "compile_weekly_report",
+            connectorLinks: expect.arrayContaining([
+              expect.objectContaining({
+                connectorId: "workspace-documents"
+              })
+            ]),
+            contextLinks: expect.arrayContaining([
+              expect.objectContaining({
+                contextItemId: "project-brief"
+              })
+            ]),
+            artifactLinks: expect.arrayContaining([
+              expect.objectContaining({
+                artifactId: "research-note-artifact"
+              })
+            ])
+          }),
+          expect.objectContaining({
+            id: "queue-task-plan",
+            actionType: "create_task_plan",
+            previewOnly: true,
+            externalEffects: ["none"]
+          })
+        ])
+      })
+    });
+
+    await app.close();
+  });
+
+  it("returns 404 when a daily-work workflow is missing", async () => {
+    const app = await buildServer();
+    const response = await app.inject({
+      method: "GET",
+      url: "/api/daily/workflows/missing-workflow"
+    });
+
+    expect(response.statusCode).toBe(404);
+    expect(response.json()).toEqual({
+      mode: "daily_work",
+      error: "Daily-work workflow not found."
+    });
+
+    await app.close();
+  });
+
+  it("keeps the reserved coding-agent compatibility path for daily workflows", async () => {
+    const app = await buildServer();
+    const response = await app.inject({
+      method: "GET",
+      url: "/api/daily/workflows?mode=coding_agent"
+    });
+
+    expect(response.statusCode).toBe(200);
+    expect(response.json()).toEqual({
+      mode: "coding_agent",
+      workflows: []
+    });
+
+    await app.close();
+  });
+
+  it("handles CORS preflight for daily workflows", async () => {
+    const app = await buildServer();
+    const response = await app.inject({
+      method: "OPTIONS",
+      url: "/api/daily/workflows",
+      headers: {
+        origin: "http://localhost:3000"
+      }
+    });
+
+    expect(response.statusCode).toBe(204);
+    expect(response.headers["access-control-allow-origin"]).toBe(
+      "http://localhost:3000"
+    );
+    expect(response.headers["access-control-allow-methods"]).toBe(
+      "GET,POST,OPTIONS"
+    );
+
+    await app.close();
+  });
+
   it("returns the default daily-work model usage snapshot", async () => {
     const app = await buildServer();
     const response = await app.inject({
