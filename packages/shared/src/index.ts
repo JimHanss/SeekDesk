@@ -2,6 +2,7 @@ export * from "./app-modes.js";
 export * from "./daily-work.js";
 export * from "./model-usage.js";
 export * from "./permissions.js";
+export * from "./session-context.js";
 export * from "./realtime-events.js";
 export * from "./sessions.js";
 export * from "./tools.js";
