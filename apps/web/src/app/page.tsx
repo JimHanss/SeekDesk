@@ -69,6 +69,20 @@ interface ContextItem {
   icon: LucideIcon;
 }
 
+type ApprovalStatus = "waiting" | "allowed_once" | "denied" | "blocked";
+type ApprovalRisk = "低" | "中" | "高" | "极高";
+
+interface ApprovalRequestItem {
+  id: string;
+  title: string;
+  requestedAction: string;
+  scope: string;
+  risk: ApprovalRisk;
+  status: ApprovalStatus;
+  detail: string;
+  icon: LucideIcon;
+}
+
 const activeMode: AppMode = "daily_work";
 const apiBaseUrl =
   process.env.NEXT_PUBLIC_SEEKDESK_API_URL ?? "http://127.0.0.1:4000";
@@ -223,12 +237,59 @@ const initialMessages: ChatMessage[] = [
   }
 ];
 
+const initialApprovalRequests: ApprovalRequestItem[] = [
+  {
+    id: "read-customer-email",
+    title: "读取客户邮件上下文",
+    requestedAction: "查看客户诉求并提炼回复要点",
+    scope: "仅限本次会话中已确认的客户邮件摘要，不扩散到其他联系人。",
+    risk: "高",
+    status: "waiting",
+    detail:
+      "涉及外部客户信息，建议先确认范围，再决定是否用于草拟回复。",
+    icon: Mail
+  },
+  {
+    id: "use-meeting-notes",
+    title: "使用内部会议记录",
+    requestedAction: "压缩会议记录为可分享纪要",
+    scope: "仅限当前项目会议纪要，不读取其他项目或私人笔记。",
+    risk: "中",
+    status: "allowed_once",
+    detail: "适合一次性整理为工作产物，输出后仍保留可回溯说明。",
+    icon: Presentation
+  },
+  {
+    id: "draft-external-reply",
+    title: "起草外部回复",
+    requestedAction: "生成可发送给客户的专业草稿",
+    scope: "仅使用已批准上下文，不触发外部发送或自动化动作。",
+    risk: "极高",
+    status: "blocked",
+    detail: "一旦进入外发语境，需要明确授权边界，避免误发敏感信息。",
+    icon: AlertCircle
+  },
+  {
+    id: "schedule-follow-up",
+    title: "安排日历跟进",
+    requestedAction: "为后续沟通创建跟进提醒",
+    scope: "仅生成日历建议，不直接访问真实日历或联系人列表。",
+    risk: "低",
+    status: "denied",
+    detail: "可以保留为手动执行建议，但当前不做自动排程。",
+    icon: CalendarClock
+  }
+];
+
 export default function Page() {
   const [messages, setMessages] = useState<ChatMessage[]>(initialMessages);
   const [input, setInput] = useState("");
   const [status, setStatus] = useState<ChatStatus>("idle");
   const [error, setError] = useState<string | null>(null);
   const [selectedContextId, setSelectedContextId] = useState<string | null>(null);
+  const [approvalRequests, setApprovalRequests] = useState<ApprovalRequestItem[]>(
+    initialApprovalRequests
+  );
   const abortRef = useRef<AbortController | null>(null);
   const inputRef = useRef<HTMLInputElement | null>(null);
 
@@ -353,6 +414,17 @@ export default function Page() {
   function useContextItem(item: ContextItem) {
     setSelectedContextId(item.id);
     applyPrompt(item.prompt);
+  }
+
+  function updateApprovalStatus(
+    approvalId: string,
+    nextStatus: Exclude<ApprovalStatus, "waiting">
+  ) {
+    setApprovalRequests((current) =>
+      current.map((item) =>
+        item.id === approvalId ? { ...item, status: nextStatus } : item
+      )
+    );
   }
 
   return (
@@ -544,9 +616,81 @@ export default function Page() {
           <aside className="border-t border-teal-100 bg-white lg:border-l lg:border-t-0">
             <PanelHeader
               icon={<Workflow className="size-4" aria-hidden="true" />}
-              title="上下文与产物"
+              title="审批 / 上下文 / 产物"
             />
             <div className="space-y-4 px-3 pb-4 pt-3">
+              <div className="rounded-[8px] border border-amber-200 bg-amber-50 p-3">
+                <div className="mb-3 flex items-center gap-2 text-sm font-medium text-amber-950">
+                  <ShieldCheck className="size-4 text-amber-700" aria-hidden="true" />
+                  许可审批台账
+                </div>
+                <div className="space-y-2">
+                  {approvalRequests.map((request) => {
+                    const Icon = request.icon;
+
+                    return (
+                      <div
+                        key={request.id}
+                        className="rounded-[8px] border border-amber-100 bg-white px-3 py-3"
+                      >
+                        <div className="flex items-start gap-3">
+                          <span className="mt-0.5 grid size-8 shrink-0 place-items-center rounded-[8px] bg-amber-50 text-amber-700">
+                            <Icon className="size-4" aria-hidden="true" />
+                          </span>
+                          <div className="min-w-0 flex-1">
+                            <div className="flex flex-wrap items-center justify-between gap-2">
+                              <div className="min-w-0">
+                                <div className="truncate text-sm font-medium text-teal-950">
+                                  {request.title}
+                                </div>
+                                <div className="mt-1 text-xs leading-5 text-teal-700">
+                                  {request.requestedAction}
+                                </div>
+                              </div>
+                              <StatusPill status={request.status} />
+                            </div>
+
+                            <div className="mt-2 grid gap-2 text-xs leading-5 text-slate-700">
+                              <InfoRow label="风险等级" value={request.risk} />
+                              <InfoRow label="范围边界" value={request.scope} />
+                              <InfoRow label="当前状态" value={approvalStatusLabel(request.status)} />
+                            </div>
+
+                            <p className="mt-2 text-xs leading-5 text-amber-800">
+                              {request.detail}
+                            </p>
+
+                            <div className="mt-3 flex flex-wrap gap-2">
+                              <Button
+                                size="sm"
+                                variant="secondary"
+                                className="h-8 rounded-[8px] border-amber-200 bg-white text-amber-800 hover:bg-amber-50"
+                                onClick={() =>
+                                  updateApprovalStatus(request.id, "allowed_once")
+                                }
+                              >
+                                允许一次
+                              </Button>
+                              <Button
+                                size="sm"
+                                variant="secondary"
+                                className="h-8 rounded-[8px] border-slate-200 bg-white text-slate-700 hover:bg-slate-50"
+                                onClick={() => updateApprovalStatus(request.id, "denied")}
+                              >
+                                拒绝
+                              </Button>
+                            </div>
+                          </div>
+                        </div>
+                      </div>
+                    );
+                  })}
+                </div>
+                <p className="mt-3 text-xs leading-5 text-amber-800">
+                  这里只做本地状态流转，不会触发真实邮件、日历或外部系统操作。
+                </p>
+              </div>
+
               <div className="rounded-[8px] border border-teal-100 bg-teal-50 p-3">
                 <div className="mb-3 flex items-center gap-2 text-sm font-medium text-teal-950">
                   <ShieldCheck className="size-4 text-teal-700" aria-hidden="true" />
@@ -648,6 +792,7 @@ export default function Page() {
                   <StatusRow label="当前模式" value="daily_work" />
                   <StatusRow label="对话传输" value="Streaming" />
                   <StatusRow label="上下文来源" value="会话级预览" />
+                  <StatusRow label="审批请求" value={`${approvalRequests.length} 项`} />
                 </div>
               </div>
 
@@ -757,6 +902,30 @@ function PromptCard({
   );
 }
 
+function StatusPill({ status }: { status: ApprovalStatus }) {
+  const config = approvalStatusConfig(status);
+
+  return (
+    <span
+      className={cn(
+        "shrink-0 rounded-[999px] px-2 py-0.5 text-[11px] font-medium",
+        config.className
+      )}
+    >
+      {config.label}
+    </span>
+  );
+}
+
+function InfoRow({ label, value }: { label: string; value: string }) {
+  return (
+    <div className="flex items-start justify-between gap-3 rounded-[8px] border border-amber-100 bg-amber-50 px-2.5 py-2">
+      <span className="shrink-0 text-[11px] font-medium text-amber-700">{label}</span>
+      <span className="min-w-0 text-right text-[11px] text-slate-700">{value}</span>
+    </div>
+  );
+}
+
 function StatusRow({ label, value }: { label: string; value: string }) {
   return (
     <div className="flex items-center justify-between gap-4 rounded-[8px] border border-teal-100 bg-teal-50 px-3 py-2">
@@ -776,6 +945,44 @@ function statusLabel(status: ChatStatus) {
       return "接收中";
     case "error":
       return "出错";
+  }
+}
+
+function approvalStatusLabel(status: ApprovalStatus) {
+  switch (status) {
+    case "waiting":
+      return "等待审批";
+    case "allowed_once":
+      return "允许一次";
+    case "denied":
+      return "拒绝";
+    case "blocked":
+      return "阻断";
+  }
+}
+
+function approvalStatusConfig(status: ApprovalStatus) {
+  switch (status) {
+    case "waiting":
+      return {
+        label: "等待中",
+        className: "bg-amber-100 text-amber-800"
+      };
+    case "allowed_once":
+      return {
+        label: "允许一次",
+        className: "bg-emerald-100 text-emerald-800"
+      };
+    case "denied":
+      return {
+        label: "已拒绝",
+        className: "bg-slate-100 text-slate-700"
+      };
+    case "blocked":
+      return {
+        label: "已阻断",
+        className: "bg-red-100 text-red-800"
+      };
   }
 }
 
