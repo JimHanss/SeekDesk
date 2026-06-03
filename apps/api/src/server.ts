@@ -4,7 +4,14 @@ import {
   type ModelMessage,
   type ModelProvider
 } from "@seekdesk/agent";
-import { appModeSchema, type AppMode } from "@seekdesk/shared";
+import {
+  appModeSchema,
+  defaultDailyWorkArtifacts,
+  defaultDailyWorkTemplates,
+  type AppMode,
+  type DailyWorkArtifactsResponse,
+  type DailyWorkTemplatesResponse
+} from "@seekdesk/shared";
 import websocket from "@fastify/websocket";
 import Fastify, { type FastifyReply, type FastifyRequest } from "fastify";
 import { pathToFileURL } from "node:url";
@@ -37,12 +44,42 @@ export async function buildServer() {
   });
 
   app.options("/api/chat", async (_request, reply) => reply.code(204).send());
+  app.options("/api/daily/templates", async (_request, reply) =>
+    reply.code(204).send()
+  );
+  app.options("/api/daily/artifacts", async (_request, reply) =>
+    reply.code(204).send()
+  );
 
   app.get("/health", async () => ({
     status: "ok",
     service: "seekdesk-api",
     version: "0.1.0"
   }));
+
+  app.get<{ Querystring: { mode?: string } }>(
+    "/api/daily/templates",
+    async (request): Promise<DailyWorkTemplatesResponse> => {
+      const mode = normalizeAppMode(request.query.mode);
+
+      return {
+        mode,
+        templates: filterDailyWorkTemplates(mode)
+      };
+    }
+  );
+
+  app.get<{ Querystring: { mode?: string } }>(
+    "/api/daily/artifacts",
+    async (request): Promise<DailyWorkArtifactsResponse> => {
+      const mode = normalizeAppMode(request.query.mode);
+
+      return {
+        mode,
+        artifacts: filterDailyWorkArtifacts(mode)
+      };
+    }
+  );
 
   app.post<{ Body: ChatRequestBody }>("/api/chat", async (request, reply) => {
     const mode = normalizeAppMode(request.body?.mode);
@@ -101,9 +138,25 @@ function applyCorsHeaders(request: FastifyRequest, reply: FastifyReply) {
   reply.header("Access-Control-Allow-Headers", "Content-Type,Authorization");
 }
 
-function normalizeAppMode(mode: ChatRequest["mode"]): AppMode {
+function normalizeAppMode(mode: unknown): AppMode {
   const parsed = appModeSchema.safeParse(mode);
   return parsed.success ? parsed.data : "daily_work";
+}
+
+function filterDailyWorkTemplates(mode: AppMode) {
+  if (mode !== "daily_work") {
+    return [];
+  }
+
+  return defaultDailyWorkTemplates;
+}
+
+function filterDailyWorkArtifacts(mode: AppMode) {
+  if (mode !== "daily_work") {
+    return [];
+  }
+
+  return defaultDailyWorkArtifacts;
 }
 
 function normalizeMessages(body: ChatRequestBody): ModelMessage[] {
