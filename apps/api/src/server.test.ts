@@ -48,6 +48,36 @@ describe("api server", () => {
     await app.close();
   });
 
+  it("returns the default daily-work context items when no mode is provided", async () => {
+    const app = await buildServer();
+    const response = await app.inject({
+      method: "GET",
+      url: "/api/daily/context"
+    });
+
+    expect(response.statusCode).toBe(200);
+    expect(response.json()).toEqual({
+      mode: "daily_work",
+      items: expect.arrayContaining([
+        expect.objectContaining({
+          id: "meeting-notes",
+          mode: "daily_work",
+          sourceType: "meeting_notes",
+          permissionState: "workspace_shared"
+        }),
+        expect.objectContaining({
+          id: "customer-email",
+          mode: "daily_work",
+          sourceType: "customer_email",
+          permissionState: "requires_review"
+        })
+      ])
+    });
+    expect(response.json().items).toHaveLength(5);
+
+    await app.close();
+  });
+
   it("returns default daily-work artifacts", async () => {
     const app = await buildServer();
     const response = await app.inject({
@@ -81,6 +111,22 @@ describe("api server", () => {
     expect(response.json()).toEqual({
       mode: "coding_agent",
       templates: []
+    });
+
+    await app.close();
+  });
+
+  it("keeps the reserved coding-agent compatibility path for daily context", async () => {
+    const app = await buildServer();
+    const response = await app.inject({
+      method: "GET",
+      url: "/api/daily/context?mode=coding_agent"
+    });
+
+    expect(response.statusCode).toBe(200);
+    expect(response.json()).toEqual({
+      mode: "coding_agent",
+      items: []
     });
 
     await app.close();

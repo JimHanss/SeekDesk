@@ -7,10 +7,12 @@ import {
 import {
   appModeSchema,
   defaultDailyWorkArtifacts,
+  defaultDailyWorkContextItems,
   defaultDailyWorkTemplates,
   type AppMode,
   type DailyWorkArtifactsResponse,
-  type DailyWorkTemplatesResponse
+  type DailyWorkTemplatesResponse,
+  type DailyContextResponse
 } from "@seekdesk/shared";
 import websocket from "@fastify/websocket";
 import Fastify, { type FastifyReply, type FastifyRequest } from "fastify";
@@ -44,6 +46,9 @@ export async function buildServer() {
   });
 
   app.options("/api/chat", async (_request, reply) => reply.code(204).send());
+  app.options("/api/daily/context", async (_request, reply) =>
+    reply.code(204).send()
+  );
   app.options("/api/daily/templates", async (_request, reply) =>
     reply.code(204).send()
   );
@@ -56,6 +61,18 @@ export async function buildServer() {
     service: "seekdesk-api",
     version: "0.1.0"
   }));
+
+  app.get<{ Querystring: { mode?: string } }>(
+    "/api/daily/context",
+    async (request): Promise<DailyContextResponse> => {
+      const mode = normalizeAppMode(request.query.mode);
+
+      return {
+        mode,
+        items: filterDailyWorkContextItems(mode)
+      };
+    }
+  );
 
   app.get<{ Querystring: { mode?: string } }>(
     "/api/daily/templates",
@@ -157,6 +174,14 @@ function filterDailyWorkArtifacts(mode: AppMode) {
   }
 
   return defaultDailyWorkArtifacts;
+}
+
+function filterDailyWorkContextItems(mode: AppMode) {
+  if (mode !== "daily_work") {
+    return [];
+  }
+
+  return defaultDailyWorkContextItems;
 }
 
 function normalizeMessages(body: ChatRequestBody): ModelMessage[] {
