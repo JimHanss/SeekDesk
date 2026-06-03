@@ -110,6 +110,8 @@ interface ContextItem {
 
 type ApprovalStatus = "waiting" | "allowed_once" | "denied" | "blocked";
 type ApprovalRisk = "低" | "中" | "高" | "极高";
+type ModelRouteMode = "fast" | "pro";
+type ThinkingMode = "enabled" | "disabled";
 
 interface ApprovalRequestItem {
   id: string;
@@ -120,6 +122,30 @@ interface ApprovalRequestItem {
   status: ApprovalStatus;
   detail: string;
   icon: LucideIcon;
+}
+
+interface ModelSnapshotItem {
+  id: ModelRouteMode;
+  currentMode: AppMode;
+  provider: string;
+  fastModel: string;
+  proModel: string;
+  selectedModel: string;
+  routingStrategy: string;
+  thinkingMode: ThinkingMode;
+  updatedAt: string;
+  notes: string[];
+}
+
+interface UsageSnapshotItem {
+  id: ModelRouteMode;
+  usageWindow: string;
+  inputTokens: number;
+  outputTokens: number;
+  estimatedCost: string;
+  budgetState: string;
+  updatedAt: string;
+  notes: string[];
 }
 
 const activeMode: AppMode = "daily_work";
@@ -464,6 +490,68 @@ const initialApprovalRequests: ApprovalRequestItem[] = [
   }
 ];
 
+const modelSnapshots: Record<ModelRouteMode, ModelSnapshotItem> = {
+  fast: {
+    id: "fast",
+    currentMode: "daily_work",
+    provider: "DeepSeek",
+    fastModel: "deepseek-v4-flash",
+    proModel: "deepseek-v4-pro",
+    selectedModel: "deepseek-v4-flash",
+    routingStrategy: "快速：用于邮件草稿、会议压缩、短上下文整理等日常响应。",
+    thinkingMode: "disabled",
+    updatedAt: "示例：今天 10:40",
+    notes: [
+      "本地示例快照，未连接真实 model selector。",
+      "DeepSeek thinking.type 示例为 disabled，stream_options.include_usage 可返回 usage 块。"
+    ]
+  },
+  pro: {
+    id: "pro",
+    currentMode: "daily_work",
+    provider: "DeepSeek",
+    fastModel: "deepseek-v4-flash",
+    proModel: "deepseek-v4-pro",
+    selectedModel: "deepseek-v4-pro",
+    routingStrategy: "深度：用于复杂资料归纳、风险复核、长上下文分析等高质量输出。",
+    thinkingMode: "enabled",
+    updatedAt: "示例：今天 10:40",
+    notes: [
+      "本地示例快照，未连接真实 model selector。",
+      "DeepSeek thinking.type 示例为 enabled，实际调用仍以后端为准。"
+    ]
+  }
+};
+
+const usageSnapshots: Record<ModelRouteMode, UsageSnapshotItem> = {
+  fast: {
+    id: "fast",
+    usageWindow: "示例：当前会话预估",
+    inputTokens: 18420,
+    outputTokens: 6110,
+    estimatedCost: "估算 $0.04",
+    budgetState: "示例预算正常，未接真实余额",
+    updatedAt: "示例：今天 10:40",
+    notes: [
+      "usage 字段示例包含 prompt、completion、total tokens。",
+      "成本仅用于前端占位展示，不作为账单或预算依据。"
+    ]
+  },
+  pro: {
+    id: "pro",
+    usageWindow: "示例：当前会话预估",
+    inputTokens: 23880,
+    outputTokens: 9280,
+    estimatedCost: "估算 $0.18",
+    budgetState: "示例预算关注，未接真实余额",
+    updatedAt: "示例：今天 10:40",
+    notes: [
+      "深度模式示例会展示更高 token 与成本估算。",
+      "余额、安全阈值和实际计费尚未接入。"
+    ]
+  }
+};
+
 export default function Page() {
   const [messages, setMessages] = useState<ChatMessage[]>(initialMessages);
   const [input, setInput] = useState("");
@@ -479,6 +567,7 @@ export default function Page() {
     artifacts[0]?.id ?? null
   );
   const [artifactFilter, setArtifactFilter] = useState<ArtifactFilter>("全部");
+  const [modelRouteMode, setModelRouteMode] = useState<ModelRouteMode>("fast");
   const [approvalRequests, setApprovalRequests] = useState<ApprovalRequestItem[]>(
     initialApprovalRequests
   );
@@ -490,6 +579,15 @@ export default function Page() {
     () => `${apiBaseUrl.replace(/\/$/, "")}/api/chat`,
     []
   );
+  const activeModelSnapshot = modelSnapshots[modelRouteMode];
+  const activeUsageSnapshot = usageSnapshots[modelRouteMode];
+  const usageTotalTokens =
+    activeUsageSnapshot.inputTokens + activeUsageSnapshot.outputTokens;
+  const usageBudgetPercent = modelRouteMode === "fast" ? 36 : 68;
+  const modelInputPlaceholder =
+    modelRouteMode === "fast"
+      ? "快速模式示例：适合写客户更新、整理会议纪要、把笔记转成任务计划"
+      : "深度模式示例：适合复杂资料归纳、风险复核和长上下文分析";
   const filteredArtifacts = useMemo(
     () =>
       artifactFilter === "全部"
@@ -641,6 +739,11 @@ export default function Page() {
     applyPrompt(item.prompt);
   }
 
+  function switchModelRoute(nextMode: ModelRouteMode) {
+    setModelRouteMode(nextMode);
+    applyPrompt(buildModelSwitchPrompt(modelSnapshots[nextMode], usageSnapshots[nextMode]));
+  }
+
   function updateApprovalStatus(
     approvalId: string,
     nextStatus: Exclude<ApprovalStatus, "waiting">
@@ -776,6 +879,171 @@ export default function Page() {
                   text="把最新资料整理成简报，指出已知信息、缺口和建议下一步。"
                   onClick={applyPrompt}
                 />
+              </div>
+
+              <div className="rounded-[8px] border border-teal-100 bg-teal-50 p-3">
+                <div className="flex flex-col gap-3 md:flex-row md:items-start md:justify-between">
+                  <div className="min-w-0">
+                    <div className="flex items-center gap-2 text-sm font-semibold text-teal-950">
+                      <Bot className="size-4 shrink-0 text-teal-700" aria-hidden="true" />
+                      <span className="min-w-0 break-words">模型与用量</span>
+                    </div>
+                    <p className="mt-1 text-xs leading-5 text-teal-700">
+                      DeepSeek 日常工作模式快照，仅做前端估算 / 示例 / 未接真实余额展示。
+                    </p>
+                  </div>
+
+                  <div
+                    className="inline-flex w-full rounded-[8px] border border-teal-200 bg-white p-1 md:w-auto"
+                    aria-label="模型展示切换"
+                    role="group"
+                  >
+                    {(["fast", "pro"] as const).map((mode) => {
+                      const isActive = modelRouteMode === mode;
+                      const snapshot = modelSnapshots[mode];
+
+                      return (
+                        <button
+                          key={mode}
+                          type="button"
+                          aria-pressed={isActive}
+                          onClick={() => switchModelRoute(mode)}
+                          className={cn(
+                            "min-w-0 flex-1 rounded-[6px] px-3 py-2 text-left text-xs font-medium transition-colors duration-200 focus-visible:outline focus-visible:outline-2 focus-visible:outline-teal-600 md:min-w-28",
+                            isActive
+                              ? "bg-teal-600 text-white shadow-sm"
+                              : "text-teal-700 hover:bg-teal-50"
+                          )}
+                        >
+                          <span className="block truncate">
+                            {mode === "fast" ? "快速" : "深度"}
+                          </span>
+                          <span
+                            className={cn(
+                              "mt-0.5 block truncate text-[10px]",
+                              isActive ? "text-teal-50" : "text-teal-500"
+                            )}
+                          >
+                            {snapshot.selectedModel}
+                          </span>
+                        </button>
+                      );
+                    })}
+                  </div>
+                </div>
+
+                <div className="mt-3 grid gap-3 xl:grid-cols-[minmax(0,1fr)_minmax(0,1fr)]">
+                  <div className="rounded-[8px] border border-teal-100 bg-white p-3">
+                    <div className="mb-3 flex items-center gap-2 text-sm font-medium text-teal-950">
+                      <Sparkles className="size-4 text-orange-600" aria-hidden="true" />
+                      模型快照
+                    </div>
+                    <div className="space-y-2">
+                      <SnapshotRow
+                        label="当前模式"
+                        value={activeModelSnapshot.currentMode}
+                      />
+                      <SnapshotRow
+                        label="Provider"
+                        value={activeModelSnapshot.provider}
+                      />
+                      <SnapshotRow
+                        label="快速模型"
+                        value={activeModelSnapshot.fastModel}
+                      />
+                      <SnapshotRow
+                        label="深度模型"
+                        value={activeModelSnapshot.proModel}
+                      />
+                      <SnapshotRow
+                        label="当前使用"
+                        value={activeModelSnapshot.selectedModel}
+                      />
+                      <SnapshotRow
+                        label="Thinking"
+                        value={
+                          activeModelSnapshot.thinkingMode === "enabled"
+                            ? "enabled / 示例开启"
+                            : "disabled / 示例关闭"
+                        }
+                      />
+                    </div>
+                    <p className="mt-3 rounded-[8px] border border-teal-100 bg-teal-50 px-3 py-2 text-xs leading-5 text-teal-700">
+                      路由策略：{activeModelSnapshot.routingStrategy}
+                    </p>
+                  </div>
+
+                  <div className="rounded-[8px] border border-teal-100 bg-white p-3">
+                    <div className="mb-3 flex items-center gap-2 text-sm font-medium text-teal-950">
+                      <ShieldCheck className="size-4 text-teal-700" aria-hidden="true" />
+                      用量快照
+                    </div>
+                    <div className="grid grid-cols-3 gap-2">
+                      <SessionMetric
+                        label="输入 token"
+                        value={formatTokenCount(activeUsageSnapshot.inputTokens)}
+                      />
+                      <SessionMetric
+                        label="输出 token"
+                        value={formatTokenCount(activeUsageSnapshot.outputTokens)}
+                      />
+                      <SessionMetric
+                        label="合计 token"
+                        value={formatTokenCount(usageTotalTokens)}
+                      />
+                    </div>
+
+                    <div className="mt-3 space-y-2">
+                      <SnapshotRow
+                        label="窗口"
+                        value={activeUsageSnapshot.usageWindow}
+                      />
+                      <SnapshotRow
+                        label="成本"
+                        value={activeUsageSnapshot.estimatedCost}
+                      />
+                      <SnapshotRow
+                        label="预算/安全"
+                        value={activeUsageSnapshot.budgetState}
+                      />
+                    </div>
+
+                    <div className="mt-3">
+                      <div className="mb-1 flex items-center justify-between gap-2 text-[11px] font-medium text-teal-700">
+                        <span>示例预算占用</span>
+                        <span>{usageBudgetPercent}%</span>
+                      </div>
+                      <div className="h-2 overflow-hidden rounded-[999px] bg-teal-100">
+                        <div
+                          className="h-full rounded-[999px] bg-orange-500"
+                          style={{ width: `${usageBudgetPercent}%` }}
+                        />
+                      </div>
+                    </div>
+                  </div>
+                </div>
+
+                <div className="mt-3 grid gap-2 md:grid-cols-2">
+                  {[...activeModelSnapshot.notes, ...activeUsageSnapshot.notes].map(
+                    (note) => (
+                      <div
+                        key={note}
+                        className="flex items-start gap-2 rounded-[8px] border border-orange-200 bg-white px-3 py-2 text-xs leading-5 text-orange-800"
+                      >
+                        <AlertCircle
+                          className="mt-0.5 size-4 shrink-0"
+                          aria-hidden="true"
+                        />
+                        <span className="min-w-0 break-words">{note}</span>
+                      </div>
+                    )
+                  )}
+                </div>
+
+                <div className="mt-3 text-[11px] leading-5 text-teal-700">
+                  更新时间：{activeModelSnapshot.updatedAt} / 用量更新时间：
+                  {activeUsageSnapshot.updatedAt}
+                </div>
               </div>
 
               <div className="rounded-[8px] border border-teal-100 bg-teal-50 p-3">
@@ -965,7 +1233,7 @@ export default function Page() {
                 <input
                   ref={inputRef}
                   className="min-w-0 flex-1 bg-transparent text-sm text-teal-950 outline-none placeholder:text-teal-500"
-                  placeholder="输入日常工作请求，例如：写客户更新、整理会议纪要、把笔记转成任务计划"
+                  placeholder={modelInputPlaceholder}
                   aria-label="日常工作输入"
                   value={input}
                   onChange={(event) => setInput(event.target.value)}
@@ -1449,6 +1717,17 @@ function SessionMetric({ label, value }: { label: string; value: string }) {
   );
 }
 
+function SnapshotRow({ label, value }: { label: string; value: string }) {
+  return (
+    <div className="flex items-start justify-between gap-3 rounded-[8px] border border-teal-100 bg-teal-50 px-3 py-2">
+      <span className="shrink-0 text-xs font-medium text-teal-700">{label}</span>
+      <span className="min-w-0 break-words text-right text-sm text-teal-950">
+        {value}
+      </span>
+    </div>
+  );
+}
+
 function ArtifactStatePill({ state }: { state: ArtifactState }) {
   return (
     <span
@@ -1622,6 +1901,31 @@ function artifactStateClass(state: ArtifactState) {
 function selectedContextLabel(contextId: string) {
   const item = contextItems.find((entry) => entry.id === contextId);
   return item ? item.title : "未知上下文";
+}
+
+function modelRouteLabel(mode: ModelRouteMode) {
+  return mode === "fast" ? "快速" : "深度";
+}
+
+function formatTokenCount(value: number) {
+  return new Intl.NumberFormat("en-US").format(value);
+}
+
+function buildModelSwitchPrompt(
+  modelSnapshot: ModelSnapshotItem,
+  usageSnapshot: UsageSnapshotItem
+) {
+  return [
+    `请按“${modelRouteLabel(modelSnapshot.id)}”示例模式继续这个 daily_work 会话。`,
+    "",
+    `模型快照：Provider ${modelSnapshot.provider}，当前展示模型 ${modelSnapshot.selectedModel}，thinking ${modelSnapshot.thinkingMode}。`,
+    `用量快照：${usageSnapshot.usageWindow}，输入 ${formatTokenCount(
+      usageSnapshot.inputTokens
+    )} tokens，输出 ${formatTokenCount(
+      usageSnapshot.outputTokens
+    )} tokens，${usageSnapshot.estimatedCost}。`,
+    "说明：这是前端估算 / 示例 / 未接真实余额，不要作为真实计费或预算依据。"
+  ].join("\n");
 }
 
 function buildSessionRestorePrompt(item: SessionHistoryItem) {
