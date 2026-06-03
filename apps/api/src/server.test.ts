@@ -32,12 +32,18 @@ describe("api server", () => {
       mode: "daily_work",
       templates: expect.arrayContaining([
         expect.objectContaining({
-          id: "morning-standup-brief",
+          id: "email-draft",
           mode: "daily_work",
-          category: "planning"
+          category: "writing"
+        }),
+        expect.objectContaining({
+          id: "meeting-summary",
+          mode: "daily_work",
+          artifactType: "meeting_summary"
         })
       ])
     });
+    expect(response.json().templates).toHaveLength(6);
 
     await app.close();
   });
@@ -54,9 +60,9 @@ describe("api server", () => {
       mode: "daily_work",
       artifacts: expect.arrayContaining([
         expect.objectContaining({
-          id: "daily-status-brief",
+          id: "email-draft-artifact",
           mode: "daily_work",
-          artifactType: "status_update"
+          artifactType: "email_draft"
         })
       ])
     });
