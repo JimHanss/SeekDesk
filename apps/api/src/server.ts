@@ -9,11 +9,15 @@ import {
   defaultDailyWorkApprovalRequests,
   defaultDailyWorkArtifacts,
   defaultDailyWorkContextItems,
+  defaultDailyWorkSessionDetails,
+  defaultDailyWorkSessionSummaries,
   defaultDailyWorkTemplates,
   type AppMode,
-  type DailyWorkArtifactResponse,
   type DailyApprovalRequestsResponse,
+  type DailyWorkArtifactResponse,
   type DailyWorkArtifactsResponse,
+  type DailyWorkSessionResponse,
+  type DailyWorkSessionsResponse,
   type DailyWorkTemplatesResponse,
   type DailyContextResponse
 } from "@seekdesk/shared";
@@ -56,6 +60,12 @@ export async function buildServer() {
     reply.code(204).send()
   );
   app.options("/api/daily/templates", async (_request, reply) =>
+    reply.code(204).send()
+  );
+  app.options("/api/daily/sessions", async (_request, reply) =>
+    reply.code(204).send()
+  );
+  app.options("/api/daily/sessions/:sessionId", async (_request, reply) =>
     reply.code(204).send()
   );
   app.options("/api/daily/artifacts", async (_request, reply) =>
@@ -115,6 +125,45 @@ export async function buildServer() {
       return {
         mode,
         artifacts: filterDailyWorkArtifacts(mode)
+      };
+    }
+  );
+
+  app.get<{ Querystring: { mode?: string } }>(
+    "/api/daily/sessions",
+    async (request): Promise<DailyWorkSessionsResponse> => {
+      const mode = normalizeAppMode(request.query.mode);
+
+      return {
+        mode,
+        sessions: filterDailyWorkSessionSummaries(mode)
+      };
+    }
+  );
+
+  app.get<{
+    Params: { sessionId: string };
+    Querystring: { mode?: string };
+  }>(
+    "/api/daily/sessions/:sessionId",
+    async (request, reply): Promise<DailyWorkSessionResponse | void> => {
+      const mode = normalizeAppMode(request.query.mode);
+      const session = filterDailyWorkSessionDetail(
+        mode,
+        request.params.sessionId
+      );
+
+      if (!session) {
+        reply.code(404).send({
+          mode,
+          error: "Daily-work session not found."
+        });
+        return;
+      }
+
+      return {
+        mode,
+        session
       };
     }
   );
@@ -224,6 +273,24 @@ function filterDailyWorkArtifacts(mode: AppMode) {
 function filterDailyWorkArtifact(mode: AppMode, artifactId: string) {
   return filterDailyWorkArtifacts(mode).find(
     (artifact) => artifact.id === artifactId
+  );
+}
+
+function filterDailyWorkSessionSummaries(mode: AppMode) {
+  if (mode !== "daily_work") {
+    return [];
+  }
+
+  return defaultDailyWorkSessionSummaries;
+}
+
+function filterDailyWorkSessionDetail(mode: AppMode, sessionId: string) {
+  if (mode !== "daily_work") {
+    return undefined;
+  }
+
+  return defaultDailyWorkSessionDetails.find(
+    (session) => session.id === sessionId
   );
 }
 
