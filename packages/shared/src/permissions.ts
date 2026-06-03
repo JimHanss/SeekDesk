@@ -2,6 +2,7 @@ import { z } from "zod";
 
 export const permissionModeSchema = z.enum([
   "read_only",
+  "confirm_private_context_and_actions",
   "confirm_writes_and_commands",
   "auto_approve_safe_actions"
 ]);

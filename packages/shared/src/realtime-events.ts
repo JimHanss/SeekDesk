@@ -1,5 +1,7 @@
 import { z } from "zod";
 
+import { appModeSchema } from "./app-modes.js";
+
 const baseEventSchema = z.object({
   id: z.string(),
   sessionId: z.string(),
@@ -9,7 +11,12 @@ const baseEventSchema = z.object({
 export const realtimeEventSchema = z.discriminatedUnion("type", [
   baseEventSchema.extend({
     type: z.literal("session.created"),
-    workspaceId: z.string()
+    workspaceId: z.string(),
+    appMode: appModeSchema.default("daily_work")
+  }),
+  baseEventSchema.extend({
+    type: z.literal("mode.changed"),
+    appMode: appModeSchema
   }),
   baseEventSchema.extend({
     type: z.literal("message.user"),
@@ -61,6 +68,28 @@ export const realtimeEventSchema = z.discriminatedUnion("type", [
     type: z.literal("tool.failed"),
     toolCallId: z.string(),
     error: z.string()
+  }),
+  baseEventSchema.extend({
+    type: z.literal("artifact.created"),
+    artifactId: z.string(),
+    title: z.string(),
+    artifactType: z.enum([
+      "document",
+      "research_note",
+      "meeting_summary",
+      "task_list"
+    ])
+  }),
+  baseEventSchema.extend({
+    type: z.literal("workflow.status_changed"),
+    workflowId: z.string(),
+    status: z.enum([
+      "draft",
+      "waiting_for_approval",
+      "running",
+      "completed",
+      "failed"
+    ])
   }),
   baseEventSchema.extend({
     type: z.literal("file.changed"),
