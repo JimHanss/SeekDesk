@@ -8,4 +8,5 @@ export * from "./session-context.js";
 export * from "./realtime-events.js";
 export * from "./sessions.js";
 export * from "./tools.js";
+export * from "./workflows.js";
 export * from "./workspaces.js";

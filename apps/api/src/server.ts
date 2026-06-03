@@ -13,6 +13,7 @@ import {
   defaultDailyWorkSessionDetails,
   defaultDailyWorkSessionSummaries,
   defaultDailyWorkTemplates,
+  defaultDailyWorkflows,
   createDailyModelUsageResponse,
   type AppMode,
   type DailyApprovalRequestsResponse,
@@ -24,7 +25,9 @@ import {
   type DailyWorkSessionResponse,
   type DailyWorkSessionsResponse,
   type DailyWorkTemplatesResponse,
-  type DailyContextResponse
+  type DailyContextResponse,
+  type DailyWorkWorkflowResponse,
+  type DailyWorkflowsResponse
 } from "@seekdesk/shared";
 import websocket from "@fastify/websocket";
 import Fastify, { type FastifyReply, type FastifyRequest } from "fastify";
@@ -86,6 +89,12 @@ export async function buildServer() {
     reply.code(204).send()
   );
   app.options("/api/daily/connectors/:connectorId", async (_request, reply) =>
+    reply.code(204).send()
+  );
+  app.options("/api/daily/workflows", async (_request, reply) =>
+    reply.code(204).send()
+  );
+  app.options("/api/daily/workflows/:workflowId", async (_request, reply) =>
     reply.code(204).send()
   );
 
@@ -254,6 +263,45 @@ export async function buildServer() {
     }
   );
 
+  app.get<{ Querystring: { mode?: string } }>(
+    "/api/daily/workflows",
+    async (request): Promise<DailyWorkflowsResponse> => {
+      const mode = normalizeAppMode(request.query.mode);
+
+      return {
+        mode,
+        workflows: filterDailyWorkWorkflows(mode)
+      };
+    }
+  );
+
+  app.get<{
+    Params: { workflowId: string };
+    Querystring: { mode?: string };
+  }>(
+    "/api/daily/workflows/:workflowId",
+    async (request, reply): Promise<DailyWorkWorkflowResponse | void> => {
+      const mode = normalizeAppMode(request.query.mode);
+      const workflow = filterDailyWorkWorkflow(
+        mode,
+        request.params.workflowId
+      );
+
+      if (!workflow) {
+        reply.code(404).send({
+          mode,
+          error: "Daily-work workflow not found."
+        });
+        return;
+      }
+
+      return {
+        mode,
+        workflow
+      };
+    }
+  );
+
   app.post<{ Body: ChatRequestBody }>("/api/chat", async (request, reply) => {
     const mode = normalizeAppMode(request.body?.mode);
     const messages = normalizeMessages(request.body);
@@ -349,6 +397,20 @@ function filterDailyWorkConnectors(mode: AppMode) {
 function filterDailyWorkConnector(mode: AppMode, connectorId: string) {
   return filterDailyWorkConnectors(mode).find(
     (connector) => connector.id === connectorId
+  );
+}
+
+function filterDailyWorkWorkflows(mode: AppMode) {
+  if (mode !== "daily_work") {
+    return [];
+  }
+
+  return defaultDailyWorkflows;
+}
+
+function filterDailyWorkWorkflow(mode: AppMode, workflowId: string) {
+  return filterDailyWorkWorkflows(mode).find(
+    (workflow) => workflow.id === workflowId
   );
 }
 

@@ -128,6 +128,25 @@ interface ConnectorItem {
   icon: LucideIcon;
 }
 
+type WorkflowActionStatus = "待审批" | "可预演" | "需补上下文";
+type WorkflowActionFilter = "全部" | WorkflowActionStatus;
+
+interface WorkflowActionItem {
+  id: string;
+  title: string;
+  actionType: string;
+  connector: string;
+  context: string;
+  artifact: string;
+  approvalStatus: WorkflowActionStatus;
+  riskLevel: ConnectorRiskLevel;
+  riskNote: string;
+  summary: string;
+  nextStep: string;
+  prompt: string;
+  icon: LucideIcon;
+}
+
 type ApprovalStatus = "waiting" | "allowed_once" | "denied" | "blocked";
 type ApprovalRisk = "低" | "中" | "高" | "极高";
 type ModelRouteMode = "fast" | "pro";
@@ -442,6 +461,84 @@ const connectorItems: ConnectorItem[] = [
   }
 ];
 
+const workflowActionFilters: WorkflowActionFilter[] = [
+  "全部",
+  "待审批",
+  "可预演",
+  "需补上下文"
+];
+
+const workflowActions: WorkflowActionItem[] = [
+  {
+    id: "draft-customer-update",
+    title: "起草客户进展邮件",
+    actionType: "邮件起草",
+    connector: "邮箱收件入口 / SeekDesk Mail Preview",
+    context: "客户邮件 + 项目简报",
+    artifact: "客户更新邮件草稿",
+    approvalStatus: "待审批",
+    riskLevel: "高",
+    riskNote: "涉及外发语气和客户信息，当前只生成草稿，不发送邮件。",
+    summary:
+      "把客户关心的交付时间、范围变化和验收口径整理成一封可复核邮件，保留外发审批提示。",
+    nextStep: "确认收件人、敏感字段和是否允许引用项目简报，再生成邮件草稿。",
+    prompt:
+      "请预演一个 daily_work 邮件起草工作流，不调用邮箱、不发送邮件。\n\n动作：起草客户进展邮件\n上下文：客户邮件 + 项目简报\n产物：客户更新邮件草稿\n审批状态：待审批\n风险提示：涉及外发语气和客户信息，当前只生成草稿，不发送邮件。\n\n请输出：需要的最小上下文、草稿结构、审批检查点、风险复核项，以及用户确认后才可继续的下一步。",
+    icon: Mail
+  },
+  {
+    id: "summarize-meeting-notes",
+    title: "整理会议纪要",
+    actionType: "会议纪要",
+    connector: "个人笔记入口 / SeekDesk Notes Preview",
+    context: "会议记录 + 团队备忘",
+    artifact: "可分享会议纪要",
+    approvalStatus: "可预演",
+    riskLevel: "中",
+    riskNote: "可能包含内部决策和负责人信息，当前只做会话级摘要预演。",
+    summary:
+      "从会议记录中提取关键决策、待办、负责人、开放问题和风险，生成可复核纪要。",
+    nextStep: "先标出缺失负责人或时间点，再生成纪要草稿供用户确认。",
+    prompt:
+      "请预演一个 daily_work 会议纪要工作流，不读取真实笔记库、不写入文档。\n\n动作：整理会议纪要\n上下文：会议记录 + 团队备忘\n产物：可分享会议纪要\n审批状态：可预演\n风险提示：可能包含内部决策和负责人信息，当前只做会话级摘要预演。\n\n请输出：纪要结构、决策/待办提取规则、需要用户复核的字段、风险提示和下一步确认问题。",
+    icon: Presentation
+  },
+  {
+    id: "prepare-calendar-follow-up",
+    title: "准备日历跟进",
+    actionType: "日历跟进",
+    connector: "日历日程入口 / SeekDesk Calendar Preview",
+    context: "会议纪要 + 下周优先级",
+    artifact: "日历跟进建议",
+    approvalStatus: "需补上下文",
+    riskLevel: "中",
+    riskNote: "当前不读取或写入真实日历，只生成待确认的跟进建议。",
+    summary:
+      "根据会议结论和优先级整理后续会议、提醒、准备材料和负责人的建议清单。",
+    nextStep: "补齐目标日期、参与人范围和提醒粒度，再生成日历跟进建议。",
+    prompt:
+      "请预演一个 daily_work 日历跟进工作流，不读取真实日历、不创建日程。\n\n动作：准备日历跟进\n上下文：会议纪要 + 下周优先级\n产物：日历跟进建议\n审批状态：需补上下文\n风险提示：当前不读取或写入真实日历，只生成待确认的跟进建议。\n\n请输出：缺失上下文清单、建议跟进项、每项的目的/参与人/时间窗口、审批检查点和用户确认后的下一步。",
+    icon: CalendarClock
+  },
+  {
+    id: "generate-weekly-plan",
+    title: "生成周报与任务计划",
+    actionType: "周报 / 任务计划",
+    connector: "文档库入口 / SeekDesk Docs Preview",
+    context: "项目简报 + 团队备忘 + 会议纪要",
+    artifact: "周报草稿和下周任务计划",
+    approvalStatus: "可预演",
+    riskLevel: "低",
+    riskNote: "当前只在输入框生成结构化草稿，不写入文档或同步团队空间。",
+    summary:
+      "汇总本周进展、成果、风险、依赖和下周优先级，拆解为可执行任务计划。",
+    nextStep: "选择周报受众和输出粒度，再生成一版可复制的周报与任务计划。",
+    prompt:
+      "请预演一个 daily_work 周报与任务计划工作流，不写入文档、不同步团队空间。\n\n动作：生成周报与任务计划\n上下文：项目简报 + 团队备忘 + 会议纪要\n产物：周报草稿和下周任务计划\n审批状态：可预演\n风险提示：当前只在输入框生成结构化草稿，不写入文档或同步团队空间。\n\n请输出：周报结构、任务拆解方式、风险和依赖检查表、需要审批或复核的字段，以及下一步建议。",
+    icon: FileText
+  }
+];
+
 const artifactFilters: ArtifactFilter[] = ["全部", "草稿", "可复用"];
 
 const artifacts: ArtifactItem[] = [
@@ -682,6 +779,11 @@ export default function Page() {
   const [selectedConnectorId, setSelectedConnectorId] = useState<string | null>(
     connectorItems[0]?.id ?? null
   );
+  const [workflowActionFilter, setWorkflowActionFilter] =
+    useState<WorkflowActionFilter>("全部");
+  const [selectedWorkflowActionId, setSelectedWorkflowActionId] = useState<
+    string | null
+  >(workflowActions[0]?.id ?? null);
   const [selectedArtifactId, setSelectedArtifactId] = useState<string | null>(
     artifacts[0]?.id ?? null
   );
@@ -723,6 +825,22 @@ export default function Page() {
 
     return selectedInFilter ?? filteredConnectors[0] ?? connectorItems[0] ?? null;
   }, [filteredConnectors, selectedConnectorId]);
+  const filteredWorkflowActions = useMemo(
+    () =>
+      workflowActionFilter === "全部"
+        ? workflowActions
+        : workflowActions.filter(
+            (item) => item.approvalStatus === workflowActionFilter
+          ),
+    [workflowActionFilter]
+  );
+  const selectedWorkflowAction = useMemo(() => {
+    const selectedInFilter = filteredWorkflowActions.find(
+      (item) => item.id === selectedWorkflowActionId
+    );
+
+    return selectedInFilter ?? filteredWorkflowActions[0] ?? workflowActions[0] ?? null;
+  }, [filteredWorkflowActions, selectedWorkflowActionId]);
   const filteredArtifacts = useMemo(
     () =>
       artifactFilter === "全部"
@@ -877,6 +995,11 @@ export default function Page() {
   function applyConnectorPrompt(item: ConnectorItem) {
     setSelectedConnectorId(item.id);
     applyPrompt(buildConnectorAccessPrompt(item));
+  }
+
+  function applyWorkflowActionPrompt(item: WorkflowActionItem) {
+    setSelectedWorkflowActionId(item.id);
+    applyPrompt(item.prompt);
   }
 
   function switchModelRoute(nextMode: ModelRouteMode) {
@@ -1183,6 +1306,163 @@ export default function Page() {
                 <div className="mt-3 text-[11px] leading-5 text-teal-700">
                   更新时间：{activeModelSnapshot.updatedAt} / 用量更新时间：
                   {activeUsageSnapshot.updatedAt}
+                </div>
+              </div>
+
+              <div className="rounded-[8px] border border-teal-100 bg-teal-50 p-3">
+                <div className="flex flex-col gap-3 md:flex-row md:items-start md:justify-between">
+                  <div className="min-w-0">
+                    <div className="flex items-center gap-2 text-sm font-semibold text-teal-950">
+                      <Workflow className="size-4 shrink-0 text-teal-700" aria-hidden="true" />
+                      <span className="min-w-0 break-words">工作流编排预演 / Action Queue</span>
+                    </div>
+                    <p className="mt-1 text-xs leading-5 text-teal-700">
+                      daily_work 当前只做自动化预演：不调用外部系统、不自动发送邮件、不写入日历或文档。
+                    </p>
+                  </div>
+
+                  <span className="inline-flex shrink-0 items-center gap-1 rounded-[999px] bg-white px-2.5 py-1 text-[11px] font-medium text-teal-700">
+                    <Lock className="size-3.5" aria-hidden="true" />
+                    预演队列 {filteredWorkflowActions.length}/{workflowActions.length}
+                  </span>
+                </div>
+
+                <div className="mt-3 flex flex-wrap gap-2" aria-label="工作流动作筛选">
+                  {workflowActionFilters.map((filter) => {
+                    const isActive = workflowActionFilter === filter;
+
+                    return (
+                      <button
+                        key={filter}
+                        type="button"
+                        aria-pressed={isActive}
+                        onClick={() => setWorkflowActionFilter(filter)}
+                        className={cn(
+                          "inline-flex min-h-8 cursor-pointer items-center gap-1.5 rounded-[8px] border px-2.5 py-1 text-xs font-medium transition-colors duration-200 focus-visible:outline focus-visible:outline-2 focus-visible:outline-teal-600",
+                          isActive
+                            ? "border-teal-600 bg-teal-600 text-white"
+                            : "border-teal-100 bg-white text-teal-700 hover:border-teal-300 hover:bg-teal-50"
+                        )}
+                      >
+                        <span>{filter}</span>
+                        <span
+                          className={cn(
+                            "rounded-[999px] px-1.5 py-0.5 text-[10px]",
+                            isActive ? "bg-white/20 text-white" : "bg-teal-50 text-teal-700"
+                          )}
+                        >
+                          {workflowActionFilterCount(filter)}
+                        </span>
+                      </button>
+                    );
+                  })}
+                </div>
+
+                <div className="mt-3 grid gap-3 xl:grid-cols-[minmax(0,1.05fr)_minmax(0,0.95fr)]">
+                  <div className="space-y-2">
+                    {filteredWorkflowActions.map((action) => {
+                      const Icon = action.icon;
+                      const isSelected = selectedWorkflowAction?.id === action.id;
+
+                      return (
+                        <button
+                          key={action.id}
+                          type="button"
+                          onClick={() => setSelectedWorkflowActionId(action.id)}
+                          className={cn(
+                            "flex w-full cursor-pointer items-start gap-3 rounded-[8px] border px-3 py-3 text-left transition-colors duration-200 focus-visible:outline focus-visible:outline-2 focus-visible:outline-teal-600",
+                            isSelected
+                              ? "border-teal-400 bg-white shadow-sm"
+                              : "border-teal-100 bg-white hover:border-teal-300 hover:bg-teal-50"
+                          )}
+                        >
+                          <span className="mt-0.5 grid size-9 shrink-0 place-items-center rounded-[8px] bg-white text-teal-700 ring-1 ring-teal-100">
+                            <Icon className="size-4" aria-hidden="true" />
+                          </span>
+                          <span className="min-w-0 flex-1">
+                            <span className="flex flex-wrap items-start justify-between gap-2">
+                              <span className="min-w-0">
+                                <span className="block break-words text-sm font-medium text-teal-950">
+                                  {action.title}
+                                </span>
+                                <span className="mt-0.5 block break-words text-[11px] leading-4 text-teal-700">
+                                  {action.actionType} / {action.connector}
+                                </span>
+                              </span>
+                              <WorkflowActionStatusPill status={action.approvalStatus} />
+                            </span>
+                            <span className="mt-2 block break-words text-xs leading-5 text-slate-700">
+                              {action.summary}
+                            </span>
+                            <span className="mt-2 flex flex-wrap items-center gap-2">
+                              <ConnectorRiskPill riskLevel={action.riskLevel} />
+                              <span className="inline-flex min-w-0 items-center gap-1 rounded-[999px] bg-slate-100 px-2 py-0.5 text-[11px] font-medium text-slate-700">
+                                <FileText className="size-3.5 shrink-0" aria-hidden="true" />
+                                <span className="min-w-0 break-words">{action.artifact}</span>
+                              </span>
+                            </span>
+                          </span>
+                        </button>
+                      );
+                    })}
+                  </div>
+
+                  {selectedWorkflowAction ? (
+                    <div className="rounded-[8px] border border-teal-100 bg-white p-3">
+                      <div className="flex items-start justify-between gap-3">
+                        <div className="min-w-0">
+                          <div className="text-[11px] font-medium text-teal-700">
+                            选中动作
+                          </div>
+                          <div className="mt-1 break-words text-sm font-semibold text-teal-950">
+                            {selectedWorkflowAction.title}
+                          </div>
+                          <div className="mt-1 break-words text-xs leading-5 text-slate-700">
+                            {selectedWorkflowAction.nextStep}
+                          </div>
+                        </div>
+                        <WorkflowActionStatusPill
+                          status={selectedWorkflowAction.approvalStatus}
+                        />
+                      </div>
+
+                      <div className="mt-3 grid gap-2">
+                        <ArtifactDetailRow
+                          label="关联连接器"
+                          value={selectedWorkflowAction.connector}
+                        />
+                        <ArtifactDetailRow
+                          label="上下文"
+                          value={selectedWorkflowAction.context}
+                        />
+                        <ArtifactDetailRow
+                          label="预期产物"
+                          value={selectedWorkflowAction.artifact}
+                        />
+                      </div>
+
+                      <ArtifactDetailBlock
+                        icon={<AlertCircle className="size-4" aria-hidden="true" />}
+                        title="风险提示"
+                      >
+                        {selectedWorkflowAction.riskNote}
+                      </ArtifactDetailBlock>
+
+                      <div className="mt-3 rounded-[8px] border border-orange-200 bg-orange-50 px-3 py-2 text-xs leading-5 text-orange-800">
+                        这个按钮只会把所选动作转换为聊天 prompt；发送前仍由你确认，不会触发邮件、日历、文档或外部工具。
+                      </div>
+
+                      <Button
+                        type="button"
+                        size="sm"
+                        className="mt-3 w-full bg-orange-500 hover:bg-orange-600"
+                        onClick={() => applyWorkflowActionPrompt(selectedWorkflowAction)}
+                      >
+                        <Send className="size-4" aria-hidden="true" />
+                        生成预演 Prompt
+                      </Button>
+                    </div>
+                  ) : null}
                 </div>
               </div>
 
@@ -2084,6 +2364,23 @@ function ConnectorRiskPill({ riskLevel }: { riskLevel: ConnectorRiskLevel }) {
   );
 }
 
+function WorkflowActionStatusPill({
+  status
+}: {
+  status: WorkflowActionStatus;
+}) {
+  return (
+    <span
+      className={cn(
+        "shrink-0 whitespace-nowrap rounded-[999px] px-2 py-0.5 text-[11px] font-medium",
+        workflowActionStatusClass(status)
+      )}
+    >
+      {status}
+    </span>
+  );
+}
+
 function ArtifactDetailBlock({
   icon,
   title,
@@ -2234,6 +2531,14 @@ function connectorFilterCount(filter: ConnectorFilter) {
   return connectorItems.filter((item) => connectorMatchesFilter(item, filter)).length;
 }
 
+function workflowActionFilterCount(filter: WorkflowActionFilter) {
+  if (filter === "全部") {
+    return workflowActions.length;
+  }
+
+  return workflowActions.filter((item) => item.approvalStatus === filter).length;
+}
+
 function connectorMatchesFilter(item: ConnectorItem, filter: ConnectorFilter) {
   switch (filter) {
     case "全部":
@@ -2242,6 +2547,17 @@ function connectorMatchesFilter(item: ConnectorItem, filter: ConnectorFilter) {
       return item.permissionState === "需审批";
     case "可预览":
       return item.permissionState === "可预览";
+  }
+}
+
+function workflowActionStatusClass(status: WorkflowActionStatus) {
+  switch (status) {
+    case "待审批":
+      return "bg-orange-100 text-orange-800";
+    case "可预演":
+      return "bg-emerald-100 text-emerald-800";
+    case "需补上下文":
+      return "bg-amber-100 text-amber-800";
   }
 }
 
