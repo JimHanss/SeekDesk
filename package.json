@@ -2,7 +2,7 @@
   "name": "seekdesk",
   "version": "0.1.0",
   "private": true,
-  "description": "DeepSeek-native web coding agent platform for developers.",
+  "description": "DeepSeek-native AI ecosystem workspace for everyday productivity.",
   "type": "module",
   "workspaces": [
     "packages/shared",

@@ -1,27 +1,27 @@
 # SeekDesk
 
-SeekDesk is a DeepSeek-native web coding agent platform for developers. The MVP follows the DeepSeek DevDesk requirements: a browser workspace, streaming AI chat, local daemon mode, explicit permission controls, file inspection, command execution, diffs, and session persistence.
+SeekDesk is an AI ecosystem workspace for everyday work. It helps people draft, research, summarize meetings, organize knowledge, plan tasks, and connect practical AI workflows around daily productivity.
 
-This first scaffold only initializes the monorepo and the runnable app shells. DeepSeek streaming, local workspace tools, permission flows, and diff review will be implemented in later milestones.
+The product keeps a dual-mode architecture: `daily_work` and `coding_agent`. The current build only develops and exposes `daily_work`; coding-agent capabilities remain compatible at the contract level for later milestones.
 
 ## Stack
 
 - Frontend: Next.js, React, TypeScript, Tailwind CSS, shadcn-style components, Lucide icons
 - API: Fastify, WebSocket, TypeScript
-- Local daemon: Node.js CLI, TypeScript
-- Shared contracts: Zod schemas and TypeScript types
-- Agent core: DeepSeek provider interface and mock provider skeleton
+- Workflow runtime: Node.js services for future connectors and automations
+- Shared contracts: Zod schemas, app modes, realtime events, permissions, and tool types
+- Agent core: DeepSeek provider interface, mode context, and mock provider skeleton
 
 ## Workspace Layout
 
 ```text
 apps/
-  web/       Next.js developer workspace UI
-  api/       Fastify API, WebSocket, agent orchestration shell
-  daemon/    Local workspace daemon CLI shell
+  web/       Next.js everyday AI workspace UI
+  api/       Fastify API, WebSocket, AI orchestration shell
+  daemon/    Local runtime shell reserved for future connectors
 packages/
-  shared/    Shared schemas, realtime events, permissions, tool types
-  agent/     Model provider and agent loop skeleton
+  shared/    Shared schemas, app modes, realtime events, permissions, tool types
+  agent/     Model provider and mode-aware agent loop skeleton
   config/    Shared configuration assets
 docs/
   requirements/
