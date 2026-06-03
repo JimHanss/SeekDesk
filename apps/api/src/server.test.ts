@@ -144,6 +144,14 @@ describe("api server", () => {
             approvalRequestId: "draft-external-reply"
           }),
           permissionState: "requires_review",
+          lifecycle: expect.arrayContaining([
+            expect.objectContaining({
+              type: "created"
+            }),
+            expect.objectContaining({
+              type: "approval_linked"
+            })
+          ]),
           trace: expect.objectContaining({
             origin: "template",
             createdBy: "account-owner",
@@ -161,7 +169,12 @@ describe("api server", () => {
           approvalRequestIds: [],
           version: 3,
           reusable: true,
-          permissionState: "public"
+          permissionState: "public",
+          lifecycle: expect.arrayContaining([
+            expect.objectContaining({
+              type: "marked_reusable"
+            })
+          ])
         })
       ])
     });

@@ -84,6 +84,9 @@ export const dailyWorkArtifactTraceEventSchema = z.object({
   summary: z.string()
 });
 
+export const dailyWorkArtifactLifecycleEventSchema =
+  dailyWorkArtifactTraceEventSchema;
+
 export const dailyWorkArtifactTraceSchema = z.object({
   origin: dailyWorkArtifactTraceOriginSchema,
   createdAt: z.string().datetime(),
@@ -121,6 +124,7 @@ export const dailyWorkArtifactSchema = z.object({
   nextAction: dailyWorkArtifactNextActionSchema.nullable(),
   permissionState: dailyWorkArtifactPermissionStateSchema,
   trace: dailyWorkArtifactTraceSchema,
+  lifecycle: z.array(dailyWorkArtifactLifecycleEventSchema).default([]),
   tags: z.array(z.string()).default([])
 });
 
@@ -265,6 +269,20 @@ export const defaultDailyWorkArtifacts: DailyWorkArtifact[] = [
         }
       ]
     },
+    lifecycle: [
+      {
+        at: "2026-06-01T08:30:00.000Z",
+        actor: "daily-work-agent",
+        type: "created",
+        summary: "Created from the meeting-summary template."
+      },
+      {
+        at: "2026-06-02T09:15:00.000Z",
+        actor: "team-reviewer",
+        type: "status_changed",
+        summary: "Marked ready after workspace review."
+      }
+    ],
     tags: ["meeting", "summary", "actions"]
   },
   {
@@ -312,6 +330,20 @@ export const defaultDailyWorkArtifacts: DailyWorkArtifact[] = [
         }
       ]
     },
+    lifecycle: [
+      {
+        at: "2026-06-02T10:30:00.000Z",
+        actor: "project-owner",
+        type: "created",
+        summary: "Created from the task-plan template."
+      },
+      {
+        at: "2026-06-02T10:45:00.000Z",
+        actor: "daily-work-agent",
+        type: "approval_linked",
+        summary: "Linked calendar follow-up approval request."
+      }
+    ],
     tags: ["tasks", "planning", "execution"]
   },
   {
@@ -362,6 +394,20 @@ export const defaultDailyWorkArtifacts: DailyWorkArtifact[] = [
         }
       ]
     },
+    lifecycle: [
+      {
+        at: "2026-06-02T11:00:00.000Z",
+        actor: "account-owner",
+        type: "created",
+        summary: "Created from the email-draft template."
+      },
+      {
+        at: "2026-06-02T11:20:00.000Z",
+        actor: "daily-work-agent",
+        type: "approval_linked",
+        summary: "Linked customer-email read and external reply approvals."
+      }
+    ],
     tags: ["email", "writing", "draft"]
   },
   {
@@ -408,6 +454,20 @@ export const defaultDailyWorkArtifacts: DailyWorkArtifact[] = [
         }
       ]
     },
+    lifecycle: [
+      {
+        at: "2026-05-31T13:00:00.000Z",
+        actor: "research-owner",
+        type: "created",
+        summary: "Created from the research-brief template."
+      },
+      {
+        at: "2026-06-02T12:05:00.000Z",
+        actor: "research-owner",
+        type: "marked_reusable",
+        summary: "Promoted to a reusable daily-work artifact."
+      }
+    ],
     tags: ["research", "knowledge", "brief"]
   }
 ] as const as DailyWorkArtifact[];
@@ -448,6 +508,9 @@ export type DailyWorkArtifactNextAction = z.infer<
 >;
 export type DailyWorkArtifactTraceEvent = z.infer<
   typeof dailyWorkArtifactTraceEventSchema
+>;
+export type DailyWorkArtifactLifecycleEvent = z.infer<
+  typeof dailyWorkArtifactLifecycleEventSchema
 >;
 export type DailyWorkArtifactTrace = z.infer<
   typeof dailyWorkArtifactTraceSchema
