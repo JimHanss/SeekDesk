@@ -1,3 +1,4 @@
+import { getModeSystemMessage } from "./provider.js";
 import type {
   DeepSeekModelConfig,
   ModelChatRequest,
@@ -34,7 +35,7 @@ export class DeepSeekModelProvider implements ModelProvider {
         },
         body: JSON.stringify({
           model: this.config.model,
-          messages: request.messages,
+          messages: [getModeSystemMessage(request.mode), ...request.messages],
           stream: true
         })
       }

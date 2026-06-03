@@ -29,6 +29,7 @@ describe("api server", () => {
         origin: "http://localhost:3000"
       },
       payload: {
+        mode: "daily_work",
         messages: [{ role: "user", content: "summarize this repository" }]
       }
     });
@@ -37,7 +38,7 @@ describe("api server", () => {
     expect(response.headers["access-control-allow-origin"]).toBe(
       "http://localhost:3000"
     );
-    expect(response.body).toContain("Mock DeepSeek response");
+    expect(response.body).toContain("Mock daily-work AI response");
     expect(response.body).toContain("summarize this repository");
 
     await app.close();
@@ -55,6 +56,23 @@ describe("api server", () => {
 
     expect(response.statusCode).toBe(200);
     expect(response.body).toContain("hello");
+
+    await app.close();
+  });
+
+  it("accepts the reserved coding-agent mode without enabling tools", async () => {
+    const app = await buildServer();
+    const response = await app.inject({
+      method: "POST",
+      url: "/api/chat",
+      payload: {
+        mode: "coding_agent",
+        prompt: "inspect a repository"
+      }
+    });
+
+    expect(response.statusCode).toBe(200);
+    expect(response.body).toContain("coding-agent compatibility");
 
     await app.close();
   });

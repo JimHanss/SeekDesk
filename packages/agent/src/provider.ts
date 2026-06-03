@@ -1,9 +1,12 @@
+import type { AppMode } from "@seekdesk/shared";
+
 export interface ModelMessage {
   role: "system" | "user" | "assistant" | "tool";
   content: string;
 }
 
 export interface ModelChatRequest {
+  mode?: AppMode;
   messages: ModelMessage[];
   maxTurns: number;
 }
@@ -31,4 +34,26 @@ export interface DeepSeekModelConfig {
 
 export interface ModelProvider {
   streamChat(request: ModelChatRequest): AsyncIterable<ModelStreamChunk>;
+}
+
+export function resolveModelMode(mode?: AppMode): AppMode {
+  return mode ?? "daily_work";
+}
+
+export function getModeSystemMessage(mode?: AppMode): ModelMessage {
+  const resolvedMode = resolveModelMode(mode);
+
+  if (resolvedMode === "coding_agent") {
+    return {
+      role: "system",
+      content:
+        "SeekDesk coding-agent compatibility mode is reserved in this build. Help with planning and explanation, but do not claim filesystem, shell, git, or IDE tools are active."
+    };
+  }
+
+  return {
+    role: "system",
+    content:
+      "SeekDesk is running daily-work mode. Help with writing, research, meeting summaries, knowledge organization, and safe workflow planning. Do not claim private connectors are active unless the user explicitly authorizes them."
+  };
 }

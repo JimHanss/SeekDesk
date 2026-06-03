@@ -4,19 +4,21 @@ import {
   type ModelMessage,
   type ModelProvider
 } from "@seekdesk/agent";
+import { appModeSchema, type AppMode } from "@seekdesk/shared";
 import websocket from "@fastify/websocket";
 import Fastify, { type FastifyReply, type FastifyRequest } from "fastify";
 import { pathToFileURL } from "node:url";
 
-type ChatRequestBody =
-  | {
-      prompt?: string;
-      messages?: Array<{
-        role: "system" | "user" | "assistant";
-        content: string;
-      }>;
-    }
-  | undefined;
+type ChatRequest = {
+  mode?: AppMode;
+  prompt?: string;
+  messages?: Array<{
+    role: "system" | "user" | "assistant";
+    content: string;
+  }>;
+};
+
+type ChatRequestBody = ChatRequest | undefined;
 
 const allowedOrigins = new Set([
   "http://localhost:3000",
@@ -43,6 +45,7 @@ export async function buildServer() {
   }));
 
   app.post<{ Body: ChatRequestBody }>("/api/chat", async (request, reply) => {
+    const mode = normalizeAppMode(request.body?.mode);
     const messages = normalizeMessages(request.body);
     if (!messages.length) {
       return reply.code(400).send({
@@ -52,6 +55,7 @@ export async function buildServer() {
 
     const stream = modelStreamToReadableStream(
       createModelProvider().streamChat({
+        mode,
         messages,
         maxTurns: 1
       })
@@ -95,6 +99,11 @@ function applyCorsHeaders(request: FastifyRequest, reply: FastifyReply) {
   reply.header("Vary", "Origin");
   reply.header("Access-Control-Allow-Methods", "GET,POST,OPTIONS");
   reply.header("Access-Control-Allow-Headers", "Content-Type,Authorization");
+}
+
+function normalizeAppMode(mode: ChatRequest["mode"]): AppMode {
+  const parsed = appModeSchema.safeParse(mode);
+  return parsed.success ? parsed.data : "daily_work";
 }
 
 function normalizeMessages(body: ChatRequestBody): ModelMessage[] {

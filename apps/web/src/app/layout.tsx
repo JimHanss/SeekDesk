@@ -4,7 +4,7 @@ import "./globals.css";
 
 export const metadata: Metadata = {
   title: "SeekDesk",
-  description: "DeepSeek-native web coding agent platform for developers."
+  description: "AI ecosystem workspace for everyday productivity."
 };
 
 export default function RootLayout({
