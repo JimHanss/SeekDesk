@@ -20,6 +20,66 @@ describe("api server", () => {
     await app.close();
   });
 
+  it("returns the default daily-work templates when no mode is provided", async () => {
+    const app = await buildServer();
+    const response = await app.inject({
+      method: "GET",
+      url: "/api/daily/templates"
+    });
+
+    expect(response.statusCode).toBe(200);
+    expect(response.json()).toEqual({
+      mode: "daily_work",
+      templates: expect.arrayContaining([
+        expect.objectContaining({
+          id: "morning-standup-brief",
+          mode: "daily_work",
+          category: "planning"
+        })
+      ])
+    });
+
+    await app.close();
+  });
+
+  it("returns default daily-work artifacts", async () => {
+    const app = await buildServer();
+    const response = await app.inject({
+      method: "GET",
+      url: "/api/daily/artifacts"
+    });
+
+    expect(response.statusCode).toBe(200);
+    expect(response.json()).toEqual({
+      mode: "daily_work",
+      artifacts: expect.arrayContaining([
+        expect.objectContaining({
+          id: "daily-status-brief",
+          mode: "daily_work",
+          artifactType: "status_update"
+        })
+      ])
+    });
+
+    await app.close();
+  });
+
+  it("keeps the reserved coding-agent compatibility path for daily templates", async () => {
+    const app = await buildServer();
+    const response = await app.inject({
+      method: "GET",
+      url: "/api/daily/templates?mode=coding_agent"
+    });
+
+    expect(response.statusCode).toBe(200);
+    expect(response.json()).toEqual({
+      mode: "coding_agent",
+      templates: []
+    });
+
+    await app.close();
+  });
+
   it("streams chat text from a messages request", async () => {
     const app = await buildServer();
     const response = await app.inject({
