@@ -206,6 +206,140 @@ describe("api server", () => {
     await app.close();
   });
 
+  it("returns default daily-work session summaries", async () => {
+    const app = await buildServer();
+    const response = await app.inject({
+      method: "GET",
+      url: "/api/daily/sessions"
+    });
+    const body = response.json();
+
+    expect(response.statusCode).toBe(200);
+    expect(body).toEqual({
+      mode: "daily_work",
+      sessions: expect.arrayContaining([
+        expect.objectContaining({
+          id: "customer-follow-up-session",
+          workspaceId: "workspace-seekdesk",
+          appMode: "daily_work",
+          status: "waiting_for_approval",
+          artifactIds: ["email-draft-artifact"],
+          contextItemIds: ["customer-email", "meeting-notes"],
+          approvalRequestIds: [
+            "read-customer-email-context",
+            "draft-external-reply"
+          ],
+          messageCount: 8,
+          tags: ["email", "customer", "approval"],
+          lastAction: expect.objectContaining({
+            artifactId: "email-draft-artifact",
+            approvalRequestId: "draft-external-reply"
+          })
+        }),
+        expect.objectContaining({
+          id: "planning-refresh-session",
+          status: "active",
+          artifactIds: ["task-list-artifact", "research-note-artifact"],
+          contextItemIds: ["project-brief", "research-links", "meeting-notes"],
+          approvalRequestIds: ["schedule-calendar-follow-up"]
+        })
+      ])
+    });
+    expect(body.sessions).toHaveLength(3);
+    expect(body.sessions[0]).not.toHaveProperty("recentMessages");
+
+    await app.close();
+  });
+
+  it("returns one daily-work session detail by id", async () => {
+    const app = await buildServer();
+    const response = await app.inject({
+      method: "GET",
+      url: "/api/daily/sessions/customer-follow-up-session"
+    });
+
+    expect(response.statusCode).toBe(200);
+    expect(response.json()).toEqual({
+      mode: "daily_work",
+      session: expect.objectContaining({
+        id: "customer-follow-up-session",
+        artifactIds: ["email-draft-artifact"],
+        contextItemIds: ["customer-email", "meeting-notes"],
+        approvalRequestIds: [
+          "read-customer-email-context",
+          "draft-external-reply"
+        ],
+        recentMessages: expect.arrayContaining([
+          expect.objectContaining({
+            id: "customer-follow-up-message-1",
+            contextItemIds: ["customer-email", "meeting-notes"],
+            approvalRequestIds: ["read-customer-email-context"]
+          }),
+          expect.objectContaining({
+            id: "customer-follow-up-message-2",
+            artifactIds: ["email-draft-artifact"],
+            approvalRequestIds: ["draft-external-reply"]
+          })
+        ])
+      })
+    });
+
+    await app.close();
+  });
+
+  it("keeps the reserved coding-agent compatibility path for daily sessions", async () => {
+    const app = await buildServer();
+    const response = await app.inject({
+      method: "GET",
+      url: "/api/daily/sessions?mode=coding_agent"
+    });
+
+    expect(response.statusCode).toBe(200);
+    expect(response.json()).toEqual({
+      mode: "coding_agent",
+      sessions: []
+    });
+
+    await app.close();
+  });
+
+  it("returns 404 when a daily-work session is missing", async () => {
+    const app = await buildServer();
+    const response = await app.inject({
+      method: "GET",
+      url: "/api/daily/sessions/missing-session"
+    });
+
+    expect(response.statusCode).toBe(404);
+    expect(response.json()).toEqual({
+      mode: "daily_work",
+      error: "Daily-work session not found."
+    });
+
+    await app.close();
+  });
+
+  it("handles CORS preflight for daily sessions", async () => {
+    const app = await buildServer();
+    const response = await app.inject({
+      method: "OPTIONS",
+      url: "/api/daily/sessions",
+      headers: {
+        origin: "http://localhost:3000"
+      }
+    });
+
+    expect(response.statusCode).toBe(204);
+    expect(response.headers["access-control-allow-origin"]).toBe(
+      "http://localhost:3000"
+    );
+    expect(response.headers["access-control-allow-methods"]).toBe(
+      "GET,POST,OPTIONS"
+    );
+
+    await app.close();
+  });
+
   it("keeps the reserved coding-agent compatibility path for daily templates", async () => {
     const app = await buildServer();
     const response = await app.inject({
