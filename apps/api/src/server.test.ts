@@ -78,6 +78,38 @@ describe("api server", () => {
     await app.close();
   });
 
+  it("returns the default daily-work approval requests when no mode is provided", async () => {
+    const app = await buildServer();
+    const response = await app.inject({
+      method: "GET",
+      url: "/api/daily/approvals"
+    });
+
+    expect(response.statusCode).toBe(200);
+    expect(response.json()).toEqual({
+      mode: "daily_work",
+      requests: expect.arrayContaining([
+        expect.objectContaining({
+          id: "read-customer-email-context",
+          mode: "daily_work",
+          actionType: "read_customer_email_context",
+          requiredPermissionMode: "confirm_private_context_and_actions",
+          permissionAware: true
+        }),
+        expect.objectContaining({
+          id: "draft-external-reply",
+          mode: "daily_work",
+          actionType: "draft_external_reply",
+          requiredPermissionMode: "confirm_writes_and_commands",
+          permissionAware: true
+        })
+      ])
+    });
+    expect(response.json().requests).toHaveLength(4);
+
+    await app.close();
+  });
+
   it("returns default daily-work artifacts", async () => {
     const app = await buildServer();
     const response = await app.inject({
@@ -127,6 +159,22 @@ describe("api server", () => {
     expect(response.json()).toEqual({
       mode: "coding_agent",
       items: []
+    });
+
+    await app.close();
+  });
+
+  it("keeps the reserved coding-agent compatibility path for daily approvals", async () => {
+    const app = await buildServer();
+    const response = await app.inject({
+      method: "GET",
+      url: "/api/daily/approvals?mode=coding_agent"
+    });
+
+    expect(response.statusCode).toBe(200);
+    expect(response.json()).toEqual({
+      mode: "coding_agent",
+      requests: []
     });
 
     await app.close();

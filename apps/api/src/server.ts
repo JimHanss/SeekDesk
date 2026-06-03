@@ -6,10 +6,12 @@ import {
 } from "@seekdesk/agent";
 import {
   appModeSchema,
+  defaultDailyWorkApprovalRequests,
   defaultDailyWorkArtifacts,
   defaultDailyWorkContextItems,
   defaultDailyWorkTemplates,
   type AppMode,
+  type DailyApprovalRequestsResponse,
   type DailyWorkArtifactsResponse,
   type DailyWorkTemplatesResponse,
   type DailyContextResponse
@@ -49,6 +51,9 @@ export async function buildServer() {
   app.options("/api/daily/context", async (_request, reply) =>
     reply.code(204).send()
   );
+  app.options("/api/daily/approvals", async (_request, reply) =>
+    reply.code(204).send()
+  );
   app.options("/api/daily/templates", async (_request, reply) =>
     reply.code(204).send()
   );
@@ -70,6 +75,18 @@ export async function buildServer() {
       return {
         mode,
         items: filterDailyWorkContextItems(mode)
+      };
+    }
+  );
+
+  app.get<{ Querystring: { mode?: string } }>(
+    "/api/daily/approvals",
+    async (request): Promise<DailyApprovalRequestsResponse> => {
+      const mode = normalizeAppMode(request.query.mode);
+
+      return {
+        mode,
+        requests: filterDailyWorkApprovalRequests(mode)
       };
     }
   );
@@ -182,6 +199,14 @@ function filterDailyWorkContextItems(mode: AppMode) {
   }
 
   return defaultDailyWorkContextItems;
+}
+
+function filterDailyWorkApprovalRequests(mode: AppMode) {
+  if (mode !== "daily_work") {
+    return [];
+  }
+
+  return defaultDailyWorkApprovalRequests;
 }
 
 function normalizeMessages(body: ChatRequestBody): ModelMessage[] {
