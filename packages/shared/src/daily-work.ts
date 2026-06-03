@@ -26,6 +26,71 @@ export const artifactTypeSchema = z.enum([
   "weekly_report"
 ]);
 
+export const dailyWorkArtifactStatusSchema = z.enum([
+  "draft",
+  "review",
+  "ready",
+  "reusable",
+  "archived"
+]);
+
+export const dailyWorkArtifactPermissionStateSchema = z.enum([
+  "public",
+  "workspace_shared",
+  "requires_review",
+  "restricted"
+]);
+
+export const dailyWorkArtifactNextActionTypeSchema = z.enum([
+  "continue_draft",
+  "request_review",
+  "approve_for_use",
+  "reuse_in_template",
+  "archive"
+]);
+
+export const dailyWorkArtifactTraceOriginSchema = z.enum([
+  "template",
+  "daily_chat",
+  "manual"
+]);
+
+export const dailyWorkArtifactTraceEventTypeSchema = z.enum([
+  "created",
+  "context_linked",
+  "approval_linked",
+  "status_changed",
+  "marked_reusable"
+]);
+
+export const dailyWorkArtifactOwnerSchema = z.object({
+  id: z.string(),
+  displayName: z.string(),
+  team: z.string().optional()
+});
+
+export const dailyWorkArtifactNextActionSchema = z.object({
+  type: dailyWorkArtifactNextActionTypeSchema,
+  label: z.string(),
+  description: z.string().optional(),
+  approvalRequestId: z.string().optional(),
+  dueAt: z.string().datetime().optional()
+});
+
+export const dailyWorkArtifactTraceEventSchema = z.object({
+  at: z.string().datetime(),
+  actor: z.string(),
+  type: dailyWorkArtifactTraceEventTypeSchema,
+  summary: z.string()
+});
+
+export const dailyWorkArtifactTraceSchema = z.object({
+  origin: dailyWorkArtifactTraceOriginSchema,
+  createdAt: z.string().datetime(),
+  createdBy: z.string(),
+  events: z.array(dailyWorkArtifactTraceEventSchema).default([])
+});
+
 export const dailyWorkTemplateSchema = z.object({
   id: z.string(),
   mode: appModeSchema.default("daily_work"),
@@ -46,6 +111,16 @@ export const dailyWorkArtifactSchema = z.object({
   description: z.string(),
   templateId: z.string().optional(),
   summary: z.string(),
+  status: dailyWorkArtifactStatusSchema,
+  owner: dailyWorkArtifactOwnerSchema,
+  updatedAt: z.string().datetime(),
+  sourceContextIds: z.array(z.string()).default([]),
+  approvalRequestIds: z.array(z.string()).default([]),
+  version: z.number().int().positive(),
+  reusable: z.boolean().default(false),
+  nextAction: dailyWorkArtifactNextActionSchema.nullable(),
+  permissionState: dailyWorkArtifactPermissionStateSchema,
+  trace: dailyWorkArtifactTraceSchema,
   tags: z.array(z.string()).default([])
 });
 
@@ -57,6 +132,11 @@ export const dailyWorkTemplatesResponseSchema = z.object({
 export const dailyWorkArtifactsResponseSchema = z.object({
   mode: appModeSchema,
   artifacts: z.array(dailyWorkArtifactSchema)
+});
+
+export const dailyWorkArtifactResponseSchema = z.object({
+  mode: appModeSchema,
+  artifact: dailyWorkArtifactSchema
 });
 
 export const defaultDailyWorkTemplates: DailyWorkTemplate[] = [
@@ -149,6 +229,42 @@ export const defaultDailyWorkArtifacts: DailyWorkArtifact[] = [
     description: "关键决策、风险和下一步行动的清晰回顾。",
     templateId: "meeting-summary",
     summary: "适合分享给团队的会议结论与行动项。",
+    status: "ready",
+    owner: {
+      id: "daily-work-agent",
+      displayName: "SeekDesk Daily Agent",
+      team: "daily-work"
+    },
+    updatedAt: "2026-06-02T09:15:00.000Z",
+    sourceContextIds: ["meeting-notes", "team-notes"],
+    approvalRequestIds: ["use-internal-meeting-notes"],
+    version: 2,
+    reusable: true,
+    nextAction: {
+      type: "reuse_in_template",
+      label: "Reuse meeting summary",
+      description: "Use this reviewed summary as the base for a handoff or weekly report."
+    },
+    permissionState: "workspace_shared",
+    trace: {
+      origin: "template",
+      createdAt: "2026-06-01T08:30:00.000Z",
+      createdBy: "daily-work-agent",
+      events: [
+        {
+          at: "2026-06-01T08:30:00.000Z",
+          actor: "daily-work-agent",
+          type: "created",
+          summary: "Created from the meeting-summary template."
+        },
+        {
+          at: "2026-06-02T09:15:00.000Z",
+          actor: "team-reviewer",
+          type: "status_changed",
+          summary: "Marked ready after workspace review."
+        }
+      ]
+    },
     tags: ["meeting", "summary", "actions"]
   },
   {
@@ -159,6 +275,43 @@ export const defaultDailyWorkArtifacts: DailyWorkArtifact[] = [
     description: "带负责人、时限和依赖关系的可执行事项。",
     templateId: "task-plan",
     summary: "把目标拆解为可跟进的下一步动作。",
+    status: "review",
+    owner: {
+      id: "project-owner",
+      displayName: "Project Owner",
+      team: "operations"
+    },
+    updatedAt: "2026-06-02T10:45:00.000Z",
+    sourceContextIds: ["project-brief", "meeting-notes"],
+    approvalRequestIds: ["schedule-calendar-follow-up"],
+    version: 1,
+    reusable: false,
+    nextAction: {
+      type: "approve_for_use",
+      label: "Approve follow-up plan",
+      description: "Confirm the follow-up schedule before the task list is ready.",
+      approvalRequestId: "schedule-calendar-follow-up"
+    },
+    permissionState: "workspace_shared",
+    trace: {
+      origin: "template",
+      createdAt: "2026-06-02T10:30:00.000Z",
+      createdBy: "project-owner",
+      events: [
+        {
+          at: "2026-06-02T10:30:00.000Z",
+          actor: "project-owner",
+          type: "created",
+          summary: "Created from the task-plan template."
+        },
+        {
+          at: "2026-06-02T10:45:00.000Z",
+          actor: "daily-work-agent",
+          type: "approval_linked",
+          summary: "Linked calendar follow-up approval request."
+        }
+      ]
+    },
     tags: ["tasks", "planning", "execution"]
   },
   {
@@ -169,6 +322,46 @@ export const defaultDailyWorkArtifacts: DailyWorkArtifact[] = [
     description: "可继续润色或复制给利益相关人的更新。",
     templateId: "email-draft",
     summary: "面向客户、团队或管理者的专业邮件初稿。",
+    status: "draft",
+    owner: {
+      id: "account-owner",
+      displayName: "Account Owner",
+      team: "customer-success"
+    },
+    updatedAt: "2026-06-02T11:20:00.000Z",
+    sourceContextIds: ["customer-email", "meeting-notes"],
+    approvalRequestIds: [
+      "read-customer-email-context",
+      "draft-external-reply"
+    ],
+    version: 1,
+    reusable: false,
+    nextAction: {
+      type: "request_review",
+      label: "Request external reply review",
+      description: "Review the customer-facing draft before it can be shared.",
+      approvalRequestId: "draft-external-reply"
+    },
+    permissionState: "requires_review",
+    trace: {
+      origin: "template",
+      createdAt: "2026-06-02T11:00:00.000Z",
+      createdBy: "account-owner",
+      events: [
+        {
+          at: "2026-06-02T11:00:00.000Z",
+          actor: "account-owner",
+          type: "created",
+          summary: "Created from the email-draft template."
+        },
+        {
+          at: "2026-06-02T11:20:00.000Z",
+          actor: "daily-work-agent",
+          type: "approval_linked",
+          summary: "Linked customer-email read and external reply approvals."
+        }
+      ]
+    },
     tags: ["email", "writing", "draft"]
   },
   {
@@ -179,6 +372,42 @@ export const defaultDailyWorkArtifacts: DailyWorkArtifact[] = [
     description: "浓缩发现、引用方向和待验证问题。",
     templateId: "research-brief",
     summary: "沉淀可复用的调研结论和信息缺口。",
+    status: "reusable",
+    owner: {
+      id: "research-owner",
+      displayName: "Research Owner",
+      team: "strategy"
+    },
+    updatedAt: "2026-06-02T12:05:00.000Z",
+    sourceContextIds: ["research-links", "project-brief"],
+    approvalRequestIds: [],
+    version: 3,
+    reusable: true,
+    nextAction: {
+      type: "reuse_in_template",
+      label: "Reuse research note",
+      description: "Attach this reusable note to future briefs or weekly reports."
+    },
+    permissionState: "public",
+    trace: {
+      origin: "template",
+      createdAt: "2026-05-31T13:00:00.000Z",
+      createdBy: "research-owner",
+      events: [
+        {
+          at: "2026-05-31T13:00:00.000Z",
+          actor: "research-owner",
+          type: "created",
+          summary: "Created from the research-brief template."
+        },
+        {
+          at: "2026-06-02T12:05:00.000Z",
+          actor: "research-owner",
+          type: "marked_reusable",
+          summary: "Promoted to a reusable daily-work artifact."
+        }
+      ]
+    },
     tags: ["research", "knowledge", "brief"]
   }
 ] as const as DailyWorkArtifact[];
@@ -191,5 +420,35 @@ export type DailyWorkTemplatesResponse = z.infer<
 export type DailyWorkArtifactsResponse = z.infer<
   typeof dailyWorkArtifactsResponseSchema
 >;
+export type DailyWorkArtifactResponse = z.infer<
+  typeof dailyWorkArtifactResponseSchema
+>;
 export type TemplateCategory = z.infer<typeof templateCategorySchema>;
 export type ArtifactType = z.infer<typeof artifactTypeSchema>;
+export type DailyWorkArtifactStatus = z.infer<
+  typeof dailyWorkArtifactStatusSchema
+>;
+export type DailyWorkArtifactPermissionState = z.infer<
+  typeof dailyWorkArtifactPermissionStateSchema
+>;
+export type DailyWorkArtifactNextActionType = z.infer<
+  typeof dailyWorkArtifactNextActionTypeSchema
+>;
+export type DailyWorkArtifactTraceOrigin = z.infer<
+  typeof dailyWorkArtifactTraceOriginSchema
+>;
+export type DailyWorkArtifactTraceEventType = z.infer<
+  typeof dailyWorkArtifactTraceEventTypeSchema
+>;
+export type DailyWorkArtifactOwner = z.infer<
+  typeof dailyWorkArtifactOwnerSchema
+>;
+export type DailyWorkArtifactNextAction = z.infer<
+  typeof dailyWorkArtifactNextActionSchema
+>;
+export type DailyWorkArtifactTraceEvent = z.infer<
+  typeof dailyWorkArtifactTraceEventSchema
+>;
+export type DailyWorkArtifactTrace = z.infer<
+  typeof dailyWorkArtifactTraceSchema
+>;

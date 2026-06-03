@@ -11,6 +11,7 @@ import {
   defaultDailyWorkContextItems,
   defaultDailyWorkTemplates,
   type AppMode,
+  type DailyWorkArtifactResponse,
   type DailyApprovalRequestsResponse,
   type DailyWorkArtifactsResponse,
   type DailyWorkTemplatesResponse,
@@ -58,6 +59,9 @@ export async function buildServer() {
     reply.code(204).send()
   );
   app.options("/api/daily/artifacts", async (_request, reply) =>
+    reply.code(204).send()
+  );
+  app.options("/api/daily/artifacts/:artifactId", async (_request, reply) =>
     reply.code(204).send()
   );
 
@@ -111,6 +115,30 @@ export async function buildServer() {
       return {
         mode,
         artifacts: filterDailyWorkArtifacts(mode)
+      };
+    }
+  );
+
+  app.get<{
+    Params: { artifactId: string };
+    Querystring: { mode?: string };
+  }>(
+    "/api/daily/artifacts/:artifactId",
+    async (request, reply): Promise<DailyWorkArtifactResponse | void> => {
+      const mode = normalizeAppMode(request.query.mode);
+      const artifact = filterDailyWorkArtifact(mode, request.params.artifactId);
+
+      if (!artifact) {
+        reply.code(404).send({
+          mode,
+          error: "Daily-work artifact not found."
+        });
+        return;
+      }
+
+      return {
+        mode,
+        artifact
       };
     }
   );
@@ -191,6 +219,12 @@ function filterDailyWorkArtifacts(mode: AppMode) {
   }
 
   return defaultDailyWorkArtifacts;
+}
+
+function filterDailyWorkArtifact(mode: AppMode, artifactId: string) {
+  return filterDailyWorkArtifacts(mode).find(
+    (artifact) => artifact.id === artifactId
+  );
 }
 
 function filterDailyWorkContextItems(mode: AppMode) {

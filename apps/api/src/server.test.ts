@@ -116,17 +116,78 @@ describe("api server", () => {
       method: "GET",
       url: "/api/daily/artifacts"
     });
+    const body = response.json();
 
     expect(response.statusCode).toBe(200);
-    expect(response.json()).toEqual({
+    expect(body).toEqual({
       mode: "daily_work",
       artifacts: expect.arrayContaining([
         expect.objectContaining({
           id: "email-draft-artifact",
           mode: "daily_work",
-          artifactType: "email_draft"
+          artifactType: "email_draft",
+          status: "draft",
+          owner: expect.objectContaining({
+            id: "account-owner",
+            displayName: "Account Owner"
+          }),
+          updatedAt: "2026-06-02T11:20:00.000Z",
+          sourceContextIds: ["customer-email", "meeting-notes"],
+          approvalRequestIds: [
+            "read-customer-email-context",
+            "draft-external-reply"
+          ],
+          version: 1,
+          reusable: false,
+          nextAction: expect.objectContaining({
+            type: "request_review",
+            approvalRequestId: "draft-external-reply"
+          }),
+          permissionState: "requires_review",
+          trace: expect.objectContaining({
+            origin: "template",
+            createdBy: "account-owner",
+            events: expect.arrayContaining([
+              expect.objectContaining({
+                type: "approval_linked"
+              })
+            ])
+          })
+        }),
+        expect.objectContaining({
+          id: "research-note-artifact",
+          status: "reusable",
+          sourceContextIds: ["research-links", "project-brief"],
+          approvalRequestIds: [],
+          version: 3,
+          reusable: true,
+          permissionState: "public"
         })
       ])
+    });
+    expect(body.artifacts).toHaveLength(4);
+
+    await app.close();
+  });
+
+  it("returns one daily-work artifact by id", async () => {
+    const app = await buildServer();
+    const response = await app.inject({
+      method: "GET",
+      url: "/api/daily/artifacts/research-note-artifact"
+    });
+
+    expect(response.statusCode).toBe(200);
+    expect(response.json()).toEqual({
+      mode: "daily_work",
+      artifact: expect.objectContaining({
+        id: "research-note-artifact",
+        status: "reusable",
+        templateId: "research-brief",
+        nextAction: expect.objectContaining({
+          type: "reuse_in_template"
+        })
+      })
     });
 
     await app.close();
@@ -175,6 +236,22 @@ describe("api server", () => {
     expect(response.json()).toEqual({
       mode: "coding_agent",
       requests: []
+    });
+
+    await app.close();
+  });
+
+  it("keeps the reserved coding-agent compatibility path for daily artifacts", async () => {
+    const app = await buildServer();
+    const response = await app.inject({
+      method: "GET",
+      url: "/api/daily/artifacts?mode=coding_agent"
+    });
+
+    expect(response.statusCode).toBe(200);
+    expect(response.json()).toEqual({
+      mode: "coding_agent",
+      artifacts: []
     });
 
     await app.close();
