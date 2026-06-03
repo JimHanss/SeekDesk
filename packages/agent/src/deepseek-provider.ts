@@ -36,7 +36,17 @@ export class DeepSeekModelProvider implements ModelProvider {
         body: JSON.stringify({
           model: this.config.model,
           messages: [getModeSystemMessage(request.mode), ...request.messages],
-          stream: true
+          stream: true,
+          stream_options: this.config.includeUsage
+            ? {
+                include_usage: true
+              }
+            : undefined,
+          thinking: this.config.thinkingMode
+            ? {
+                type: this.config.thinkingMode
+              }
+            : undefined
         })
       }
     );

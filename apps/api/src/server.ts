@@ -12,10 +12,12 @@ import {
   defaultDailyWorkSessionDetails,
   defaultDailyWorkSessionSummaries,
   defaultDailyWorkTemplates,
+  createDailyModelUsageResponse,
   type AppMode,
   type DailyApprovalRequestsResponse,
   type DailyWorkArtifactResponse,
   type DailyWorkArtifactsResponse,
+  type DailyModelUsageResponse,
   type DailyWorkSessionResponse,
   type DailyWorkSessionsResponse,
   type DailyWorkTemplatesResponse,
@@ -60,6 +62,9 @@ export async function buildServer() {
     reply.code(204).send()
   );
   app.options("/api/daily/templates", async (_request, reply) =>
+    reply.code(204).send()
+  );
+  app.options("/api/daily/model-usage", async (_request, reply) =>
     reply.code(204).send()
   );
   app.options("/api/daily/sessions", async (_request, reply) =>
@@ -126,6 +131,15 @@ export async function buildServer() {
         mode,
         artifacts: filterDailyWorkArtifacts(mode)
       };
+    }
+  );
+
+  app.get<{ Querystring: { mode?: string } }>(
+    "/api/daily/model-usage",
+    async (request): Promise<DailyModelUsageResponse> => {
+      const mode = normalizeAppMode(request.query.mode);
+
+      return createDailyModelUsageSnapshot(mode);
     }
   );
 
@@ -310,6 +324,25 @@ function filterDailyWorkApprovalRequests(mode: AppMode) {
   return defaultDailyWorkApprovalRequests;
 }
 
+function createDailyModelUsageSnapshot(mode: AppMode): DailyModelUsageResponse {
+  return createDailyModelUsageResponse({
+    mode,
+    configured: hasDeepSeekApiKey(),
+    baseUrl: process.env.DEEPSEEK_BASE_URL,
+    fastModel: process.env.DEEPSEEK_MODEL_FAST,
+    proModel: process.env.DEEPSEEK_MODEL_PRO,
+    selectedRoute: process.env.DEEPSEEK_MODEL_ROUTE,
+    thinkingMode: process.env.DEEPSEEK_THINKING_MODE,
+    streamUsageEnabled:
+      process.env.DEEPSEEK_STREAM_USAGE_ENABLED ??
+      process.env.DEEPSEEK_STREAM_USAGE
+  });
+}
+
+function hasDeepSeekApiKey() {
+  return Boolean(process.env.DEEPSEEK_API_KEY?.trim());
+}
+
 function normalizeMessages(body: ChatRequestBody): ModelMessage[] {
   if (!body || typeof body !== "object") {
     return [];
@@ -341,16 +374,20 @@ function isSupportedRole(role: string): role is "system" | "user" | "assistant" 
 }
 
 function createModelProvider(): ModelProvider {
-  const apiKey = process.env.DEEPSEEK_API_KEY;
+  const apiKey = process.env.DEEPSEEK_API_KEY?.trim();
 
   if (!apiKey) {
     return new MockModelProvider();
   }
 
+  const modelConfig = createDailyModelUsageSnapshot("daily_work").config;
+
   return new DeepSeekModelProvider({
     apiKey,
-    baseUrl: process.env.DEEPSEEK_BASE_URL ?? "https://api.deepseek.com",
-    model: process.env.DEEPSEEK_MODEL_FAST ?? "deepseek-v4-flash"
+    baseUrl: modelConfig.baseUrl,
+    model: modelConfig.selectedModel,
+    thinkingMode: modelConfig.thinkingMode,
+    includeUsage: modelConfig.streamUsageEnabled
   });
 }
 

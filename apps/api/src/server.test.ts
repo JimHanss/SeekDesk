@@ -1,8 +1,40 @@
-import { describe, expect, it } from "vitest";
+import { afterEach, beforeEach, describe, expect, it } from "vitest";
 
 import { buildServer } from "./server.js";
 
+const deepSeekEnvKeys = [
+  "DEEPSEEK_API_KEY",
+  "DEEPSEEK_BASE_URL",
+  "DEEPSEEK_MODEL_FAST",
+  "DEEPSEEK_MODEL_PRO",
+  "DEEPSEEK_MODEL_ROUTE",
+  "DEEPSEEK_THINKING_MODE",
+  "DEEPSEEK_STREAM_USAGE",
+  "DEEPSEEK_STREAM_USAGE_ENABLED"
+] as const;
+
+const originalDeepSeekEnv = new Map(
+  deepSeekEnvKeys.map((key) => [key, process.env[key]])
+);
+
 describe("api server", () => {
+  beforeEach(() => {
+    for (const key of deepSeekEnvKeys) {
+      delete process.env[key];
+    }
+  });
+
+  afterEach(() => {
+    for (const key of deepSeekEnvKeys) {
+      const originalValue = originalDeepSeekEnv.get(key);
+      if (originalValue === undefined) {
+        delete process.env[key];
+      } else {
+        process.env[key] = originalValue;
+      }
+    }
+  });
+
   it("returns health status", async () => {
     const app = await buildServer();
     const response = await app.inject({
@@ -202,6 +234,159 @@ describe("api server", () => {
         })
       })
     });
+
+    await app.close();
+  });
+
+  it("returns the default daily-work model usage snapshot", async () => {
+    const app = await buildServer();
+    const response = await app.inject({
+      method: "GET",
+      url: "/api/daily/model-usage"
+    });
+    const body = response.json();
+
+    expect(response.statusCode).toBe(200);
+    expect(body).toEqual({
+      mode: "daily_work",
+      config: expect.objectContaining({
+        mode: "daily_work",
+        provider: "deepseek",
+        baseUrl: "https://api.deepseek.com",
+        fastModel: "deepseek-v4-flash",
+        proModel: "deepseek-v4-pro",
+        selectedRoute: "fast",
+        selectedModel: "deepseek-v4-flash",
+        thinkingMode: "disabled",
+        streamUsageEnabled: true,
+        configured: false,
+        notes: expect.arrayContaining([
+          "DEEPSEEK_API_KEY is not configured; mock usage data is shown."
+        ])
+      }),
+      usage: expect.objectContaining({
+        window: expect.objectContaining({
+          id: "daily-work-rolling-24h",
+          label: "Last 24 hours"
+        }),
+        promptTokens: 2240,
+        completionTokens: 730,
+        totalTokens: 2970,
+        estimatedCostUsd: 0.0029,
+        currency: "USD",
+        budgetState: "tracking_only",
+        records: expect.arrayContaining([
+          expect.objectContaining({
+            id: "daily-model-usage-email-draft",
+            provider: "deepseek",
+            model: "deepseek-v4-flash",
+            inputTokens: 1280,
+            outputTokens: 420
+          })
+        ])
+      })
+    });
+    expect(body.usage.records).toHaveLength(2);
+
+    await app.close();
+  });
+
+  it("uses DeepSeek env semantics without leaking the API key", async () => {
+    process.env.DEEPSEEK_API_KEY = "sk-test-secret-value";
+    process.env.DEEPSEEK_BASE_URL = "https://api.deepseek.example";
+    process.env.DEEPSEEK_MODEL_FAST = "deepseek-v4-pro";
+    process.env.DEEPSEEK_MODEL_PRO = "deepseek-v4-pro";
+    process.env.DEEPSEEK_MODEL_ROUTE = "pro";
+    process.env.DEEPSEEK_THINKING_MODE = "enabled";
+    process.env.DEEPSEEK_STREAM_USAGE = "false";
+
+    const app = await buildServer();
+    const response = await app.inject({
+      method: "GET",
+      url: "/api/daily/model-usage"
+    });
+    const body = response.json();
+
+    expect(response.statusCode).toBe(200);
+    expect(response.body).not.toContain("sk-test-secret-value");
+    expect(body.config).toEqual(
+      expect.objectContaining({
+        configured: true,
+        baseUrl: "https://api.deepseek.example",
+        fastModel: "deepseek-v4-pro",
+        proModel: "deepseek-v4-pro",
+        selectedRoute: "pro",
+        selectedModel: "deepseek-v4-pro",
+        thinkingMode: "enabled",
+        streamUsageEnabled: false
+      })
+    );
+    expect(body.usage.budgetState).toBe("within_budget");
+    expect(body.usage.records).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          model: "deepseek-v4-pro"
+        })
+      ])
+    );
+
+    await app.close();
+  });
+
+  it("keeps the reserved coding-agent compatibility path for model usage", async () => {
+    process.env.DEEPSEEK_API_KEY = "sk-test-secret-value";
+
+    const app = await buildServer();
+    const response = await app.inject({
+      method: "GET",
+      url: "/api/daily/model-usage?mode=coding_agent"
+    });
+
+    expect(response.statusCode).toBe(200);
+    expect(response.json()).toEqual({
+      mode: "coding_agent",
+      config: expect.objectContaining({
+        mode: "coding_agent",
+        provider: "deepseek",
+        configured: false,
+        thinkingMode: "disabled",
+        streamUsageEnabled: false,
+        notes: expect.arrayContaining([
+          "coding_agent mode is reserved in this build; model usage is disabled."
+        ])
+      }),
+      usage: expect.objectContaining({
+        promptTokens: 0,
+        completionTokens: 0,
+        totalTokens: 0,
+        estimatedCostUsd: 0,
+        currency: "USD",
+        budgetState: "disabled",
+        records: []
+      })
+    });
+    expect(response.body).not.toContain("sk-test-secret-value");
+
+    await app.close();
+  });
+
+  it("handles CORS preflight for daily model usage", async () => {
+    const app = await buildServer();
+    const response = await app.inject({
+      method: "OPTIONS",
+      url: "/api/daily/model-usage",
+      headers: {
+        origin: "http://localhost:3000"
+      }
+    });
+
+    expect(response.statusCode).toBe(204);
+    expect(response.headers["access-control-allow-origin"]).toBe(
+      "http://localhost:3000"
+    );
+    expect(response.headers["access-control-allow-methods"]).toBe(
+      "GET,POST,OPTIONS"
+    );
 
     await app.close();
   });
