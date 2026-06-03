@@ -7,6 +7,7 @@ import {
 import {
   appModeSchema,
   defaultDailyWorkApprovalRequests,
+  defaultDailyWorkConnectors,
   defaultDailyWorkArtifacts,
   defaultDailyWorkContextItems,
   defaultDailyWorkSessionDetails,
@@ -17,6 +18,8 @@ import {
   type DailyApprovalRequestsResponse,
   type DailyWorkArtifactResponse,
   type DailyWorkArtifactsResponse,
+  type DailyWorkConnectorResponse,
+  type DailyWorkConnectorsResponse,
   type DailyModelUsageResponse,
   type DailyWorkSessionResponse,
   type DailyWorkSessionsResponse,
@@ -77,6 +80,12 @@ export async function buildServer() {
     reply.code(204).send()
   );
   app.options("/api/daily/artifacts/:artifactId", async (_request, reply) =>
+    reply.code(204).send()
+  );
+  app.options("/api/daily/connectors", async (_request, reply) =>
+    reply.code(204).send()
+  );
+  app.options("/api/daily/connectors/:connectorId", async (_request, reply) =>
     reply.code(204).send()
   );
 
@@ -206,6 +215,45 @@ export async function buildServer() {
     }
   );
 
+  app.get<{ Querystring: { mode?: string } }>(
+    "/api/daily/connectors",
+    async (request): Promise<DailyWorkConnectorsResponse> => {
+      const mode = normalizeAppMode(request.query.mode);
+
+      return {
+        mode,
+        connectors: filterDailyWorkConnectors(mode)
+      };
+    }
+  );
+
+  app.get<{
+    Params: { connectorId: string };
+    Querystring: { mode?: string };
+  }>(
+    "/api/daily/connectors/:connectorId",
+    async (request, reply): Promise<DailyWorkConnectorResponse | void> => {
+      const mode = normalizeAppMode(request.query.mode);
+      const connector = filterDailyWorkConnector(
+        mode,
+        request.params.connectorId
+      );
+
+      if (!connector) {
+        reply.code(404).send({
+          mode,
+          error: "Daily-work connector not found."
+        });
+        return;
+      }
+
+      return {
+        mode,
+        connector
+      };
+    }
+  );
+
   app.post<{ Body: ChatRequestBody }>("/api/chat", async (request, reply) => {
     const mode = normalizeAppMode(request.body?.mode);
     const messages = normalizeMessages(request.body);
@@ -287,6 +335,20 @@ function filterDailyWorkArtifacts(mode: AppMode) {
 function filterDailyWorkArtifact(mode: AppMode, artifactId: string) {
   return filterDailyWorkArtifacts(mode).find(
     (artifact) => artifact.id === artifactId
+  );
+}
+
+function filterDailyWorkConnectors(mode: AppMode) {
+  if (mode !== "daily_work") {
+    return [];
+  }
+
+  return defaultDailyWorkConnectors;
+}
+
+function filterDailyWorkConnector(mode: AppMode, connectorId: string) {
+  return filterDailyWorkConnectors(mode).find(
+    (connector) => connector.id === connectorId
   );
 }
 
