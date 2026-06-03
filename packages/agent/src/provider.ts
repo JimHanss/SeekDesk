@@ -30,6 +30,7 @@ export interface DeepSeekModelConfig {
   baseUrl: string;
   model: string;
   thinkingMode?: "disabled" | "enabled";
+  includeUsage?: boolean;
 }
 
 export interface ModelProvider {
