@@ -19,4 +19,43 @@ describe("api server", () => {
 
     await app.close();
   });
+
+  it("streams chat text from a messages request", async () => {
+    const app = await buildServer();
+    const response = await app.inject({
+      method: "POST",
+      url: "/api/chat",
+      headers: {
+        origin: "http://localhost:3000"
+      },
+      payload: {
+        messages: [{ role: "user", content: "summarize this repository" }]
+      }
+    });
+
+    expect(response.statusCode).toBe(200);
+    expect(response.headers["access-control-allow-origin"]).toBe(
+      "http://localhost:3000"
+    );
+    expect(response.body).toContain("Mock DeepSeek response");
+    expect(response.body).toContain("summarize this repository");
+
+    await app.close();
+  });
+
+  it("accepts prompt shorthand", async () => {
+    const app = await buildServer();
+    const response = await app.inject({
+      method: "POST",
+      url: "/api/chat",
+      payload: {
+        prompt: "hello"
+      }
+    });
+
+    expect(response.statusCode).toBe(200);
+    expect(response.body).toContain("hello");
+
+    await app.close();
+  });
 });
