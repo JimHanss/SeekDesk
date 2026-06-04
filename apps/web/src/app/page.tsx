@@ -80,8 +80,22 @@ interface TemplateItem {
   icon: LucideIcon;
 }
 
-type SessionHistoryStatus = "进行中" | "已完成";
+type SessionHistoryStatus = "进行中" | "待审批" | "已完成" | "已归档";
 type SessionHistoryFilter = "全部" | SessionHistoryStatus;
+type SessionHistoryPanelSource = "fallback" | "api" | "degraded";
+type SessionHistoryPanelSyncStatus = "syncing" | "live" | "degraded";
+type SessionRestorePreviewSource = "fallback" | "api" | "degraded";
+type SessionRestorePreviewSyncStatus = "idle" | "syncing" | "live" | "degraded";
+
+interface SessionHistoryMessageItem {
+  id: string;
+  role: string;
+  content: string;
+  createdAt: string;
+  artifactIds: string[];
+  contextItemIds: string[];
+  approvalRequestIds: string[];
+}
 
 interface WorkflowSnapshotItem {
   id: string;
@@ -92,13 +106,112 @@ interface WorkflowSnapshotItem {
   artifactCount: number;
   approvalCount: number;
   contextCount: number;
+  artifactIds: string[];
+  approvalRequestIds: string[];
+  contextItemIds: string[];
+  messageCount: number;
   lastAction: string;
   mode: AppMode;
   tags: string[];
+  recentMessages: SessionHistoryMessageItem[];
   icon: LucideIcon;
 }
 
 type SessionHistoryItem = WorkflowSnapshotItem;
+
+interface DailyWorkSessionLastActionDto {
+  at?: string;
+  actor?: string;
+  label?: string;
+  artifactId?: string;
+  approvalRequestId?: string;
+}
+
+interface DailyWorkSessionMessageDto {
+  id?: string;
+  role?: string;
+  content?: string;
+  createdAt?: string;
+  artifactIds?: string[];
+  contextItemIds?: string[];
+  approvalRequestIds?: string[];
+}
+
+interface DailyWorkSessionDto {
+  id?: string;
+  workspaceId?: string;
+  appMode?: AppMode;
+  title?: string;
+  status?: string;
+  createdAt?: string;
+  updatedAt?: string;
+  summary?: string;
+  lastAction?: DailyWorkSessionLastActionDto | null;
+  artifactIds?: string[];
+  contextItemIds?: string[];
+  approvalRequestIds?: string[];
+  messageCount?: number;
+  tags?: string[];
+  recentMessages?: DailyWorkSessionMessageDto[];
+}
+
+interface DailyWorkSessionsResponseDto {
+  mode?: AppMode;
+  sessions?: DailyWorkSessionDto[];
+}
+
+interface DailyWorkSessionResponseDto {
+  mode?: AppMode;
+  session?: DailyWorkSessionDto;
+}
+
+interface DailyWorkSessionRestorePreviewDto {
+  id?: string;
+  mode?: AppMode;
+  sessionId?: string;
+  sessionTitle?: string;
+  status?: string;
+  summary?: string;
+  lastAction?: DailyWorkSessionLastActionDto | null;
+  restorePrompt?: string;
+  artifactIds?: string[];
+  contextItemIds?: string[];
+  approvalRequestIds?: string[];
+  recentMessagesPreview?: DailyWorkSessionMessageDto[];
+  previewOnly?: boolean;
+  externalEffects?: string[];
+  safetyBoundary?: {
+    previewOnly?: boolean;
+    externalEffects?: string[];
+    statement?: string;
+  };
+  generatedAt?: string;
+}
+
+interface DailyWorkSessionRestorePreviewResponseDto {
+  mode?: AppMode;
+  preview?: DailyWorkSessionRestorePreviewDto;
+}
+
+interface SessionRestorePreviewPanelState {
+  sessionId: string;
+  source: SessionRestorePreviewSource;
+  syncStatus: SessionRestorePreviewSyncStatus;
+  previewOnly: boolean;
+  externalEffects: string[];
+  safetyStatement: string;
+  restorePrompt: string;
+  generatedAt: string;
+  notice: string;
+}
+
+interface SessionHistoryPanelState {
+  items: SessionHistoryItem[];
+  source: SessionHistoryPanelSource;
+  syncStatus: SessionHistoryPanelSyncStatus;
+  notice: string;
+  restorePreview: SessionRestorePreviewPanelState;
+}
 
 type ArtifactState = "计划中" | "排队中" | "草稿" | "可复用" | "待复核";
 type ArtifactFilter = "全部" | "草稿" | "可复用";
@@ -666,7 +779,13 @@ const templates: TemplateItem[] = [
   }
 ];
 
-const sessionHistoryFilters: SessionHistoryFilter[] = ["全部", "进行中", "已完成"];
+const sessionHistoryFilters: SessionHistoryFilter[] = [
+  "全部",
+  "进行中",
+  "待审批",
+  "已完成",
+  "已归档"
+];
 
 const sessionHistoryItems: SessionHistoryItem[] = [
   {
@@ -678,9 +797,24 @@ const sessionHistoryItems: SessionHistoryItem[] = [
     artifactCount: 2,
     approvalCount: 1,
     contextCount: 3,
+    artifactIds: ["weekly-report-artifact", "task-list-artifact"],
+    approvalRequestIds: ["review-weekly-report-risk"],
+    contextItemIds: ["project-brief", "meeting-notes", "team-notes"],
+    messageCount: 7,
     lastAction: "继续补齐风险说明，并把待复核会议结论标记为需要确认。",
     mode: "daily_work",
     tags: ["周报", "风险", "待复核"],
+    recentMessages: [
+      {
+        id: "daily-weekly-report-risk-message-1",
+        role: "assistant",
+        content: "已生成周报骨架，并把风险段落标记为待复核。",
+        createdAt: "今天 11:20",
+        artifactIds: ["weekly-report-artifact"],
+        contextItemIds: ["project-brief", "meeting-notes"],
+        approvalRequestIds: ["review-weekly-report-risk"]
+      }
+    ],
     icon: CalendarClock
   },
   {
@@ -692,9 +826,24 @@ const sessionHistoryItems: SessionHistoryItem[] = [
     artifactCount: 1,
     approvalCount: 2,
     contextCount: 2,
+    artifactIds: ["email-draft-artifact"],
+    approvalRequestIds: ["read-customer-email-context", "draft-external-reply"],
+    contextItemIds: ["customer-email", "meeting-notes"],
+    messageCount: 8,
     lastAction: "确认外发授权边界，再生成克制专业的客户版回复。",
     mode: "daily_work",
     tags: ["客户沟通", "审批", "邮件"],
+    recentMessages: [
+      {
+        id: "daily-customer-email-message-1",
+        role: "assistant",
+        content: "已整理客户回复草稿，等待外发前审批。",
+        createdAt: "今天 09:55",
+        artifactIds: ["email-draft-artifact"],
+        contextItemIds: ["customer-email"],
+        approvalRequestIds: ["draft-external-reply"]
+      }
+    ],
     icon: Mail
   },
   {
@@ -706,9 +855,24 @@ const sessionHistoryItems: SessionHistoryItem[] = [
     artifactCount: 3,
     approvalCount: 1,
     contextCount: 2,
+    artifactIds: ["meeting-summary-artifact", "task-list-artifact"],
+    approvalRequestIds: ["use-internal-meeting-notes"],
+    contextItemIds: ["meeting-notes", "team-notes"],
+    messageCount: 6,
     lastAction: "将最终纪要复制到项目同步渠道，并保留上下文来源说明。",
     mode: "daily_work",
     tags: ["会议纪要", "可复用", "决策"],
+    recentMessages: [
+      {
+        id: "daily-meeting-summary-message-1",
+        role: "assistant",
+        content: "会议摘要已整理完成，包含决策、风险、负责人和开放问题。",
+        createdAt: "昨天 18:10",
+        artifactIds: ["meeting-summary-artifact"],
+        contextItemIds: ["meeting-notes", "team-notes"],
+        approvalRequestIds: []
+      }
+    ],
     icon: Presentation
   },
   {
@@ -720,12 +884,240 @@ const sessionHistoryItems: SessionHistoryItem[] = [
     artifactCount: 2,
     approvalCount: 0,
     contextCount: 1,
+    artifactIds: ["research-note-artifact", "research-brief-artifact"],
+    approvalRequestIds: [],
+    contextItemIds: ["research-links"],
+    messageCount: 5,
     lastAction: "把可引用依据同步到简报，并在下一轮补充二次验证结论。",
     mode: "daily_work",
     tags: ["研究", "公开资料", "引用"],
+    recentMessages: [
+      {
+        id: "daily-research-brief-message-1",
+        role: "assistant",
+        content: "已把公开资料整理为研究简报，并列出仍需验证的问题。",
+        createdAt: "周一 16:40",
+        artifactIds: ["research-note-artifact"],
+        contextItemIds: ["research-links"],
+        approvalRequestIds: []
+      }
+    ],
     icon: Search
   }
 ];
+
+function createFallbackSessionHistoryPanelState(): SessionHistoryPanelState {
+  const firstSession = sessionHistoryItems[0] ?? null;
+
+  return {
+    items: sessionHistoryItems,
+    source: "fallback",
+    syncStatus: "syncing",
+    notice:
+      "正在从 /api/daily/sessions?mode=daily_work 同步会话列表；连接完成前保留前端 fallback 快照。",
+    restorePreview: createLocalSessionRestorePreviewState(firstSession)
+  };
+}
+
+function createLocalSessionRestorePreviewState(
+  item: SessionHistoryItem | null,
+  syncStatus: SessionRestorePreviewSyncStatus = "idle",
+  notice = "尚未调用 restore-preview；点击恢复后会先生成 preview-only 输入框提示。"
+): SessionRestorePreviewPanelState {
+  return {
+    sessionId: item?.id ?? "",
+    source: "fallback",
+    syncStatus,
+    previewOnly: true,
+    externalEffects: ["none"],
+    safetyStatement:
+      "Preview only: 当前恢复动作只填入输入框，不发送邮件、不写入文档、不创建日历或任务，也不读取真实外部数据。",
+    restorePrompt: item ? buildSessionRestorePrompt(item) : "",
+    generatedAt: "前端 fallback",
+    notice
+  };
+}
+
+function mapSessionsResponse(payload: DailyWorkSessionsResponseDto) {
+  if (payload.mode !== activeMode) {
+    throw new Error("Daily-work sessions response did not match the active mode.");
+  }
+
+  return (payload.sessions ?? []).map((session, index) =>
+    mapSessionDtoToItem(session, index)
+  );
+}
+
+function mapSessionResponse(payload: DailyWorkSessionResponseDto) {
+  if (payload.mode !== activeMode || !payload.session) {
+    throw new Error("Daily-work session response did not include a matching session.");
+  }
+
+  return mapSessionDtoToItem(payload.session, 0);
+}
+
+function mapSessionDtoToItem(
+  session: DailyWorkSessionDto,
+  index: number
+): SessionHistoryItem {
+  const artifactIds = sanitizeSessionIds(session.artifactIds);
+  const approvalRequestIds = sanitizeSessionIds(session.approvalRequestIds);
+  const contextItemIds = sanitizeSessionIds(session.contextItemIds);
+  const title = nonEmptyText(session.title, `Daily work session ${index + 1}`);
+  const recentMessages = mapSessionRecentMessages(session.recentMessages);
+
+  return {
+    id: nonEmptyText(session.id, `daily-work-session-${index + 1}`),
+    title,
+    status: mapSessionHistoryStatus(session.status),
+    updatedAt: formatSessionHistoryTimestamp(session.updatedAt),
+    summary: nonEmptyText(session.summary, "后端返回了会话快照，但暂未提供摘要。"),
+    artifactCount: artifactIds.length,
+    approvalCount: approvalRequestIds.length,
+    contextCount: contextItemIds.length,
+    artifactIds,
+    approvalRequestIds,
+    contextItemIds,
+    messageCount: nonNegativeNumber(session.messageCount),
+    lastAction: formatSessionLastAction(session.lastAction),
+    mode: session.appMode === "coding_agent" ? "coding_agent" : "daily_work",
+    tags: sanitizeSessionIds(session.tags),
+    recentMessages,
+    icon: sessionHistoryIcon(title, session.tags)
+  };
+}
+
+function mapSessionRestorePreviewResponse(
+  item: SessionHistoryItem,
+  payload: DailyWorkSessionRestorePreviewResponseDto
+): SessionRestorePreviewPanelState {
+  const preview = payload.preview;
+  const externalEffects =
+    preview?.externalEffects ??
+    preview?.safetyBoundary?.externalEffects ??
+    [];
+  const normalizedExternalEffects =
+    externalEffects.length > 0 ? externalEffects : ["none"];
+  const previewOnly =
+    preview?.previewOnly === true || preview?.safetyBoundary?.previewOnly === true;
+
+  if (
+    payload.mode !== activeMode ||
+    preview?.sessionId !== item.id ||
+    previewOnly !== true ||
+    normalizedExternalEffects.some((effect) => effect !== "none")
+  ) {
+    throw new Error("Session restore preview response did not match the selected session.");
+  }
+
+  return {
+    sessionId: item.id,
+    source: "api",
+    syncStatus: "live",
+    previewOnly: true,
+    externalEffects: normalizedExternalEffects,
+    safetyStatement: nonEmptyText(
+      preview.safetyBoundary?.statement,
+      "Preview only: 后端声明恢复预演不会产生外部效果。"
+    ),
+    restorePrompt: nonEmptyText(preview.restorePrompt, buildSessionRestorePrompt(item)),
+    generatedAt: formatSessionHistoryTimestamp(preview.generatedAt),
+    notice:
+      "已从 /api/daily/sessions/:sessionId/restore-preview 同步；响应声明 previewOnly=true 且 externalEffects=['none']。"
+  };
+}
+
+function mapSessionRecentMessages(
+  messages: DailyWorkSessionMessageDto[] | undefined
+): SessionHistoryMessageItem[] {
+  return (
+    messages
+      ?.map((message, index) => ({
+        id: nonEmptyText(message.id, `recent-message-${index + 1}`),
+        role: nonEmptyText(message.role, "assistant"),
+        content: nonEmptyText(message.content, "最近消息暂无内容。"),
+        createdAt: formatSessionHistoryTimestamp(message.createdAt),
+        artifactIds: sanitizeSessionIds(message.artifactIds),
+        contextItemIds: sanitizeSessionIds(message.contextItemIds),
+        approvalRequestIds: sanitizeSessionIds(message.approvalRequestIds)
+      }))
+      .filter((message) => message.content.trim().length > 0)
+      .slice(-3) ?? []
+  );
+}
+
+function sanitizeSessionIds(values: string[] | undefined) {
+  return values?.filter((value) => value.trim().length > 0) ?? [];
+}
+
+function mapSessionHistoryStatus(value: string | undefined): SessionHistoryStatus {
+  switch (value) {
+    case "waiting_for_approval":
+      return "待审批";
+    case "completed":
+      return "已完成";
+    case "archived":
+      return "已归档";
+    case "active":
+    default:
+      return "进行中";
+  }
+}
+
+function formatSessionHistoryTimestamp(value: string | undefined) {
+  return formatModelUsageTimestamp(value) ?? nonEmptyText(value, "刚刚同步");
+}
+
+function formatSessionLastAction(
+  lastAction: DailyWorkSessionLastActionDto | null | undefined
+) {
+  if (!lastAction) {
+    return "等待你选择下一步继续处理。";
+  }
+
+  return [
+    nonEmptyText(lastAction.label, "等待你选择下一步继续处理。"),
+    lastAction.actor ? `actor: ${lastAction.actor}` : undefined,
+    formatModelUsageTimestamp(lastAction.at),
+    lastAction.artifactId ? `artifact: ${lastAction.artifactId}` : undefined,
+    lastAction.approvalRequestId ? `approval: ${lastAction.approvalRequestId}` : undefined
+  ]
+    .filter(Boolean)
+    .join(" / ");
+}
+
+function sessionHistoryIcon(title: string, tags: string[] | undefined): LucideIcon {
+  const searchable = [title, ...(tags ?? [])].join(" ").toLowerCase();
+
+  if (searchable.includes("email") || searchable.includes("mail") || searchable.includes("客户")) {
+    return Mail;
+  }
+
+  if (searchable.includes("meeting") || searchable.includes("会议")) {
+    return Presentation;
+  }
+
+  if (searchable.includes("research") || searchable.includes("研究")) {
+    return Search;
+  }
+
+  if (searchable.includes("planning") || searchable.includes("task") || searchable.includes("计划")) {
+    return Target;
+  }
+
+  return Workflow;
+}
+
+function replaceSessionHistoryItem(
+  items: SessionHistoryItem[],
+  nextItem: SessionHistoryItem
+) {
+  const found = items.some((item) => item.id === nextItem.id);
+
+  return found
+    ? items.map((item) => (item.id === nextItem.id ? nextItem : item))
+    : [nextItem, ...items];
+}
 
 const contextItems: ContextItem[] = [
   {
@@ -1989,6 +2381,8 @@ export default function Page() {
   const [selectedSessionHistoryId, setSelectedSessionHistoryId] = useState<
     string | null
   >(sessionHistoryItems[0]?.id ?? null);
+  const [sessionHistoryPanel, setSessionHistoryPanel] =
+    useState<SessionHistoryPanelState>(() => createFallbackSessionHistoryPanelState());
   const [selectedContextId, setSelectedContextId] = useState<string | null>(null);
   const [connectorFilter, setConnectorFilter] = useState<ConnectorFilter>("全部");
   const [selectedConnectorId, setSelectedConnectorId] = useState<string | null>(
@@ -2126,20 +2520,23 @@ export default function Page() {
 
     return selectedInFilter ?? filteredArtifacts[0] ?? artifactItems[0] ?? null;
   }, [artifactItems, filteredArtifacts, selectedArtifactId]);
+  const sessionHistoryPanelItems = sessionHistoryPanel.items;
   const filteredSessionHistory = useMemo(
     () =>
       sessionHistoryFilter === "全部"
-        ? sessionHistoryItems
-        : sessionHistoryItems.filter((item) => item.status === sessionHistoryFilter),
-    [sessionHistoryFilter]
+        ? sessionHistoryPanelItems
+        : sessionHistoryPanelItems.filter(
+            (item) => item.status === sessionHistoryFilter
+          ),
+    [sessionHistoryFilter, sessionHistoryPanelItems]
   );
   const selectedSessionHistory = useMemo(() => {
     const selectedInFilter = filteredSessionHistory.find(
       (item) => item.id === selectedSessionHistoryId
     );
 
-    return selectedInFilter ?? filteredSessionHistory[0] ?? sessionHistoryItems[0] ?? null;
-  }, [filteredSessionHistory, selectedSessionHistoryId]);
+    return selectedInFilter ?? filteredSessionHistory[0] ?? sessionHistoryPanelItems[0] ?? null;
+  }, [filteredSessionHistory, selectedSessionHistoryId, sessionHistoryPanelItems]);
 
   useEffect(() => {
     if (!selectedConnector) {
@@ -2276,6 +2673,140 @@ export default function Page() {
       controller.abort();
     };
   }, [apiBaseUrl, selectedWorkflowAction]);
+
+  useEffect(() => {
+    let isDisposed = false;
+    const controller = new AbortController();
+
+    async function fetchSessionHistory() {
+      setSessionHistoryPanel((current) => ({
+        ...current,
+        syncStatus: "syncing",
+        notice: "正在从 /api/daily/sessions?mode=daily_work 同步会话列表。"
+      }));
+
+      try {
+        const response = await fetch(
+          `${apiBaseUrl}/api/daily/sessions?mode=${activeMode}`,
+          {
+            signal: controller.signal
+          }
+        );
+
+        if (!response.ok) {
+          throw new Error(`Sessions request failed: ${response.status}`);
+        }
+
+        const items = mapSessionsResponse(
+          (await response.json()) as DailyWorkSessionsResponseDto
+        );
+
+        if (!isDisposed) {
+          setSessionHistoryPanel((current) => {
+            const restorePreview =
+              current.restorePreview.sessionId &&
+              items.some((item) => item.id === current.restorePreview.sessionId)
+                ? current.restorePreview
+                : createLocalSessionRestorePreviewState(items[0] ?? null);
+
+            return {
+              items,
+              source: "api",
+              syncStatus: "live",
+              notice:
+                "已从 /api/daily/sessions?mode=daily_work 同步会话列表、状态、关联产物、上下文和审批链路。",
+              restorePreview
+            };
+          });
+          setSelectedSessionHistoryId((current) =>
+            current && items.some((item) => item.id === current)
+              ? current
+              : items[0]?.id ?? null
+          );
+        }
+      } catch {
+        if (controller.signal.aborted || isDisposed) {
+          return;
+        }
+
+        setSessionHistoryPanel((current) => ({
+          ...current,
+          source: "degraded",
+          syncStatus: "degraded",
+          notice:
+            "暂未从后端同步会话列表，已保留本地 session history fallback。"
+        }));
+      }
+    }
+
+    void fetchSessionHistory();
+
+    return () => {
+      isDisposed = true;
+      controller.abort();
+    };
+  }, [apiBaseUrl]);
+
+  useEffect(() => {
+    if (!selectedSessionHistoryId) {
+      return;
+    }
+
+    let isDisposed = false;
+    const controller = new AbortController();
+
+    async function fetchSessionDetail() {
+      try {
+        const response = await fetch(
+          `${apiBaseUrl}/api/daily/sessions/${selectedSessionHistoryId}?mode=${activeMode}`,
+          {
+            signal: controller.signal
+          }
+        );
+
+        if (!response.ok) {
+          throw new Error(`Session detail request failed: ${response.status}`);
+        }
+
+        const nextItem = mapSessionResponse(
+          (await response.json()) as DailyWorkSessionResponseDto
+        );
+
+        if (!isDisposed) {
+          setSessionHistoryPanel((current) => ({
+            ...current,
+            source: "api",
+            syncStatus: "live",
+            items: replaceSessionHistoryItem(current.items, nextItem),
+            notice: `已从 /api/daily/sessions/${nextItem.id}?mode=daily_work 同步会话详情与最近消息。`,
+            restorePreview:
+              current.restorePreview.sessionId === nextItem.id
+                ? current.restorePreview
+                : createLocalSessionRestorePreviewState(nextItem)
+          }));
+        }
+      } catch {
+        if (controller.signal.aborted || isDisposed) {
+          return;
+        }
+
+        setSessionHistoryPanel((current) => ({
+          ...current,
+          source: "degraded",
+          syncStatus: "degraded",
+          notice:
+            "暂未从后端同步选中会话详情，继续展示当前会话快照。"
+        }));
+      }
+    }
+
+    void fetchSessionDetail();
+
+    return () => {
+      isDisposed = true;
+      controller.abort();
+    };
+  }, [apiBaseUrl, selectedSessionHistoryId]);
 
   useEffect(() => {
     let isDisposed = false;
@@ -2756,9 +3287,62 @@ export default function Page() {
     void submitPrompt(lastSubmittedPrompt);
   }
 
-  function restoreSessionHistory(item: SessionHistoryItem) {
+  async function restoreSessionHistory(item: SessionHistoryItem) {
     setSelectedSessionHistoryId(item.id);
-    applyPrompt(buildSessionRestorePrompt(item));
+    setSessionHistoryPanel((current) => ({
+      ...current,
+      restorePreview: createLocalSessionRestorePreviewState(
+        item,
+        "syncing",
+        "正在请求 /api/daily/sessions/:sessionId/restore-preview，成功后会把后端 restorePrompt 填入输入框。"
+      )
+    }));
+
+    try {
+      const response = await fetch(
+        `${apiBaseUrl}/api/daily/sessions/${item.id}/restore-preview`,
+        {
+          method: "POST",
+          headers: {
+            "Content-Type": "application/json"
+          },
+          body: JSON.stringify({
+            mode: activeMode,
+            includeRecentMessages: true
+          })
+        }
+      );
+
+      if (!response.ok) {
+        throw new Error(`Session restore preview failed: ${response.status}`);
+      }
+
+      const restorePreview = mapSessionRestorePreviewResponse(
+        item,
+        (await response.json()) as DailyWorkSessionRestorePreviewResponseDto
+      );
+
+      applyPrompt(restorePreview.restorePrompt);
+      setSessionHistoryPanel((current) => ({
+        ...current,
+        restorePreview
+      }));
+    } catch {
+      const fallbackPreview: SessionRestorePreviewPanelState = {
+        ...createLocalSessionRestorePreviewState(
+          item,
+          "degraded",
+          "暂未从后端生成 restore-preview，已回退到本地 preview-only 恢复提示。"
+        ),
+        source: "degraded"
+      };
+
+      applyPrompt(fallbackPreview.restorePrompt);
+      setSessionHistoryPanel((current) => ({
+        ...current,
+        restorePreview: fallbackPreview
+      }));
+    }
   }
 
   function useContextItem(item: ContextItem) {
@@ -3657,6 +4241,20 @@ export default function Page() {
 
               <div
                 className="rounded-[8px] border border-teal-100 bg-teal-50 p-3"
+                data-session-history-panel
+                data-session-history-source={sessionHistoryPanel.source}
+                data-session-history-sync-status={sessionHistoryPanel.syncStatus}
+                data-session-history-count={sessionHistoryPanelItems.length}
+                data-session-restore-source={sessionHistoryPanel.restorePreview.source}
+                data-session-restore-sync-status={
+                  sessionHistoryPanel.restorePreview.syncStatus
+                }
+                data-session-restore-preview-only={
+                  sessionHistoryPanel.restorePreview.previewOnly
+                }
+                data-session-restore-external-effects={sessionHistoryPanel.restorePreview.externalEffects.join(
+                  ","
+                )}
               >
                 <div className="flex flex-col gap-3 md:flex-row md:items-start md:justify-between">
                   <div className="min-w-0">
@@ -3665,7 +4263,7 @@ export default function Page() {
                       <span className="min-w-0 break-words">最近工作流 / 会话历史</span>
                     </div>
                     <p className="mt-1 text-xs leading-5 text-teal-700">
-                      本地示例摘要，帮助你从日常工作会话的上次状态继续，不连接真实存储。
+                      从 daily_work sessions API 同步会话快照，并通过 restore-preview 预演把可继续工作的提示填入输入框。
                     </p>
                   </div>
 
@@ -3698,12 +4296,42 @@ export default function Page() {
                                 : "bg-teal-50 text-teal-700"
                             )}
                           >
-                            {sessionHistoryFilterCount(filter)}
+                            {sessionHistoryFilterCount(filter, sessionHistoryPanelItems)}
                           </span>
                         </button>
                       );
                     })}
                   </div>
+                </div>
+
+                <div className="mt-3 grid gap-2 lg:grid-cols-2">
+                  <InfoRow
+                    label="会话同步"
+                    value={`${sessionHistorySourceLabel(
+                      sessionHistoryPanel.source
+                    )} / ${sessionHistorySyncStatusLabel(
+                      sessionHistoryPanel.syncStatus
+                    )}`}
+                  />
+                  <InfoRow
+                    label="恢复预演"
+                    value={`${sessionRestorePreviewSourceLabel(
+                      sessionHistoryPanel.restorePreview.source
+                    )} / ${sessionRestorePreviewSyncStatusLabel(
+                      sessionHistoryPanel.restorePreview.syncStatus
+                    )} / previewOnly=${
+                      sessionHistoryPanel.restorePreview.previewOnly ? "true" : "false"
+                    } / externalEffects=${sessionHistoryPanel.restorePreview.externalEffects.join(
+                      ","
+                    )}`}
+                  />
+                </div>
+
+                <div
+                  className="mt-2 rounded-[8px] border border-teal-100 bg-white px-3 py-2 text-[11px] leading-5 text-teal-800"
+                  data-session-history-notice
+                >
+                  {sessionHistoryPanel.notice}
                 </div>
 
                 <div className="mt-3 grid gap-3 xl:grid-cols-[minmax(0,1.1fr)_minmax(0,0.9fr)]">
@@ -3716,7 +4344,14 @@ export default function Page() {
                         <button
                           key={item.id}
                           type="button"
-                          onClick={() => restoreSessionHistory(item)}
+                          data-session-card={item.id}
+                          onClick={() => {
+                            setSelectedSessionHistoryId(item.id);
+                            setSessionHistoryPanel((current) => ({
+                              ...current,
+                              restorePreview: createLocalSessionRestorePreviewState(item)
+                            }));
+                          }}
                           className={cn(
                             "flex w-full cursor-pointer items-start gap-3 rounded-[8px] border px-3 py-3 text-left transition-colors duration-200 focus-visible:outline focus-visible:outline-2 focus-visible:outline-teal-600",
                             isSelected
@@ -3752,7 +4387,10 @@ export default function Page() {
                   </div>
 
                   {selectedSessionHistory ? (
-                    <div className="rounded-[8px] border border-teal-100 bg-white p-3">
+                    <div
+                      className="rounded-[8px] border border-teal-100 bg-white p-3"
+                      data-session-detail={selectedSessionHistory.id}
+                    >
                       <div className="flex items-start justify-between gap-3">
                         <div className="min-w-0">
                           <div className="text-[11px] font-medium text-teal-700">
@@ -3768,7 +4406,7 @@ export default function Page() {
                         <SessionStatusPill status={selectedSessionHistory.status} />
                       </div>
 
-                      <div className="mt-3 grid grid-cols-3 gap-2">
+                      <div className="mt-3 grid grid-cols-2 gap-2 sm:grid-cols-4">
                         <SessionMetric
                           label="产物"
                           value={`${selectedSessionHistory.artifactCount}`}
@@ -3781,6 +4419,10 @@ export default function Page() {
                           label="上下文"
                           value={`${selectedSessionHistory.contextCount}`}
                         />
+                        <SessionMetric
+                          label="消息"
+                          value={`${selectedSessionHistory.messageCount}`}
+                        />
                       </div>
 
                       <ArtifactDetailBlock
@@ -3788,6 +4430,30 @@ export default function Page() {
                         title="上次动作"
                       >
                         {selectedSessionHistory.lastAction}
+                      </ArtifactDetailBlock>
+
+                      <ArtifactDetailBlock
+                        icon={<Database className="size-4" aria-hidden="true" />}
+                        title="关联链路"
+                      >
+                        {formatSessionLinkList("产物", selectedSessionHistory.artifactIds)}
+                        {" / "}
+                        {formatSessionLinkList(
+                          "上下文",
+                          selectedSessionHistory.contextItemIds
+                        )}
+                        {" / "}
+                        {formatSessionLinkList(
+                          "审批",
+                          selectedSessionHistory.approvalRequestIds
+                        )}
+                      </ArtifactDetailBlock>
+
+                      <ArtifactDetailBlock
+                        icon={<MessageSquare className="size-4" aria-hidden="true" />}
+                        title="最近消息"
+                      >
+                        {formatSessionRecentMessagePreview(selectedSessionHistory)}
                       </ArtifactDetailBlock>
 
                       <div className="mt-3 flex flex-wrap gap-2">
@@ -3802,16 +4468,29 @@ export default function Page() {
                       </div>
 
                       <div className="mt-3 rounded-[8px] border border-orange-200 bg-orange-50 px-3 py-2 text-xs leading-5 text-orange-800">
-                        恢复提示会填入输入框，由你确认后再发送；当前不会读取真实历史记录。
+                        恢复会先请求后端 restore-preview，成功后填入 API 返回的 restorePrompt；当前预演只进入输入框，由你确认后再发送，不执行外部效果。
+                        <span className="mt-1 block text-[11px]">
+                          {sessionHistoryPanel.restorePreview.notice}
+                        </span>
+                        <span className="mt-1 block text-[11px] text-orange-700">
+                          {sessionHistoryPanel.restorePreview.safetyStatement}
+                        </span>
                       </div>
 
                       <Button
                         type="button"
                         size="sm"
-                        className="mt-3 w-full bg-orange-500 hover:bg-orange-600"
-                        onClick={() => restoreSessionHistory(selectedSessionHistory)}
+                        className="mt-3 w-full cursor-pointer bg-orange-500 hover:bg-orange-600 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-orange-600"
+                        disabled={
+                          sessionHistoryPanel.restorePreview.syncStatus === "syncing"
+                        }
+                        onClick={() => void restoreSessionHistory(selectedSessionHistory)}
                       >
-                        <Play className="size-4" aria-hidden="true" />
+                        {sessionHistoryPanel.restorePreview.syncStatus === "syncing" ? (
+                          <Loader2 className="size-4 animate-spin" aria-hidden="true" />
+                        ) : (
+                          <Play className="size-4" aria-hidden="true" />
+                        )}
                         恢复到输入框
                       </Button>
                     </div>
@@ -6108,21 +6787,93 @@ function approvalStatusConfig(status: ApprovalStatus) {
   }
 }
 
-function sessionHistoryFilterCount(filter: SessionHistoryFilter) {
+function sessionHistoryFilterCount(
+  filter: SessionHistoryFilter,
+  items: SessionHistoryItem[]
+) {
   if (filter === "全部") {
-    return sessionHistoryItems.length;
+    return items.length;
   }
 
-  return sessionHistoryItems.filter((item) => item.status === filter).length;
+  return items.filter((item) => item.status === filter).length;
 }
 
 function sessionHistoryStatusClass(status: SessionHistoryStatus) {
   switch (status) {
     case "进行中":
       return "bg-orange-100 text-orange-800";
+    case "待审批":
+      return "bg-amber-100 text-amber-800";
     case "已完成":
       return "bg-emerald-100 text-emerald-800";
+    case "已归档":
+      return "bg-slate-100 text-slate-700";
   }
+}
+
+function sessionHistorySourceLabel(source: SessionHistoryPanelSource) {
+  switch (source) {
+    case "fallback":
+      return "前端 fallback";
+    case "api":
+      return "Sessions API";
+    case "degraded":
+      return "降级 fallback";
+  }
+}
+
+function sessionHistorySyncStatusLabel(status: SessionHistoryPanelSyncStatus) {
+  switch (status) {
+    case "syncing":
+      return "同步中";
+    case "live":
+      return "API 已同步";
+    case "degraded":
+      return "保留快照";
+  }
+}
+
+function sessionRestorePreviewSourceLabel(source: SessionRestorePreviewSource) {
+  switch (source) {
+    case "fallback":
+      return "本地预演";
+    case "api":
+      return "Restore API";
+    case "degraded":
+      return "降级预演";
+  }
+}
+
+function sessionRestorePreviewSyncStatusLabel(
+  status: SessionRestorePreviewSyncStatus
+) {
+  switch (status) {
+    case "idle":
+      return "待触发";
+    case "syncing":
+      return "生成中";
+    case "live":
+      return "预演已同步";
+    case "degraded":
+      return "已回退";
+  }
+}
+
+function formatSessionLinkList(label: string, values: string[]) {
+  return `${label}: ${values.length > 0 ? values.join("、") : "无"}`;
+}
+
+function formatSessionRecentMessagePreview(item: SessionHistoryItem) {
+  if (item.recentMessages.length === 0) {
+    return "后端详情暂未提供 recentMessages；恢复预演仍会基于会话摘要和关联链路生成输入框提示。";
+  }
+
+  return item.recentMessages
+    .map(
+      (message) =>
+        `${message.role} ${message.createdAt}: ${message.content}`
+    )
+    .join(" / ");
 }
 
 function artifactFilterCount(filter: ArtifactFilter, items: ArtifactItem[]) {
@@ -6571,13 +7322,18 @@ function buildSessionRestorePrompt(item: SessionHistoryItem) {
   return [
     `请帮我恢复「${item.title}」这个日常工作会话。`,
     "",
+    `Session id：${item.id}`,
+    `状态：${item.status} / ${item.updatedAt}`,
     `会话摘要：${item.summary}`,
     `上次动作：${item.lastAction}`,
-    `关联产物：${item.artifactCount} 项`,
-    `审批记录：${item.approvalCount} 项`,
-    `上下文数量：${item.contextCount} 项`,
+    `关联产物：${formatSessionLinkList("artifactIds", item.artifactIds)}`,
+    `审批记录：${formatSessionLinkList("approvalRequestIds", item.approvalRequestIds)}`,
+    `上下文数量：${formatSessionLinkList("contextItemIds", item.contextItemIds)}`,
+    `消息数量：${item.messageCount} 条`,
+    `最近消息：${formatSessionRecentMessagePreview(item)}`,
     `标签：${item.tags.join("、")}`,
     "",
+    "边界：这是 daily_work restore-preview，只填入输入框等待我确认；不要发送邮件、写入文档、创建日历或任务，也不要读取真实外部数据。",
     "请先复述当前可继续的工作状态，再建议下一步行动。"
   ].join("\n");
 }
