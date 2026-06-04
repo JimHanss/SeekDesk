@@ -43,6 +43,7 @@ async function main() {
   try {
     client = await openPage(browser.debugPort, smokePageUrl(apiServer.url));
     await runActivityStreamSmoke(client, apiServer.url);
+    await runModelUsageSmoke(client, apiServer.url);
     await runPromptSmoke(client);
     await runCodeBlockSmoke(client);
 
@@ -501,6 +502,32 @@ async function runActivityStreamSmoke(client, apiUrl) {
   });
 }
 
+async function runModelUsageSmoke(client, apiUrl) {
+  const apiSnapshot = await fetchModelUsageSnapshot(apiUrl);
+  assertModelUsageSnapshot(apiSnapshot, "model usage API response");
+
+  const pageState = await waitForValue(
+    client,
+    modelUsagePanelExpression(),
+    (state) =>
+      state.present &&
+      state.source === "api" &&
+      (state.status === "live" || state.status === "api") &&
+      state.hasDeepSeekText &&
+      state.hasUsageText,
+    "model usage API panel state"
+  );
+
+  checks.push({
+    name: "model usage API panel",
+    status: "passed",
+    source: pageState.source,
+    syncStatus: pageState.status,
+    selectedModel: apiSnapshot.config.selectedModel,
+    recordCount: apiSnapshot.usage.records.length
+  });
+}
+
 async function runCodeBlockSmoke(client) {
   const initialInspection = await inspectCodeBlockDom(client);
   if (initialInspection.hasBlocks) {
@@ -574,6 +601,20 @@ function activityFeedExpression(expectedTitles) {
       hasStatusText: /WebSocket|\\/api\\/daily\\/events\\?mode=daily_work/.test(text),
       hasCountText: text.includes(String(expectedTitles.length)),
       includesExpectedTitles: expectedTitles.every((title) => text.includes(title))
+    };
+  })()`);
+}
+
+function modelUsagePanelExpression() {
+  return withSmokeHelpers(`(() => {
+    const root = document.querySelector("[data-model-usage-source]");
+    const text = root ? root.textContent || "" : "";
+    return {
+      present: Boolean(root),
+      source: root ? root.getAttribute("data-model-usage-source") || "" : "",
+      status: root ? root.getAttribute("data-model-usage-status") || "" : "",
+      hasDeepSeekText: /DeepSeek/i.test(text),
+      hasUsageText: /usage|tokens|prompt|completion|用量|模型/i.test(text)
     };
   })()`);
 }
@@ -786,6 +827,24 @@ async function fetchActivityEventsSnapshot(apiUrl) {
   return response.json();
 }
 
+async function fetchModelUsageSnapshot(apiUrl) {
+  const response = await fetch(
+    new URL("/api/daily/model-usage?mode=daily_work", apiUrl).toString(),
+    {
+      headers: {
+        Accept: "application/json"
+      },
+      signal: AbortSignal.timeout(5000)
+    }
+  );
+
+  if (!response.ok) {
+    throw new Error(`Model usage API returned HTTP ${response.status}.`);
+  }
+
+  return response.json();
+}
+
 async function fetchActivityWebSocketSnapshot(apiUrl) {
   const wsUrl = activityWebSocketUrl(apiUrl);
   return new Promise((resolve, reject) => {
@@ -834,8 +893,8 @@ function assertActivityEventsSnapshot(snapshot, label, options = {}) {
     throw new Error(`${label} did not include a daily_work events array.`);
   }
 
-  if (snapshot.events.length <= 1) {
-    throw new Error(`${label} only included ${snapshot.events.length} event(s).`);
+  if (snapshot.events.length !== 7) {
+    throw new Error(`${label} included ${snapshot.events.length} event(s), expected 7.`);
   }
 
   for (const event of snapshot.events) {
@@ -855,6 +914,29 @@ function assertActivityEventsSnapshot(snapshot, label, options = {}) {
     if (typeof snapshot.generatedAt !== "string" || Number.isNaN(generatedAt)) {
       throw new Error(`${label} was missing a valid generatedAt timestamp.`);
     }
+  }
+}
+
+function assertModelUsageSnapshot(snapshot, label) {
+  if (
+    !snapshot ||
+    snapshot.mode !== "daily_work" ||
+    !snapshot.config ||
+    typeof snapshot.config.fastModel !== "string" ||
+    typeof snapshot.config.proModel !== "string" ||
+    typeof snapshot.config.selectedModel !== "string" ||
+    !snapshot.usage ||
+    !Array.isArray(snapshot.usage.records)
+  ) {
+    throw new Error(`${label} did not include daily_work model usage data.`);
+  }
+
+  if (!["fast", "pro"].includes(snapshot.config.selectedRoute)) {
+    throw new Error(`${label} included unsupported selectedRoute.`);
+  }
+
+  if (!snapshot.usage.records.length) {
+    throw new Error(`${label} did not include any usage records.`);
   }
 }
 
