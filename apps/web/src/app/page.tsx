@@ -167,6 +167,8 @@ type WorkflowActionFilter = "全部" | WorkflowActionStatus;
 
 interface WorkflowActionItem {
   id: string;
+  apiWorkflowId: string;
+  apiActionId: string;
   title: string;
   actionType: string;
   connector: string;
@@ -178,6 +180,7 @@ interface WorkflowActionItem {
   summary: string;
   nextStep: string;
   prompt: string;
+  relatedContextIds: string[];
   icon: LucideIcon;
 }
 
@@ -412,6 +415,88 @@ interface ConnectorPreviewPanelState {
   relatedContextItemIds: string[];
   requiredApprovalRequestIds: string[];
   steps: string[];
+  safetyStatement: string;
+  notice: string;
+}
+
+type WorkflowPreviewPanelSource = "local" | "api" | "degraded";
+type WorkflowPreviewPanelSyncStatus = "idle" | "syncing" | "live" | "degraded";
+
+interface DailyWorkflowPreviewConnectorLinkDto {
+  connectorId?: string;
+  displayName?: string;
+  action?: string;
+}
+
+interface DailyWorkflowPreviewContextLinkDto {
+  contextItemId?: string;
+  title?: string;
+  usage?: string;
+}
+
+interface DailyWorkflowPreviewArtifactLinkDto {
+  artifactId?: string;
+  title?: string;
+  artifactType?: string;
+  status?: string;
+}
+
+interface DailyWorkflowPreviewApprovalLinkDto {
+  approvalRequestId?: string;
+  title?: string;
+  status?: string;
+}
+
+interface DailyWorkflowPreviewStepDto {
+  actionId?: string;
+  title?: string;
+  description?: string;
+  status?: string;
+  externalEffect?: string;
+  summary?: string;
+  suggestedNextStep?: string;
+  userVisibleDraft?: string;
+}
+
+interface DailyWorkflowPreviewDto {
+  workflowId?: string;
+  workflowTitle?: string;
+  selectedActionId?: string;
+  selectedActionStatus?: string;
+  previewOnly?: boolean;
+  externalEffects?: string[];
+  requestedContextItemIds?: string[];
+  summary?: string;
+  steps?: DailyWorkflowPreviewStepDto[];
+  connectorLinks?: DailyWorkflowPreviewConnectorLinkDto[];
+  contextLinks?: DailyWorkflowPreviewContextLinkDto[];
+  artifactLinks?: DailyWorkflowPreviewArtifactLinkDto[];
+  approvalLinks?: DailyWorkflowPreviewApprovalLinkDto[];
+  safetyBoundary?: {
+    previewOnly?: boolean;
+    externalEffects?: string[];
+    statement?: string;
+  };
+}
+
+interface DailyWorkflowPreviewResponseDto {
+  mode?: AppMode;
+  preview?: DailyWorkflowPreviewDto;
+}
+
+interface WorkflowPreviewPanelState {
+  workflowId: string;
+  actionId: string;
+  source: WorkflowPreviewPanelSource;
+  syncStatus: WorkflowPreviewPanelSyncStatus;
+  previewOnly: boolean;
+  summary: string;
+  selectedActionStatus: string;
+  steps: string[];
+  connectorLinks: string[];
+  contextLinks: string[];
+  artifactLinks: string[];
+  approvalLinks: string[];
   safetyStatement: string;
   notice: string;
 }
@@ -767,6 +852,8 @@ const workflowActionFilters: WorkflowActionFilter[] = [
 const workflowActions: WorkflowActionItem[] = [
   {
     id: "draft-customer-update",
+    apiWorkflowId: "customer-email-draft-workflow",
+    apiActionId: "queue-email-draft",
     title: "起草客户进展邮件",
     actionType: "邮件起草",
     connector: "邮箱收件入口 / SeekDesk Mail Preview",
@@ -780,10 +867,13 @@ const workflowActions: WorkflowActionItem[] = [
     nextStep: "确认收件人、敏感字段和是否允许引用项目简报，再生成邮件草稿。",
     prompt:
       "请预演一个 daily_work 邮件起草工作流，不调用邮箱、不发送邮件。\n\n动作：起草客户进展邮件\n上下文：客户邮件 + 项目简报\n产物：客户更新邮件草稿\n审批状态：待审批\n风险提示：涉及外发语气和客户信息，当前只生成草稿，不发送邮件。\n\n请输出：需要的最小上下文、草稿结构、审批检查点、风险复核项，以及用户确认后才可继续的下一步。",
+    relatedContextIds: ["customer-email", "meeting-notes"],
     icon: Mail
   },
   {
     id: "summarize-meeting-notes",
+    apiWorkflowId: "meeting-summary-workflow",
+    apiActionId: "queue-meeting-summary",
     title: "整理会议纪要",
     actionType: "会议纪要",
     connector: "个人笔记入口 / SeekDesk Notes Preview",
@@ -797,10 +887,13 @@ const workflowActions: WorkflowActionItem[] = [
     nextStep: "先标出缺失负责人或时间点，再生成纪要草稿供用户确认。",
     prompt:
       "请预演一个 daily_work 会议纪要工作流，不读取真实笔记库、不写入文档。\n\n动作：整理会议纪要\n上下文：会议记录 + 团队备忘\n产物：可分享会议纪要\n审批状态：可预演\n风险提示：可能包含内部决策和负责人信息，当前只做会话级摘要预演。\n\n请输出：纪要结构、决策/待办提取规则、需要用户复核的字段、风险提示和下一步确认问题。",
+    relatedContextIds: ["meeting-notes", "team-notes"],
     icon: Presentation
   },
   {
     id: "prepare-calendar-follow-up",
+    apiWorkflowId: "calendar-follow-up-workflow",
+    apiActionId: "queue-calendar-follow-up",
     title: "准备日历跟进",
     actionType: "日历跟进",
     connector: "日历日程入口 / SeekDesk Calendar Preview",
@@ -814,10 +907,13 @@ const workflowActions: WorkflowActionItem[] = [
     nextStep: "补齐目标日期、参与人范围和提醒粒度，再生成日历跟进建议。",
     prompt:
       "请预演一个 daily_work 日历跟进工作流，不读取真实日历、不创建日程。\n\n动作：准备日历跟进\n上下文：会议纪要 + 下周优先级\n产物：日历跟进建议\n审批状态：需补上下文\n风险提示：当前不读取或写入真实日历，只生成待确认的跟进建议。\n\n请输出：缺失上下文清单、建议跟进项、每项的目的/参与人/时间窗口、审批检查点和用户确认后的下一步。",
+    relatedContextIds: ["meeting-notes"],
     icon: CalendarClock
   },
   {
     id: "generate-weekly-plan",
+    apiWorkflowId: "weekly-report-task-plan-workflow",
+    apiActionId: "queue-weekly-report",
     title: "生成周报与任务计划",
     actionType: "周报 / 任务计划",
     connector: "文档库入口 / SeekDesk Docs Preview",
@@ -831,6 +927,7 @@ const workflowActions: WorkflowActionItem[] = [
     nextStep: "选择周报受众和输出粒度，再生成一版可复制的周报与任务计划。",
     prompt:
       "请预演一个 daily_work 周报与任务计划工作流，不写入文档、不同步团队空间。\n\n动作：生成周报与任务计划\n上下文：项目简报 + 团队备忘 + 会议纪要\n产物：周报草稿和下周任务计划\n审批状态：可预演\n风险提示：当前只在输入框生成结构化草稿，不写入文档或同步团队空间。\n\n请输出：周报结构、任务拆解方式、风险和依赖检查表、需要审批或复核的字段，以及下一步建议。",
+    relatedContextIds: ["project-brief", "team-notes", "meeting-notes"],
     icon: FileText
   }
 ];
@@ -1282,6 +1379,142 @@ function mapConnectorPreviewResponse(
   };
 }
 
+function createLocalWorkflowPreviewState(
+  action: WorkflowActionItem
+): WorkflowPreviewPanelState {
+  return {
+    workflowId: action.apiWorkflowId,
+    actionId: action.apiActionId,
+    source: "local",
+    syncStatus: "idle",
+    previewOnly: true,
+    summary: `本地预演：${action.title} 只生成可复核计划，不执行连接器或外部写入。`,
+    selectedActionStatus: action.approvalStatus,
+    steps: [
+      action.summary,
+      action.nextStep,
+      "等待用户确认后再把预演内容填入聊天输入框。"
+    ],
+    connectorLinks: [action.connector],
+    contextLinks: [action.context],
+    artifactLinks: [action.artifact],
+    approvalLinks: [action.approvalStatus],
+    safetyStatement:
+      "Preview only: 当前工作流不会发送邮件、写入文档、创建日历或生成外部任务。",
+    notice: "当前展示本地 workflow preview fallback；后端可用时会自动同步 API 预演。"
+  };
+}
+
+function mapWorkflowPreviewResponse(
+  action: WorkflowActionItem,
+  payload: DailyWorkflowPreviewResponseDto
+): WorkflowPreviewPanelState {
+  const preview = payload.preview;
+  const externalEffects = preview?.externalEffects ?? [];
+
+  if (
+    payload.mode !== activeMode ||
+    preview?.workflowId !== action.apiWorkflowId ||
+    preview.selectedActionId !== action.apiActionId ||
+    preview.previewOnly !== true ||
+    externalEffects.some((effect) => effect !== "none")
+  ) {
+    throw new Error("Workflow preview response did not match the selected action.");
+  }
+
+  const localState = createLocalWorkflowPreviewState(action);
+  const steps =
+    preview.steps
+      ?.map((step) =>
+        [
+          step.title,
+          step.description ?? step.summary,
+          step.suggestedNextStep
+        ]
+          .filter(Boolean)
+          .join(" · ")
+      )
+      .filter((step) => step.trim().length > 0) ?? [];
+
+  return {
+    workflowId: action.apiWorkflowId,
+    actionId: action.apiActionId,
+    source: "api",
+    syncStatus: "live",
+    previewOnly: true,
+    summary: nonEmptyText(preview.summary, localState.summary),
+    selectedActionStatus: nonEmptyText(
+      preview.selectedActionStatus,
+      action.approvalStatus
+    ),
+    steps: steps.length > 0 ? steps : localState.steps,
+    connectorLinks: formatWorkflowConnectorLinks(preview.connectorLinks),
+    contextLinks: formatWorkflowContextLinks(preview.contextLinks),
+    artifactLinks: formatWorkflowArtifactLinks(preview.artifactLinks),
+    approvalLinks: formatWorkflowApprovalLinks(preview.approvalLinks),
+    safetyStatement: nonEmptyText(
+      preview.safetyBoundary?.statement,
+      localState.safetyStatement
+    ),
+    notice:
+      "已从 /api/daily/workflows/:workflowId/preview 同步；响应声明 previewOnly=true 且 externalEffects=['none']。"
+  };
+}
+
+function formatWorkflowConnectorLinks(
+  links: DailyWorkflowPreviewConnectorLinkDto[] | undefined
+) {
+  const formatted =
+    links
+      ?.map((link) =>
+        [link.displayName ?? link.connectorId, link.action].filter(Boolean).join(" / ")
+      )
+      .filter((link) => link.trim().length > 0) ?? [];
+
+  return formatted.length > 0 ? formatted : ["无连接器动作"];
+}
+
+function formatWorkflowContextLinks(
+  links: DailyWorkflowPreviewContextLinkDto[] | undefined
+) {
+  const formatted =
+    links
+      ?.map((link) =>
+        [link.title ?? link.contextItemId, link.usage].filter(Boolean).join(" / ")
+      )
+      .filter((link) => link.trim().length > 0) ?? [];
+
+  return formatted.length > 0 ? formatted : ["无额外上下文"];
+}
+
+function formatWorkflowArtifactLinks(
+  links: DailyWorkflowPreviewArtifactLinkDto[] | undefined
+) {
+  const formatted =
+    links
+      ?.map((link) =>
+        [link.title ?? link.artifactId, link.artifactType, link.status]
+          .filter(Boolean)
+          .join(" / ")
+      )
+      .filter((link) => link.trim().length > 0) ?? [];
+
+  return formatted.length > 0 ? formatted : ["仅生成预演草稿"];
+}
+
+function formatWorkflowApprovalLinks(
+  links: DailyWorkflowPreviewApprovalLinkDto[] | undefined
+) {
+  const formatted =
+    links
+      ?.map((link) =>
+        [link.title ?? link.approvalRequestId, link.status].filter(Boolean).join(" / ")
+      )
+      .filter((link) => link.trim().length > 0) ?? [];
+
+  return formatted.length > 0 ? formatted : ["无新增审批"];
+}
+
 function mapHealthPersistenceResponse(payload: unknown): PersistencePanelState {
   const snapshot = extractHealthPersistenceSnapshot(payload);
   const currentLayer = normalizePersistenceLayer(
@@ -1509,6 +1742,10 @@ export default function Page() {
     useState<ConnectorPreviewPanelState>(() =>
       createLocalConnectorPreviewState(connectorItems[0]!)
     );
+  const [workflowPreviewPanel, setWorkflowPreviewPanel] =
+    useState<WorkflowPreviewPanelState>(() =>
+      createLocalWorkflowPreviewState(workflowActions[0]!)
+    );
   const [approvalRequests, setApprovalRequests] = useState<ApprovalRequestItem[]>(
     initialApprovalRequests
   );
@@ -1683,6 +1920,73 @@ export default function Page() {
       controller.abort();
     };
   }, [apiBaseUrl, selectedConnector]);
+
+  useEffect(() => {
+    if (!selectedWorkflowAction) {
+      return;
+    }
+
+    const action = selectedWorkflowAction;
+    let isDisposed = false;
+    const controller = new AbortController();
+    const fallbackState = createLocalWorkflowPreviewState(action);
+
+    setWorkflowPreviewPanel({
+      ...fallbackState,
+      syncStatus: "syncing",
+      notice: `正在从 /api/daily/workflows/${action.apiWorkflowId}/preview 同步工作流预演。`
+    });
+
+    async function fetchWorkflowPreview() {
+      try {
+        const response = await fetch(
+          `${apiBaseUrl}/api/daily/workflows/${action.apiWorkflowId}/preview`,
+          {
+            method: "POST",
+            headers: {
+              "Content-Type": "application/json"
+            },
+            body: JSON.stringify({
+              mode: activeMode,
+              actionId: action.apiActionId,
+              contextItemIds: action.relatedContextIds,
+              prompt: `Preview ${action.title} for daily_work.`
+            }),
+            signal: controller.signal
+          }
+        );
+
+        if (!response.ok) {
+          throw new Error(`Workflow preview request failed: ${response.status}`);
+        }
+
+        const payload = (await response.json()) as DailyWorkflowPreviewResponseDto;
+
+        if (!isDisposed) {
+          setWorkflowPreviewPanel(mapWorkflowPreviewResponse(action, payload));
+        }
+      } catch {
+        if (controller.signal.aborted || isDisposed) {
+          return;
+        }
+
+        setWorkflowPreviewPanel({
+          ...fallbackState,
+          source: "degraded",
+          syncStatus: "degraded",
+          notice:
+            "暂未从后端同步工作流预演，已保留本地 preview-only fallback。"
+        });
+      }
+    }
+
+    void fetchWorkflowPreview();
+
+    return () => {
+      isDisposed = true;
+      controller.abort();
+    };
+  }, [apiBaseUrl, selectedWorkflowAction]);
 
   useEffect(() => {
     let isDisposed = false;
@@ -2057,7 +2361,15 @@ export default function Page() {
 
   function applyWorkflowActionPrompt(item: WorkflowActionItem) {
     setSelectedWorkflowActionId(item.id);
-    applyPrompt(item.prompt);
+    const panelMatches =
+      workflowPreviewPanel.workflowId === item.apiWorkflowId &&
+      workflowPreviewPanel.actionId === item.apiActionId;
+
+    applyPrompt(
+      panelMatches
+        ? buildWorkflowPreviewPrompt(item, workflowPreviewPanel)
+        : item.prompt
+    );
   }
 
   function applyActivityEventPrompt(item: ActivityEventItem) {
@@ -2782,7 +3094,22 @@ export default function Page() {
                   </div>
 
                   {selectedWorkflowAction ? (
-                    <div className="rounded-[8px] border border-teal-100 bg-white p-3">
+                    <div
+                      className="rounded-[8px] border border-teal-100 bg-white p-3"
+                      data-workflow-preview-panel
+                      data-api-workflow-id={workflowPreviewPanel.workflowId}
+                      data-workflow-preview-action={workflowPreviewPanel.actionId}
+                      data-workflow-preview-source={workflowPreviewPanel.source}
+                      data-workflow-preview-sync-status={
+                        workflowPreviewPanel.syncStatus
+                      }
+                      data-workflow-preview-status={
+                        workflowPreviewPanel.selectedActionStatus
+                      }
+                      data-workflow-preview-only={String(
+                        workflowPreviewPanel.previewOnly
+                      )}
+                    >
                       <div className="flex items-start justify-between gap-3">
                         <div className="min-w-0">
                           <div className="text-[11px] font-medium text-teal-700">
@@ -2813,6 +3140,80 @@ export default function Page() {
                           label="预期产物"
                           value={selectedWorkflowAction.artifact}
                         />
+                      </div>
+
+                      <div className="mt-3 rounded-[8px] border border-cyan-100 bg-cyan-50 px-3 py-3">
+                        <div className="flex items-start justify-between gap-3">
+                          <div className="min-w-0">
+                            <div className="flex items-center gap-2 text-xs font-semibold text-cyan-950">
+                              <Workflow
+                                className="size-4 shrink-0 text-cyan-700"
+                                aria-hidden="true"
+                              />
+                              <span className="min-w-0 break-words">
+                                工作流 API 预演合同
+                              </span>
+                            </div>
+                            <div className="mt-1 break-words font-mono text-[11px] text-cyan-700">
+                              POST /api/daily/workflows/
+                              {workflowPreviewPanel.workflowId}/preview ·{" "}
+                              {workflowPreviewPanel.actionId}
+                            </div>
+                          </div>
+                          <span className="shrink-0 rounded-[999px] bg-white px-2 py-0.5 text-[11px] font-medium text-cyan-700">
+                            {workflowPreviewPanel.source} /{" "}
+                            {workflowPreviewPanel.syncStatus}
+                          </span>
+                        </div>
+
+                        <div
+                          className="mt-3 rounded-[8px] border border-cyan-100 bg-white px-3 py-2 text-xs leading-5 text-cyan-900"
+                          data-workflow-preview-summary
+                        >
+                          {workflowPreviewPanel.summary}
+                        </div>
+
+                        <div className="mt-3 space-y-1">
+                          {workflowPreviewPanel.steps.map((step) => (
+                            <div
+                              key={`${workflowPreviewPanel.actionId}-${step}`}
+                              className="flex items-start gap-2 rounded-[8px] border border-cyan-100 bg-white px-2.5 py-2 text-xs leading-5 text-slate-700"
+                              data-workflow-preview-step
+                            >
+                              <CheckCircle2
+                                className="mt-0.5 size-3.5 shrink-0 text-cyan-700"
+                                aria-hidden="true"
+                              />
+                              <span className="min-w-0 break-words">{step}</span>
+                            </div>
+                          ))}
+                        </div>
+
+                        <div className="mt-3 grid gap-2">
+                          <ArtifactDetailRow
+                            label="连接器链路"
+                            value={workflowPreviewPanel.connectorLinks.join("、")}
+                          />
+                          <ArtifactDetailRow
+                            label="上下文链路"
+                            value={workflowPreviewPanel.contextLinks.join("、")}
+                          />
+                          <ArtifactDetailRow
+                            label="产物链路"
+                            value={workflowPreviewPanel.artifactLinks.join("、")}
+                          />
+                          <ArtifactDetailRow
+                            label="审批链路"
+                            value={workflowPreviewPanel.approvalLinks.join("、")}
+                          />
+                        </div>
+
+                        <div className="mt-3 rounded-[8px] border border-cyan-100 bg-white px-3 py-2 text-xs leading-5 text-slate-700">
+                          {workflowPreviewPanel.safetyStatement}
+                        </div>
+                        <div className="mt-3 rounded-[8px] border border-cyan-100 bg-white px-3 py-2 text-xs leading-5 text-cyan-800">
+                          {workflowPreviewPanel.notice}
+                        </div>
                       </div>
 
                       <ArtifactDetailBlock
@@ -5693,6 +6094,34 @@ function buildConnectorAccessPrompt(item: ConnectorItem) {
     `注意事项：${item.notes.join("；")}`,
     "",
     "请输出：最小权限范围、用户审批点、可预览字段、拒绝/撤销路径，以及接入前需要补齐的产品文案。"
+  ].join("\n");
+}
+
+function buildWorkflowPreviewPrompt(
+  item: WorkflowActionItem,
+  preview: WorkflowPreviewPanelState
+) {
+  return [
+    `请基于「${item.title}」继续 daily_work 工作流预演。`,
+    "",
+    `后端来源：${preview.source} / ${preview.syncStatus}`,
+    `Workflow：${preview.workflowId}`,
+    `Action：${preview.actionId}`,
+    `当前状态：${preview.selectedActionStatus}`,
+    `预演摘要：${preview.summary}`,
+    "",
+    `连接器链路：${preview.connectorLinks.join("；")}`,
+    `上下文链路：${preview.contextLinks.join("；")}`,
+    `产物链路：${preview.artifactLinks.join("；")}`,
+    `审批链路：${preview.approvalLinks.join("；")}`,
+    "",
+    "预演步骤：",
+    ...preview.steps.map((step, index) => `${index + 1}. ${step}`),
+    "",
+    `安全边界：${preview.safetyStatement}`,
+    "模式边界：保持 daily_work，不调用 coding_agent 工具，不发送邮件、不写入文档、不创建日历或任务。",
+    "",
+    "请输出：最小上下文、可复核草稿结构、审批检查点、风险项，以及用户确认后才可继续的下一步。"
   ].join("\n");
 }
 
