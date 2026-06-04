@@ -1,4 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
+import type { AddressInfo } from "node:net";
 
 import { buildServer } from "./server.js";
 
@@ -960,6 +961,227 @@ describe("api server", () => {
     await app.close();
   });
 
+  it("returns default daily-work activity events", async () => {
+    const app = await buildServer();
+    const response = await app.inject({
+      method: "GET",
+      url: "/api/daily/events"
+    });
+    const body = response.json();
+
+    expect(response.statusCode).toBe(200);
+    expect(body).toEqual({
+      mode: "daily_work",
+      events: expect.arrayContaining([
+        expect.objectContaining({
+          id: "daily-event-session-restored",
+          mode: "daily_work",
+          eventType: "session.restored",
+          status: "completed",
+          timestamp: "2026-06-02T10:55:00.000Z",
+          relatedRefs: expect.objectContaining({
+            sessionIds: ["customer-follow-up-session"],
+            artifactIds: ["email-draft-artifact"],
+            approvalRequestIds: ["read-customer-email-context"],
+            connectorIds: ["customer-email"],
+            contextItemIds: ["customer-email", "meeting-notes"]
+          }),
+          safetyBoundary: expect.objectContaining({
+            previewOnly: true,
+            externalEffects: ["none"],
+            prohibitedExternalActions: expect.arrayContaining(["send_email"])
+          }),
+          nextAction: expect.objectContaining({
+            targetType: "approval",
+            targetId: "read-customer-email-context"
+          })
+        }),
+        expect.objectContaining({
+          id: "daily-event-template-applied",
+          eventType: "template.applied"
+        }),
+        expect.objectContaining({
+          id: "daily-event-approval-changed",
+          eventType: "approval.changed",
+          status: "waiting_for_approval"
+        }),
+        expect.objectContaining({
+          id: "daily-event-workflow-preview-queued",
+          eventType: "workflow.preview.queued",
+          status: "queued"
+        }),
+        expect.objectContaining({
+          id: "daily-event-workflow-preview-completed",
+          eventType: "workflow.preview.completed",
+          status: "completed"
+        }),
+        expect.objectContaining({
+          id: "daily-event-artifact-updated",
+          eventType: "artifact.updated",
+          status: "in_progress"
+        }),
+        expect.objectContaining({
+          id: "daily-event-artifact-ready",
+          eventType: "artifact.ready",
+          status: "ready"
+        })
+      ])
+    });
+    expect(body.events).toHaveLength(7);
+
+    await app.close();
+  });
+
+  it("returns one daily-work activity event by id", async () => {
+    const app = await buildServer();
+    const response = await app.inject({
+      method: "GET",
+      url: "/api/daily/events/daily-event-workflow-preview-queued"
+    });
+
+    expect(response.statusCode).toBe(200);
+    expect(response.json()).toEqual({
+      mode: "daily_work",
+      event: expect.objectContaining({
+        id: "daily-event-workflow-preview-queued",
+        eventType: "workflow.preview.queued",
+        status: "queued",
+        relatedRefs: expect.objectContaining({
+          workflowIds: ["weekly-report-task-plan-workflow"],
+          actionQueueItemIds: ["queue-task-plan"],
+          artifactIds: ["task-list-artifact", "research-note-artifact"]
+        }),
+        safetyBoundary: expect.objectContaining({
+          previewOnly: true
+        }),
+        taskStatus: expect.objectContaining({
+          workflowStatus: "preview",
+          actionQueueStatus: "queued",
+          artifactStatus: "review"
+        })
+      })
+    });
+
+    await app.close();
+  });
+
+  it("returns 404 when a daily-work activity event is missing", async () => {
+    const app = await buildServer();
+    const response = await app.inject({
+      method: "GET",
+      url: "/api/daily/events/missing-event"
+    });
+
+    expect(response.statusCode).toBe(404);
+    expect(response.json()).toEqual({
+      mode: "daily_work",
+      eventId: "missing-event",
+      error: "Daily-work activity event not found."
+    });
+
+    await app.close();
+  });
+
+  it("keeps the reserved coding-agent compatibility path for daily activity events", async () => {
+    const app = await buildServer();
+    const response = await app.inject({
+      method: "GET",
+      url: "/api/daily/events?mode=coding_agent"
+    });
+
+    expect(response.statusCode).toBe(200);
+    expect(response.json()).toEqual({
+      mode: "coding_agent",
+      events: []
+    });
+
+    await app.close();
+  });
+
+  it("handles CORS preflight for daily activity events", async () => {
+    const app = await buildServer();
+    const response = await app.inject({
+      method: "OPTIONS",
+      url: "/api/daily/events",
+      headers: {
+        origin: "http://localhost:3000"
+      }
+    });
+
+    expect(response.statusCode).toBe(204);
+    expect(response.headers["access-control-allow-origin"]).toBe(
+      "http://localhost:3000"
+    );
+    expect(response.headers["access-control-allow-methods"]).toBe(
+      "GET,POST,OPTIONS"
+    );
+
+    await app.close();
+  });
+
+  it("sends a daily-work activity snapshot on WebSocket connect and keeps echo", async () => {
+    const app = await buildServer();
+    await app.listen({ port: 0, host: "127.0.0.1" });
+    const address = app.server.address() as AddressInfo;
+    const socket = new WebSocket(`ws://127.0.0.1:${address.port}/ws`);
+    const messages: unknown[] = [];
+
+    await new Promise<void>((resolve, reject) => {
+      const timeout = setTimeout(() => {
+        reject(new Error("Timed out waiting for WebSocket messages."));
+      }, 2000);
+
+      socket.addEventListener("message", (event) => {
+        messages.push(parseWebSocketMessage(event.data));
+
+        if (messages.length === 2) {
+          socket.send("hello-events");
+        }
+
+        if (messages.length === 3) {
+          clearTimeout(timeout);
+          resolve();
+        }
+      });
+
+      socket.addEventListener("error", () => {
+        clearTimeout(timeout);
+        reject(new Error("WebSocket connection failed."));
+      });
+    });
+
+    expect(messages[0]).toEqual(
+      expect.objectContaining({
+        type: "connection.ready",
+        service: "seekdesk-api"
+      })
+    );
+    expect(messages[1]).toEqual({
+      type: "daily.activity.snapshot",
+      mode: "daily_work",
+      events: [
+        expect.objectContaining({
+          id: "daily-event-session-restored",
+          eventType: "session.restored",
+          status: "completed",
+          safetyBoundary: expect.objectContaining({
+            previewOnly: true
+          }),
+          relatedRefs: expect.objectContaining({
+            sessionIds: ["customer-follow-up-session"]
+          })
+        })
+      ]
+    });
+    expect(messages[2]).toEqual({
+      type: "echo",
+      payload: "hello-events"
+    });
+
+    socket.close();
+    await app.close();
+  });
+
   it("streams chat text from a messages request", async () => {
     const app = await buildServer();
     const response = await app.inject({
@@ -1017,3 +1239,19 @@ describe("api server", () => {
     await app.close();
   });
 });
+
+function parseWebSocketMessage(data: unknown) {
+  if (typeof data === "string") {
+    return JSON.parse(data);
+  }
+
+  if (data instanceof ArrayBuffer) {
+    return JSON.parse(Buffer.from(data).toString("utf8"));
+  }
+
+  if (ArrayBuffer.isView(data)) {
+    return JSON.parse(Buffer.from(data.buffer).toString("utf8"));
+  }
+
+  throw new Error("Unsupported WebSocket message payload.");
+}
