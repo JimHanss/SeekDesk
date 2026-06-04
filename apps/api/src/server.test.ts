@@ -8,7 +8,8 @@ import {
   dailyActivityEventResponseSchema,
   dailyActivityEventsResponseSchema,
   dailyActivitySnapshotMessageSchema,
-  dailyApprovalDecisionResponseSchema
+  dailyApprovalDecisionResponseSchema,
+  dailyWorkWorkflowPreviewResponseSchema
 } from "@seekdesk/shared";
 
 import { buildServer } from "./server.js";
@@ -888,6 +889,110 @@ describe("api server", () => {
     await app.close();
   });
 
+  it("previews a daily-work workflow action without external effects", async () => {
+    const app = await buildServer();
+    const response = await app.inject({
+      method: "POST",
+      url: "/api/daily/workflows/weekly-report-task-plan-workflow/preview",
+      payload: {
+        actionId: "queue-task-plan",
+        prompt: "Turn the weekly report into next-week planning bullets.",
+        contextItemIds: ["research-links"]
+      }
+    });
+    const body = dailyWorkWorkflowPreviewResponseSchema.parse(response.json());
+
+    expect(response.statusCode).toBe(200);
+    expect(body).toEqual({
+      mode: "daily_work",
+      preview: expect.objectContaining({
+        id: "weekly-report-task-plan-workflow:queue-task-plan:preview",
+        mode: "daily_work",
+        workflowId: "weekly-report-task-plan-workflow",
+        workflowTitle: "Weekly Report and Task Plan",
+        selectedActionId: "queue-task-plan",
+        selectedActionType: "create_task_plan",
+        selectedActionStatus: "queued",
+        previewOnly: true,
+        externalEffects: ["none"],
+        prompt: "Turn the weekly report into next-week planning bullets.",
+        requestedContextItemIds: ["research-links"],
+        summary: expect.stringContaining("No connector action"),
+        safetyBoundary: expect.objectContaining({
+          previewOnly: true,
+          externalEffects: ["none"],
+          prohibitedExternalActions: expect.arrayContaining([
+            "send_email",
+            "write_document",
+            "schedule_calendar_event",
+            "create_task"
+          ])
+        }),
+        connectorLinks: expect.arrayContaining([
+          expect.objectContaining({
+            connectorId: "workspace-documents",
+            action: "draft_document"
+          })
+        ]),
+        contextLinks: expect.arrayContaining([
+          expect.objectContaining({
+            contextItemId: "project-brief",
+            usage: "output_basis"
+          }),
+          expect.objectContaining({
+            contextItemId: "research-links",
+            usage: "reference",
+            permissionState: "public"
+          })
+        ]),
+        artifactLinks: expect.arrayContaining([
+          expect.objectContaining({
+            artifactId: "task-list-artifact",
+            artifactType: "task_list"
+          })
+        ]),
+        approvalLinks: []
+      })
+    });
+    expect(body.preview.steps).toHaveLength(1);
+    expect(body.preview.steps[0]).toEqual(
+      expect.objectContaining({
+        actionId: "queue-task-plan",
+        actionType: "create_task_plan",
+        previewOnly: true,
+        externalEffect: "none",
+        connectorLinks: expect.arrayContaining([
+          expect.objectContaining({
+            connectorId: "workspace-documents"
+          })
+        ])
+      })
+    );
+
+    await app.close();
+  });
+
+  it("returns 400 when a workflow preview action is not available", async () => {
+    const app = await buildServer();
+    const response = await app.inject({
+      method: "POST",
+      url: "/api/daily/workflows/weekly-report-task-plan-workflow/preview",
+      payload: {
+        actionId: "queue-missing-action"
+      }
+    });
+
+    expect(response.statusCode).toBe(400);
+    expect(response.json()).toEqual({
+      mode: "daily_work",
+      workflowId: "weekly-report-task-plan-workflow",
+      actionId: "queue-missing-action",
+      error: "Workflow action is not available for this workflow."
+    });
+
+    await app.close();
+  });
+
   it("returns 404 when a daily-work workflow is missing", async () => {
     const app = await buildServer();
     const response = await app.inject({
@@ -899,6 +1004,25 @@ describe("api server", () => {
     expect(response.json()).toEqual({
       mode: "daily_work",
       error: "Daily-work workflow not found."
+    });
+
+    await app.close();
+  });
+
+  it("refuses workflow previews for the reserved coding-agent mode", async () => {
+    const app = await buildServer();
+    const response = await app.inject({
+      method: "POST",
+      url: "/api/daily/workflows/weekly-report-task-plan-workflow/preview",
+      payload: {
+        mode: "coding_agent"
+      }
+    });
+
+    expect(response.statusCode).toBe(400);
+    expect(response.json()).toEqual({
+      mode: "coding_agent",
+      error: "Workflow previews are only available in daily_work mode."
     });
 
     await app.close();
@@ -916,6 +1040,27 @@ describe("api server", () => {
       mode: "coding_agent",
       workflows: []
     });
+
+    await app.close();
+  });
+
+  it("handles CORS preflight for workflow previews", async () => {
+    const app = await buildServer();
+    const response = await app.inject({
+      method: "OPTIONS",
+      url: "/api/daily/workflows/weekly-report-task-plan-workflow/preview",
+      headers: {
+        origin: "http://localhost:3000"
+      }
+    });
+
+    expect(response.statusCode).toBe(204);
+    expect(response.headers["access-control-allow-origin"]).toBe(
+      "http://localhost:3000"
+    );
+    expect(response.headers["access-control-allow-methods"]).toBe(
+      "GET,POST,OPTIONS"
+    );
 
     await app.close();
   });

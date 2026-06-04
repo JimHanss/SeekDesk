@@ -19,6 +19,7 @@ The browser should never directly access private user data sources. All document
 
 - The web app exposes the `daily_work` dashboard with streaming chat, task templates, session context, approvals, artifacts, connectors, workflow previews, activity events, and a DeepSeek model-usage panel.
 - The API exposes `/api/chat`, `/api/daily/model-usage`, `/api/daily/events`, daily-work template/context/session/artifact/approval/connector/workflow routes, and `/ws` for `daily.activity.snapshot`.
+- `POST /api/daily/workflows/:workflowId/preview` returns a preview-only workflow contract for `daily_work`, including selected action, connector/context/artifact/approval links, steps, and a no-external-effects safety boundary.
 - The agent package includes a DeepSeek OpenAI-compatible SSE provider, a mock fallback for local development without `DEEPSEEK_API_KEY`, and tests for split SSE chunks, `reasoning_content`, usage-only chunks, and provider errors.
 - Browser smoke verifies production rendering, activity REST/WS binding, model-usage API binding, prompt controls, workflow prompts, and highlighted chat code blocks.
 
