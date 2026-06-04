@@ -46,6 +46,7 @@ async function main() {
   try {
     client = await openPage(browser.debugPort, smokePageUrl(apiServer.url));
     await runDailyEndpointsSmoke(apiServer.url);
+    await runContextUsePreviewSmoke(client, apiServer.url);
     await runTemplateApplyPreviewSmoke(client, apiServer.url);
     await runSessionRestoreSmoke(client, apiServer.url);
     await runArtifactsSmoke(client, apiServer.url);
@@ -561,6 +562,84 @@ async function runDailyEndpointsSmoke(apiUrl) {
     status: "passed",
     endpoints: snapshots,
     modelUsageRecords: modelUsageSnapshot.usage.records.length
+  });
+}
+
+async function runContextUsePreviewSmoke(client, apiUrl) {
+  const contextSnapshot = await fetchDailyEndpointSnapshot(
+    apiUrl,
+    "/api/daily/context?mode=daily_work"
+  );
+  const trackedContextItems = assertContextSnapshot(contextSnapshot);
+
+  const previewSnapshot = await fetchJson(
+    apiUrl,
+    "/api/daily/context/customer-email/use-preview",
+    {
+      mode: "daily_work",
+      templateId: "email-draft",
+      prompt: "Use customer context carefully."
+    }
+  );
+  const preview = assertContextUsePreviewSnapshot(previewSnapshot, {
+    contextItemId: "customer-email",
+    templateId: "email-draft",
+    prompt: "Use customer context carefully."
+  });
+
+  const panelState = await waitForValue(
+    client,
+    contextPanelExpression(),
+    (state) =>
+      state.present &&
+      state.source === "api" &&
+      state.syncStatus === "live" &&
+      state.count >= 5 &&
+      state.hasCustomerEmail &&
+      state.hasMeetingNotes,
+    "context API panel state"
+  );
+
+  const customerCardRect = await waitForRect(
+    client,
+    contextCardExpression("customer-email"),
+    "customer email context card"
+  );
+  await clickAt(client, customerCardRect);
+  await evaluate(client, contextCardClickExpression("customer-email"));
+
+  const promptState = await waitForValue(
+    client,
+    contextUsePreviewPromptStateExpression(),
+    (state) =>
+      state.valueLength > 0 &&
+      state.includesDailyWork &&
+      state.includesContextId &&
+      state.includesBoundary &&
+      state.previewSource === "api" &&
+      state.previewSyncStatus === "live" &&
+      state.previewOnly === "true" &&
+      state.externalEffects.includes("none") &&
+      state.selectedContextId === "customer-email" &&
+      state.submitDisabled === false,
+    "context use preview fills input"
+  );
+
+  checks.push({
+    name: "context use preview API and UI",
+    status: "passed",
+    contextItems: contextSnapshot.items.length,
+    trackedContextItems: trackedContextItems.map((item) => item.id),
+    contextItemId: preview.contextItemId,
+    permissionState: preview.permissionState,
+    requiredApprovalRequestIds: preview.requiredApprovalRequestIds,
+    source: panelState.source,
+    syncStatus: panelState.syncStatus,
+    count: panelState.count,
+    selectedContextId: promptState.selectedContextId,
+    previewOnly: preview.previewOnly,
+    externalEffects: preview.externalEffects,
+    promptValueLength: promptState.valueLength
   });
 }
 
@@ -1164,6 +1243,67 @@ function dataLayerStateExpression() {
       activityConnectionStatus: activityRoot ? activityRoot.getAttribute("data-activity-connection-status") || "" : "",
       modelUsageSource: modelUsageRoot ? modelUsageRoot.getAttribute("data-model-usage-source") || "" : "",
       modelUsageStatus: modelUsageRoot ? modelUsageRoot.getAttribute("data-model-usage-status") || "" : ""
+    };
+  })()`);
+}
+
+function contextPanelExpression() {
+  return withSmokeHelpers(`(() => {
+    const root = document.querySelector("[data-context-panel]");
+    const cards = root ? [...root.querySelectorAll("[data-context-card]")] : [];
+    return {
+      present: Boolean(root),
+      source: root ? root.getAttribute("data-context-source") || "" : "",
+      syncStatus: root ? root.getAttribute("data-context-sync-status") || "" : "",
+      count: root ? Number(root.getAttribute("data-context-count") || cards.length) : 0,
+      previewSource: root ? root.getAttribute("data-context-preview-source") || "" : "",
+      previewSyncStatus: root ? root.getAttribute("data-context-preview-status") || "" : "",
+      previewOnly: root ? root.getAttribute("data-context-preview-only") || "" : "",
+      externalEffects: root ? root.getAttribute("data-context-preview-external-effects") || "" : "",
+      selectedContextId: root ? root.getAttribute("data-selected-context-id") || "" : "",
+      hasCustomerEmail: cards.some((card) => card.getAttribute("data-context-card") === "customer-email"),
+      hasMeetingNotes: cards.some((card) => card.getAttribute("data-context-card") === "meeting-notes")
+    };
+  })()`);
+}
+
+function contextCardExpression(contextItemId) {
+  return withSmokeHelpers(`(() => {
+    const root = document.querySelector("[data-context-panel]");
+    if (!root) return null;
+    const button = root.querySelector(${JSON.stringify(`[data-context-card="${contextItemId}"]`)});
+    return smokeRect(button && isClickableSmokeButton(button) ? button : null);
+  })()`);
+}
+
+function contextCardClickExpression(contextItemId) {
+  return withSmokeHelpers(`(() => {
+    const root = document.querySelector("[data-context-panel]");
+    if (!root) return false;
+    const button = root.querySelector(${JSON.stringify(`[data-context-card="${contextItemId}"]`)});
+    if (!button || button.disabled) return false;
+    button.click();
+    return true;
+  })()`);
+}
+
+function contextUsePreviewPromptStateExpression() {
+  return withSmokeHelpers(`(() => {
+    const input = getSmokeInput();
+    const submit = getSmokeSubmit();
+    const root = document.querySelector("[data-context-panel]");
+    const value = input ? input.value : "";
+    return {
+      valueLength: value.trim().length,
+      includesDailyWork: value.includes("daily_work"),
+      includesContextId: value.includes("customer-email"),
+      includesBoundary: /externalEffects|no external effects/i.test(value),
+      previewSource: root ? root.getAttribute("data-context-preview-source") || "" : "",
+      previewSyncStatus: root ? root.getAttribute("data-context-preview-status") || "" : "",
+      previewOnly: root ? root.getAttribute("data-context-preview-only") || "" : "",
+      externalEffects: root ? root.getAttribute("data-context-preview-external-effects") || "" : "",
+      selectedContextId: root ? root.getAttribute("data-selected-context-id") || "" : "",
+      submitDisabled: submit ? submit.disabled : true
     };
   })()`);
 }
@@ -2091,6 +2231,109 @@ function assertDailyEndpointSnapshot(snapshot, collectionKey, path) {
   if (!snapshot[collectionKey].length) {
     throw new Error(`${path} returned an empty ${collectionKey} array.`);
   }
+}
+
+function assertContextSnapshot(snapshot) {
+  if (!snapshot || snapshot.mode !== "daily_work" || !Array.isArray(snapshot.items)) {
+    throw new Error("Context API did not return a daily_work items array.");
+  }
+
+  if (snapshot.items.length < 5) {
+    throw new Error(
+      `Context API returned ${snapshot.items.length} item(s), expected at least 5.`
+    );
+  }
+
+  const expectedIds = ["customer-email", "meeting-notes"];
+  const itemsById = new Map(
+    snapshot.items
+      .filter((item) => item && typeof item.id === "string")
+      .map((item) => [item.id, item])
+  );
+  const missingIds = expectedIds.filter((id) => !itemsById.has(id));
+
+  if (missingIds.length) {
+    throw new Error(`Context API missed expected item(s): ${missingIds.join(", ")}.`);
+  }
+
+  const trackedItems = expectedIds.map((id) => itemsById.get(id));
+
+  for (const item of trackedItems) {
+    if (
+      !item ||
+      item.mode !== "daily_work" ||
+      typeof item.sourceType !== "string" ||
+      typeof item.title !== "string" ||
+      typeof item.summary !== "string" ||
+      typeof item.permissionState !== "string" ||
+      !Array.isArray(item.tags)
+    ) {
+      throw new Error("Context API returned an invalid tracked context item payload.");
+    }
+  }
+
+  const customerEmail = itemsById.get("customer-email");
+  if (customerEmail.permissionState !== "requires_review") {
+    throw new Error("customer-email did not expose the requires_review boundary.");
+  }
+
+  return trackedItems;
+}
+
+function assertContextUsePreviewSnapshot(snapshot, expected) {
+  const preview = snapshot && snapshot.preview;
+
+  if (
+    !snapshot ||
+    snapshot.mode !== "daily_work" ||
+    !preview ||
+    preview.mode !== "daily_work" ||
+    preview.contextItemId !== expected.contextItemId ||
+    preview.templateId !== expected.templateId ||
+    preview.permissionState !== "requires_review" ||
+    preview.previewOnly !== true
+  ) {
+    throw new Error("Context use-preview API did not return the expected preview payload.");
+  }
+
+  if (
+    !Array.isArray(preview.externalEffects) ||
+    preview.externalEffects.length !== 1 ||
+    preview.externalEffects[0] !== "none" ||
+    !preview.safetyBoundary ||
+    !Array.isArray(preview.safetyBoundary.externalEffects) ||
+    !preview.safetyBoundary.externalEffects.includes("none")
+  ) {
+    throw new Error("Context use-preview API did not preserve the no-effect boundary.");
+  }
+
+  if (
+    !Array.isArray(preview.requiredApprovalRequestIds) ||
+    !preview.requiredApprovalRequestIds.includes("read-customer-email-context")
+  ) {
+    throw new Error("Context use-preview API missed the customer-email approval gate.");
+  }
+
+  if (
+    typeof preview.promptDraft !== "string" ||
+    !preview.promptDraft.includes("daily_work") ||
+    !preview.promptDraft.includes(expected.contextItemId) ||
+    !preview.promptDraft.includes(expected.templateId) ||
+    !preview.promptDraft.includes(expected.prompt) ||
+    !/no external effects/i.test(preview.promptDraft)
+  ) {
+    throw new Error("Context use-preview API promptDraft missed required context.");
+  }
+
+  if (
+    !Array.isArray(preview.steps) ||
+    preview.steps.length < 4 ||
+    !preview.steps.every((step) => step.previewOnly === true && step.externalEffect === "none")
+  ) {
+    throw new Error("Context use-preview API did not include preview-only steps.");
+  }
+
+  return preview;
 }
 
 function assertTemplatesSnapshot(snapshot) {
