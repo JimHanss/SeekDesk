@@ -583,6 +583,8 @@ interface DailyActivitySnapshotDto {
 
 type ApprovalStatus = "waiting" | "allowed_once" | "denied" | "blocked";
 type ApprovalRisk = "低" | "中" | "高" | "极高";
+type ApprovalPanelSource = "fallback" | "api" | "degraded";
+type ApprovalPanelSyncStatus = "syncing" | "live" | "degraded";
 type ModelRouteMode = "fast" | "pro";
 type ThinkingMode = "enabled" | "disabled";
 type ModelUsageBudgetState =
@@ -607,6 +609,33 @@ interface ApprovalRequestItem {
   status: ApprovalStatus;
   detail: string;
   icon: LucideIcon;
+}
+
+interface DailyApprovalRequestDto {
+  id?: string;
+  mode?: AppMode;
+  actionType?: string;
+  title?: string;
+  description?: string;
+  riskLevel?: string;
+  requiredPermissionMode?: string;
+  permissionAware?: boolean;
+  contextItemIds?: string[];
+  decision?: string;
+  status?: string;
+  tags?: string[];
+}
+
+interface DailyApprovalRequestsResponseDto {
+  mode?: AppMode;
+  requests?: DailyApprovalRequestDto[];
+}
+
+interface ApprovalPanelState {
+  items: ApprovalRequestItem[];
+  source: ApprovalPanelSource;
+  syncStatus: ApprovalPanelSyncStatus;
+  notice: string;
 }
 
 interface ModelSnapshotItem {
@@ -2396,6 +2425,183 @@ const initialApprovalRequests: ApprovalRequestItem[] = [
   }
 ];
 
+function createFallbackApprovalPanelState(): ApprovalPanelState {
+  return {
+    items: initialApprovalRequests,
+    source: "fallback",
+    syncStatus: "syncing",
+    notice:
+      "正在从 /api/daily/approvals?mode=daily_work 同步审批台账；连接完成前保留前端 fallback。"
+  };
+}
+
+function mapApprovalRequestsResponse(
+  payload: DailyApprovalRequestsResponseDto
+): ApprovalRequestItem[] {
+  if (payload.mode !== activeMode || !Array.isArray(payload.requests)) {
+    throw new Error("Approvals response did not include daily_work requests.");
+  }
+
+  return payload.requests.map(mapApprovalRequestDtoToItem);
+}
+
+function mapApprovalRequestDtoToItem(
+  request: DailyApprovalRequestDto,
+  index: number
+): ApprovalRequestItem {
+  const actionType = nonEmptyText(request.actionType, "daily_work_approval");
+  const contextIds = request.contextItemIds ?? [];
+  const tags = request.tags ?? [];
+  const risk = approvalRiskFromApi(request.riskLevel);
+  const status = approvalStatusFromApi(request.status);
+  const title = nonEmptyText(request.title, `审批请求 ${index + 1}`);
+
+  return {
+    id: nonEmptyText(request.id, `approval-request-${index + 1}`),
+    title: approvalTitleLabel(title, actionType),
+    requestedAction: nonEmptyText(
+      request.description,
+      approvalActionDescription(actionType)
+    ),
+    scope: approvalScopeLabel(request.requiredPermissionMode, contextIds),
+    risk,
+    status,
+    detail: approvalDetailLabel({
+      actionType,
+      decision: request.decision,
+      permissionAware: request.permissionAware,
+      status,
+      tags
+    }),
+    icon: approvalIcon(actionType, risk)
+  };
+}
+
+function approvalTitleLabel(title: string, actionType: string) {
+  if (title.trim().length > 0) {
+    return title;
+  }
+
+  switch (actionType) {
+    case "read_customer_email_context":
+      return "读取客户邮件上下文";
+    case "use_internal_meeting_notes":
+      return "使用内部会议记录";
+    case "draft_external_reply":
+      return "起草外部回复";
+    case "schedule_calendar_follow_up":
+      return "安排日历跟进";
+    default:
+      return "日常工作审批";
+  }
+}
+
+function approvalActionDescription(actionType: string) {
+  switch (actionType) {
+    case "read_customer_email_context":
+      return "查看客户诉求并提炼回复要点。";
+    case "use_internal_meeting_notes":
+      return "压缩会议记录为可分享纪要。";
+    case "draft_external_reply":
+      return "生成可发送给客户或合作方的专业草稿。";
+    case "schedule_calendar_follow_up":
+      return "生成后续跟进提醒或日历建议。";
+    default:
+      return "预演日常工作操作，等待用户确认。";
+  }
+}
+
+function approvalScopeLabel(
+  requiredPermissionMode: string | undefined,
+  contextItemIds: string[]
+) {
+  const contextText =
+    contextItemIds.length > 0
+      ? `关联上下文：${contextItemIds.join("、")}`
+      : "未绑定额外上下文";
+
+  switch (requiredPermissionMode) {
+    case "auto_approve_safe_actions":
+      return `${contextText}；低风险只读或会话内处理。`;
+    case "confirm_private_context_and_actions":
+      return `${contextText}；涉及私有上下文，使用前必须确认范围。`;
+    case "confirm_writes_and_commands":
+      return `${contextText}；涉及外发、写入或行动建议，仅允许 preview-only 决策。`;
+    default:
+      return `${contextText}；权限模式待确认。`;
+  }
+}
+
+function approvalDetailLabel(input: {
+  actionType: string;
+  decision: string | undefined;
+  permissionAware: boolean | undefined;
+  status: ApprovalStatus;
+  tags: string[];
+}) {
+  const decisionText = input.decision ? `后端决策：${input.decision}` : "尚未确认";
+  const awarenessText =
+    input.permissionAware === false ? "未声明权限感知" : "permission-aware";
+  const tagText = input.tags.length > 0 ? `标签：${input.tags.join("、")}` : "";
+  const boundary =
+    input.status === "allowed_once"
+      ? "已允许一次，但仍不会触发真实外部操作。"
+      : input.status === "denied"
+        ? "已拒绝，后续只保留手动建议。"
+        : "等待用户确认，当前只做 preview-only 预演。";
+
+  return [boundary, decisionText, awarenessText, tagText]
+    .filter(Boolean)
+    .join("；");
+}
+
+function approvalRiskFromApi(value: string | undefined): ApprovalRisk {
+  switch (value) {
+    case "low":
+      return "低";
+    case "medium":
+      return "中";
+    case "high":
+      return "高";
+    case "critical":
+      return "极高";
+    default:
+      return "中";
+  }
+}
+
+function approvalStatusFromApi(value: string | undefined): ApprovalStatus {
+  switch (value) {
+    case "approved":
+      return "allowed_once";
+    case "denied":
+      return "denied";
+    case "pending":
+      return "waiting";
+    default:
+      return "waiting";
+  }
+}
+
+function approvalIcon(actionType: string, risk: ApprovalRisk): LucideIcon {
+  if (risk === "极高") {
+    return AlertCircle;
+  }
+
+  switch (actionType) {
+    case "read_customer_email_context":
+      return Mail;
+    case "use_internal_meeting_notes":
+      return Presentation;
+    case "draft_external_reply":
+      return FileText;
+    case "schedule_calendar_follow_up":
+      return CalendarClock;
+    default:
+      return ShieldCheck;
+  }
+}
+
 const modelSnapshots: Record<ModelRouteMode, ModelSnapshotItem> = {
   fast: {
     id: "fast",
@@ -2972,8 +3178,8 @@ export default function Page() {
     useState<WorkflowPreviewPanelState>(() =>
       createLocalWorkflowPreviewState(workflowActions[0]!)
     );
-  const [approvalRequests, setApprovalRequests] = useState<ApprovalRequestItem[]>(
-    initialApprovalRequests
+  const [approvalPanel, setApprovalPanel] = useState<ApprovalPanelState>(
+    createFallbackApprovalPanelState
   );
   const abortRef = useRef<AbortController | null>(null);
   const inputRef = useRef<HTMLTextAreaElement | null>(null);
@@ -2995,6 +3201,7 @@ export default function Page() {
       : "深度模式示例：适合复杂资料归纳、风险复核和长上下文分析";
   const templateItems = templatePanel.items;
   const contextPanelItems = contextPanel.items;
+  const approvalRequests = approvalPanel.items;
   const selectedContextItem = useMemo(
     () =>
       contextPanelItems.find((item) => item.id === selectedContextId) ?? null,
@@ -3362,6 +3569,65 @@ export default function Page() {
       controller.abort();
     };
   }, [apiBaseUrl, selectedWorkflowAction]);
+
+  useEffect(() => {
+    let isDisposed = false;
+    const controller = new AbortController();
+
+    async function fetchApprovalRequests() {
+      setApprovalPanel((current) => ({
+        ...current,
+        syncStatus: "syncing",
+        notice: "正在从 /api/daily/approvals?mode=daily_work 同步审批台账。"
+      }));
+
+      try {
+        const response = await fetch(
+          `${apiBaseUrl}/api/daily/approvals?mode=${activeMode}`,
+          {
+            signal: controller.signal
+          }
+        );
+
+        if (!response.ok) {
+          throw new Error(`Approval requests failed: ${response.status}`);
+        }
+
+        const items = mapApprovalRequestsResponse(
+          (await response.json()) as DailyApprovalRequestsResponseDto
+        );
+
+        if (!isDisposed) {
+          setApprovalPanel({
+            items,
+            source: "api",
+            syncStatus: "live",
+            notice:
+              "已从 /api/daily/approvals?mode=daily_work 同步审批请求、风险等级、权限模式和上下文链路。"
+          });
+        }
+      } catch {
+        if (controller.signal.aborted || isDisposed) {
+          return;
+        }
+
+        setApprovalPanel((current) => ({
+          ...current,
+          source: "degraded",
+          syncStatus: "degraded",
+          notice:
+            "暂未从后端同步审批台账，已保留本地 approval fallback。"
+        }));
+      }
+    }
+
+    void fetchApprovalRequests();
+
+    return () => {
+      isDisposed = true;
+      controller.abort();
+    };
+  }, [apiBaseUrl]);
 
   useEffect(() => {
     let isDisposed = false;
@@ -4186,15 +4452,71 @@ export default function Page() {
     );
   }
 
-  function updateApprovalStatus(
+  async function updateApprovalStatus(
     approvalId: string,
     nextStatus: Exclude<ApprovalStatus, "waiting">
   ) {
-    setApprovalRequests((current) =>
-      current.map((item) =>
-        item.id === approvalId ? { ...item, status: nextStatus } : item
-      )
-    );
+    const applyLocalStatus = () => {
+      setApprovalPanel((current) => ({
+        ...current,
+        items: current.items.map((item) =>
+          item.id === approvalId ? { ...item, status: nextStatus } : item
+        )
+      }));
+    };
+
+    applyLocalStatus();
+    setApprovalPanel((current) => ({
+      ...current,
+      syncStatus: "syncing",
+      notice:
+        "正在向 /api/daily/approvals/:approvalRequestId/decision 写入 preview-only 审批决策。"
+    }));
+
+    try {
+      const response = await fetch(
+        `${apiBaseUrl}/api/daily/approvals/${approvalId}/decision`,
+        {
+          method: "POST",
+          headers: {
+            "Content-Type": "application/json"
+          },
+          body: JSON.stringify({
+            mode: activeMode,
+            decision: nextStatus === "denied" ? "deny" : "approved",
+            reason: `Preview decision from approval ledger for ${approvalId}.`
+          })
+        }
+      );
+
+      if (!response.ok) {
+        throw new Error(`Approval decision failed: ${response.status}`);
+      }
+
+      const payload = (await response.json()) as DailyApprovalDecisionResponseDto;
+
+      setApprovalPanel((current) => ({
+        ...current,
+        source: "api",
+        syncStatus: "live",
+        items: current.items.map((item) =>
+          item.id === approvalId
+            ? { ...item, status: mapApprovalDecisionStatus(payload) }
+            : item
+        ),
+        notice:
+          "已从 /api/daily/approvals/:approvalRequestId/decision 返回 preview-only 决策；externalEffects=['none']。"
+      }));
+    } catch {
+      applyLocalStatus();
+      setApprovalPanel((current) => ({
+        ...current,
+        source: "degraded",
+        syncStatus: "degraded",
+        notice:
+          "审批 decision API 暂不可用；已保留本地 preview-only 决策状态。"
+      }));
+    }
   }
 
   async function updateConnectorPreviewDecision(
@@ -4206,13 +4528,14 @@ export default function Page() {
     }
 
     const applyLocalStatus = () => {
-      setApprovalRequests((current) =>
-        current.map((item) =>
+      setApprovalPanel((current) => ({
+        ...current,
+        items: current.items.map((item) =>
           connector.requiredApprovalIds.includes(item.id)
             ? { ...item, status: nextStatus }
             : item
         )
-      );
+      }));
     };
 
     applyLocalStatus();
@@ -4253,8 +4576,11 @@ export default function Page() {
         })
       );
 
-      setApprovalRequests((current) =>
-        current.map((item) => {
+      setApprovalPanel((current) => ({
+        ...current,
+        source: "api",
+        syncStatus: "live",
+        items: current.items.map((item) => {
           const response = responses.find(
             (entry) => entry.request?.id === item.id
           );
@@ -4262,8 +4588,10 @@ export default function Page() {
           return response
             ? { ...item, status: mapApprovalDecisionStatus(response) }
             : item;
-        })
-      );
+        }),
+        notice:
+          "已从 /api/daily/approvals/:approvalRequestId/decision 同步连接器关联审批结果。"
+      }));
       setConnectorPreviewPanel((current) =>
         current.connectorId === connector.apiConnectorId
           ? {
@@ -5466,10 +5794,35 @@ export default function Page() {
               title="审批 / 上下文 / 产物"
             />
             <div className="space-y-4 px-3 pb-4 pt-3">
-              <div className="rounded-[8px] border border-amber-200 bg-amber-50 p-3">
-                <div className="mb-3 flex items-center gap-2 text-sm font-medium text-amber-950">
-                  <ShieldCheck className="size-4 text-amber-700" aria-hidden="true" />
-                  许可审批台账
+              <div
+                className="rounded-[8px] border border-amber-200 bg-amber-50 p-3"
+                data-approval-ledger-panel
+                data-approval-ledger-source={approvalPanel.source}
+                data-approval-ledger-sync-status={approvalPanel.syncStatus}
+                data-approval-ledger-count={approvalRequests.length}
+                data-approval-ledger-notice={approvalPanel.notice}
+              >
+                <div className="mb-3 flex flex-col gap-2">
+                  <div className="flex items-center justify-between gap-3">
+                    <div className="min-w-0 flex items-center gap-2 text-sm font-medium text-amber-950">
+                      <ShieldCheck className="size-4 shrink-0 text-amber-700" aria-hidden="true" />
+                      <span className="min-w-0 break-words">许可审批台账</span>
+                    </div>
+                    <span className="shrink-0 rounded-[999px] bg-white px-2 py-0.5 text-[11px] font-medium text-amber-800">
+                      {approvalRequests.length}
+                    </span>
+                  </div>
+                  <div className="rounded-[8px] border border-amber-100 bg-white/80 px-2.5 py-2 text-[11px] leading-5 text-amber-800">
+                    <div className="flex flex-wrap items-center gap-1.5">
+                      <span className="rounded-[999px] bg-amber-100 px-2 py-0.5 font-medium text-amber-800">
+                        {approvalPanelSourceLabel(approvalPanel.source)}
+                      </span>
+                      <span className="rounded-[999px] bg-slate-100 px-2 py-0.5 font-medium text-slate-700">
+                        {approvalPanelSyncStatusLabel(approvalPanel.syncStatus)}
+                      </span>
+                    </div>
+                    <p className="mt-1 break-words">{approvalPanel.notice}</p>
+                  </div>
                 </div>
                 <div className="space-y-2">
                   {approvalRequests.map((request) => {
@@ -5518,7 +5871,7 @@ export default function Page() {
                                 data-approval-decision-target={request.id}
                                 className="h-8 rounded-[8px] border-amber-200 bg-white text-amber-800 hover:bg-amber-50"
                                 onClick={() =>
-                                  updateApprovalStatus(request.id, "allowed_once")
+                                  void updateApprovalStatus(request.id, "allowed_once")
                                 }
                               >
                                 允许一次
@@ -5530,7 +5883,9 @@ export default function Page() {
                                 data-approval-decision-action="deny"
                                 data-approval-decision-target={request.id}
                                 className="h-8 rounded-[8px] border-slate-200 bg-white text-slate-700 hover:bg-slate-50"
-                                onClick={() => updateApprovalStatus(request.id, "denied")}
+                                onClick={() =>
+                                  void updateApprovalStatus(request.id, "denied")
+                                }
                               >
                                 拒绝
                               </Button>
@@ -5542,7 +5897,7 @@ export default function Page() {
                   })}
                 </div>
                 <p className="mt-3 text-xs leading-5 text-amber-800">
-                  这里只做本地状态流转，不会触发真实邮件、日历或外部系统操作。
+                  审批按钮只写入后端 preview-only 决策回执；不会触发真实邮件、日历或外部系统操作。
                 </p>
               </div>
 
@@ -7888,6 +8243,28 @@ function templatePreviewSyncStatusLabel(status: TemplatePreviewSyncStatus) {
       return "预演已同步";
     case "degraded":
       return "已回退";
+  }
+}
+
+function approvalPanelSourceLabel(source: ApprovalPanelSource) {
+  switch (source) {
+    case "fallback":
+      return "前端 fallback";
+    case "api":
+      return "Approvals API";
+    case "degraded":
+      return "降级 fallback";
+  }
+}
+
+function approvalPanelSyncStatusLabel(status: ApprovalPanelSyncStatus) {
+  switch (status) {
+    case "syncing":
+      return "同步中";
+    case "live":
+      return "API 已同步";
+    case "degraded":
+      return "保留快照";
   }
 }
 
