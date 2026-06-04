@@ -45,8 +45,22 @@ npm run dev:daemon
 npm run typecheck
 npm run lint
 npm run test
+npm run test:browser-smoke
 npm run build
 ```
+
+Browser smoke:
+
+```bash
+npm run build
+npm run test:browser-smoke
+```
+
+`test:browser-smoke` uses Node.js plus Chrome DevTools Protocol to run a
+production-page prompt interaction smoke without Playwright or Puppeteer. By
+default it starts `apps/web` with `next start` on `http://127.0.0.1:3000`; set
+`SEEKDESK_SMOKE_URL` to reuse an already-running service and `BROWSER_PATH` to
+override Chrome or Edge discovery.
 
 Default local endpoints:
 

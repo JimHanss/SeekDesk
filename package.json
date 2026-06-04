@@ -20,7 +20,8 @@
     "build": "npm run build --workspaces --if-present",
     "typecheck": "npm run typecheck --workspaces --if-present",
     "lint": "npm run lint --workspaces --if-present",
-    "test": "npm run test --workspaces --if-present"
+    "test": "npm run test --workspaces --if-present",
+    "test:browser-smoke": "node scripts/browser-smoke.cjs"
   },
   "engines": {
     "node": ">=22.12.0",
