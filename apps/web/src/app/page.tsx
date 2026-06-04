@@ -145,6 +145,8 @@ type ConnectorRiskLevel = "低" | "中" | "高";
 
 interface ConnectorItem {
   id: string;
+  apiConnectorId: string;
+  apiAction: string;
   name: string;
   category: ConnectorCategory;
   provider: string;
@@ -154,6 +156,8 @@ interface ConnectorItem {
   lastSyncLabel: string;
   riskLevel: ConnectorRiskLevel;
   availableActions: string[];
+  relatedContextIds: string[];
+  requiredApprovalIds: string[];
   notes: string[];
   icon: LucideIcon;
 }
@@ -584,6 +588,8 @@ const connectorFilters: ConnectorFilter[] = ["全部", "需审批", "可预览"]
 const connectorItems: ConnectorItem[] = [
   {
     id: "docs-catalog",
+    apiConnectorId: "workspace-documents",
+    apiAction: "draft_document",
     name: "文档库入口",
     category: "文档",
     provider: "SeekDesk Docs Preview",
@@ -594,6 +600,8 @@ const connectorItems: ConnectorItem[] = [
     lastSyncLabel: "未同步，仅目录示例",
     riskLevel: "中",
     availableActions: ["预览授权范围", "生成引用提示", "记录审批原因"],
+    relatedContextIds: ["project-brief", "meeting-notes"],
+    requiredApprovalIds: ["use-internal-meeting-notes"],
     notes: [
       "当前只展示目录和权限预演，不读取真实文档。",
       "正式接入前需要确认工作区、文件夹范围和最小权限。"
@@ -602,6 +610,8 @@ const connectorItems: ConnectorItem[] = [
   },
   {
     id: "calendar-catalog",
+    apiConnectorId: "team-calendar",
+    apiAction: "prepare_calendar_follow_up",
     name: "日历日程入口",
     category: "日历",
     provider: "SeekDesk Calendar Preview",
@@ -612,6 +622,8 @@ const connectorItems: ConnectorItem[] = [
     lastSyncLabel: "未同步，仅字段预览",
     riskLevel: "中",
     availableActions: ["预览日程字段", "生成会议准备提示", "标记审批点"],
+    relatedContextIds: ["meeting-notes"],
+    requiredApprovalIds: ["schedule-calendar-follow-up"],
     notes: [
       "当前不会读取真实日程、参会人或会议链接。",
       "正式接入前需要确认可见时间范围和敏感会议处理方式。"
@@ -620,6 +632,8 @@ const connectorItems: ConnectorItem[] = [
   },
   {
     id: "mail-catalog",
+    apiConnectorId: "customer-email",
+    apiAction: "prepare_email_draft",
     name: "邮箱收件入口",
     category: "邮箱",
     provider: "SeekDesk Mail Preview",
@@ -630,6 +644,11 @@ const connectorItems: ConnectorItem[] = [
     lastSyncLabel: "未同步，仅权限说明",
     riskLevel: "高",
     availableActions: ["预览收件范围", "生成回复草稿提示", "配置外发审批"],
+    relatedContextIds: ["customer-email", "meeting-notes"],
+    requiredApprovalIds: [
+      "read-customer-email-context",
+      "draft-external-reply"
+    ],
     notes: [
       "当前不会登录邮箱、读取邮件正文或扫描附件。",
       "正式接入前需要明确发件权限、敏感客户信息和拒绝路径。"
@@ -638,6 +657,8 @@ const connectorItems: ConnectorItem[] = [
   },
   {
     id: "notes-catalog",
+    apiConnectorId: "workspace-notes",
+    apiAction: "summarize",
     name: "个人笔记入口",
     category: "笔记",
     provider: "SeekDesk Notes Preview",
@@ -648,6 +669,8 @@ const connectorItems: ConnectorItem[] = [
     lastSyncLabel: "未同步，仅示例卡片",
     riskLevel: "低",
     availableActions: ["预览笔记字段", "生成整理提示", "保留来源说明"],
+    relatedContextIds: ["team-notes", "meeting-notes"],
+    requiredApprovalIds: ["use-internal-meeting-notes"],
     notes: [
       "当前只使用示例字段，不读取真实笔记或本地文件。",
       "正式接入前需要确认用户手动选择范围和撤销入口。"
@@ -656,6 +679,8 @@ const connectorItems: ConnectorItem[] = [
   },
   {
     id: "knowledge-catalog",
+    apiConnectorId: "team-knowledge-base",
+    apiAction: "open_reference",
     name: "团队知识库入口",
     category: "团队知识",
     provider: "SeekDesk Knowledge Preview",
@@ -666,6 +691,8 @@ const connectorItems: ConnectorItem[] = [
     lastSyncLabel: "未同步，仅索引预演",
     riskLevel: "中",
     availableActions: ["预览索引字段", "生成知识库接入提示", "标记引用边界"],
+    relatedContextIds: ["research-links", "project-brief", "team-notes"],
+    requiredApprovalIds: [],
     notes: [
       "当前不读取真实团队知识库、Wiki 或内部网页。",
       "正式接入前需要确认空间范围、引用策略和成员权限。"
@@ -959,7 +986,7 @@ const initialMessages: ChatMessage[] = [];
 
 const initialApprovalRequests: ApprovalRequestItem[] = [
   {
-    id: "read-customer-email",
+    id: "read-customer-email-context",
     title: "读取客户邮件上下文",
     requestedAction: "查看客户诉求并提炼回复要点",
     scope: "仅限本次会话中已确认的客户邮件摘要，不扩散到其他联系人。",
@@ -970,7 +997,7 @@ const initialApprovalRequests: ApprovalRequestItem[] = [
     icon: Mail
   },
   {
-    id: "use-meeting-notes",
+    id: "use-internal-meeting-notes",
     title: "使用内部会议记录",
     requestedAction: "压缩会议记录为可分享纪要",
     scope: "仅限当前项目会议纪要，不读取其他项目或私人笔记。",
@@ -990,7 +1017,7 @@ const initialApprovalRequests: ApprovalRequestItem[] = [
     icon: AlertCircle
   },
   {
-    id: "schedule-follow-up",
+    id: "schedule-calendar-follow-up",
     title: "安排日历跟进",
     requestedAction: "为后续沟通创建跟进提醒",
     scope: "仅生成日历建议，不直接访问真实日历或联系人列表。",
@@ -1382,6 +1409,23 @@ export default function Page() {
 
     return selectedInFilter ?? filteredConnectors[0] ?? connectorItems[0] ?? null;
   }, [filteredConnectors, selectedConnectorId]);
+  const selectedConnectorApprovalRequests = useMemo(() => {
+    if (!selectedConnector) {
+      return [];
+    }
+
+    return approvalRequests.filter((request) =>
+      selectedConnector.requiredApprovalIds.includes(request.id)
+    );
+  }, [approvalRequests, selectedConnector]);
+  const selectedConnectorPreviewStatus = useMemo(
+    () =>
+      connectorPreviewApprovalStatus(
+        selectedConnector,
+        selectedConnectorApprovalRequests
+      ),
+    [selectedConnector, selectedConnectorApprovalRequests]
+  );
   const filteredWorkflowActions = useMemo(
     () =>
       workflowActionFilter === "全部"
@@ -1832,6 +1876,23 @@ export default function Page() {
     setApprovalRequests((current) =>
       current.map((item) =>
         item.id === approvalId ? { ...item, status: nextStatus } : item
+      )
+    );
+  }
+
+  function updateConnectorPreviewDecision(
+    connector: ConnectorItem,
+    nextStatus: Exclude<ApprovalStatus, "waiting">
+  ) {
+    if (connector.requiredApprovalIds.length === 0) {
+      return;
+    }
+
+    setApprovalRequests((current) =>
+      current.map((item) =>
+        connector.requiredApprovalIds.includes(item.id)
+          ? { ...item, status: nextStatus }
+          : item
       )
     );
   }
@@ -2719,6 +2780,8 @@ export default function Page() {
                     return (
                       <div
                         key={request.id}
+                        data-approval-request={request.id}
+                        data-approval-status={request.status}
                         className="rounded-[8px] border border-amber-100 bg-white px-3 py-3"
                       >
                         <div className="flex items-start gap-3">
@@ -2750,8 +2813,11 @@ export default function Page() {
 
                             <div className="mt-3 flex flex-wrap gap-2">
                               <Button
+                                type="button"
                                 size="sm"
                                 variant="secondary"
+                                data-approval-decision-action="allow_once"
+                                data-approval-decision-target={request.id}
                                 className="h-8 rounded-[8px] border-amber-200 bg-white text-amber-800 hover:bg-amber-50"
                                 onClick={() =>
                                   updateApprovalStatus(request.id, "allowed_once")
@@ -2760,8 +2826,11 @@ export default function Page() {
                                 允许一次
                               </Button>
                               <Button
+                                type="button"
                                 size="sm"
                                 variant="secondary"
+                                data-approval-decision-action="deny"
+                                data-approval-decision-target={request.id}
                                 className="h-8 rounded-[8px] border-slate-200 bg-white text-slate-700 hover:bg-slate-50"
                                 onClick={() => updateApprovalStatus(request.id, "denied")}
                               >
@@ -2860,7 +2929,7 @@ export default function Page() {
                           aria-pressed={isActive}
                           onClick={() => setConnectorFilter(filter)}
                           className={cn(
-                            "inline-flex min-h-8 items-center gap-1.5 rounded-[8px] border px-2.5 py-1 text-xs font-medium transition-colors duration-200 focus-visible:outline focus-visible:outline-2 focus-visible:outline-teal-600",
+                            "inline-flex min-h-8 cursor-pointer items-center gap-1.5 rounded-[8px] border px-2.5 py-1 text-xs font-medium transition-colors duration-200 focus-visible:outline focus-visible:outline-2 focus-visible:outline-teal-600",
                             isActive
                               ? "border-teal-600 bg-teal-600 text-white"
                               : "border-teal-200 bg-white text-teal-700 hover:border-teal-300 hover:bg-teal-50"
@@ -2892,7 +2961,7 @@ export default function Page() {
                         type="button"
                         onClick={() => setSelectedConnectorId(connector.id)}
                         className={cn(
-                          "w-full rounded-[8px] border px-3 py-3 text-left transition-colors duration-200 focus-visible:outline focus-visible:outline-2 focus-visible:outline-teal-600",
+                          "w-full cursor-pointer rounded-[8px] border px-3 py-3 text-left transition-colors duration-200 focus-visible:outline focus-visible:outline-2 focus-visible:outline-teal-600",
                           isSelected
                             ? "border-teal-300 bg-white shadow-sm"
                             : "border-teal-100 bg-white hover:border-teal-300 hover:bg-teal-50"
@@ -2968,6 +3037,120 @@ export default function Page() {
                             <span className="break-words">{action}</span>
                           </span>
                         ))}
+                      </div>
+                    </div>
+
+                    <div
+                      className="mt-3 rounded-[8px] border border-cyan-200 bg-cyan-50 px-3 py-3"
+                      data-approval-preview-panel
+                      data-api-connector-id={selectedConnector.apiConnectorId}
+                      data-connector-action-preview={selectedConnector.apiAction}
+                      data-connector-preview-status={selectedConnectorPreviewStatus}
+                      data-connector-preview-only="true"
+                    >
+                      <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
+                        <div className="min-w-0">
+                          <div className="flex items-center gap-2 text-xs font-semibold text-cyan-950">
+                            <ShieldCheck
+                              className="size-4 shrink-0 text-cyan-700"
+                              aria-hidden="true"
+                            />
+                            <span className="min-w-0 break-words">
+                              工具调用预览 / preview-only
+                            </span>
+                          </div>
+                          <p className="mt-1 text-xs leading-5 text-cyan-800">
+                            POST /api/daily/connectors/
+                            {selectedConnector.apiConnectorId}/preview ·{" "}
+                            {selectedConnector.apiAction}
+                          </p>
+                        </div>
+                        <StatusPill status={selectedConnectorPreviewStatus} />
+                      </div>
+
+                      <div className="mt-3 grid gap-2">
+                        <StatusRow
+                          label="关联上下文"
+                          value={
+                            selectedConnector.relatedContextIds.length > 0
+                              ? selectedConnector.relatedContextIds.join("、")
+                              : "无需上下文"
+                          }
+                        />
+                        <StatusRow
+                          label="审批请求"
+                          value={
+                            selectedConnector.requiredApprovalIds.length > 0
+                              ? selectedConnector.requiredApprovalIds.join("、")
+                              : "无需审批"
+                          }
+                        />
+                      </div>
+
+                      {selectedConnectorApprovalRequests.length > 0 ? (
+                        <div className="mt-3 space-y-2">
+                          {selectedConnectorApprovalRequests.map((request) => (
+                            <div
+                              key={`${selectedConnector.id}-${request.id}`}
+                              className="flex items-center justify-between gap-3 rounded-[8px] border border-cyan-100 bg-white px-2.5 py-2"
+                              data-approval-preview-request={request.id}
+                              data-approval-preview-status={request.status}
+                            >
+                              <span className="min-w-0 break-words text-xs font-medium text-cyan-950">
+                                {request.title}
+                              </span>
+                              <StatusPill status={request.status} />
+                            </div>
+                          ))}
+                        </div>
+                      ) : (
+                        <p className="mt-3 rounded-[8px] border border-cyan-100 bg-white px-3 py-2 text-xs leading-5 text-cyan-800">
+                          该连接器当前仅开放公开引用预览，不需要审批即可生成接入提示。
+                        </p>
+                      )}
+
+                      <div className="mt-3 rounded-[8px] border border-cyan-100 bg-white px-3 py-2 text-xs leading-5 text-slate-700">
+                        这个面板只展示将要调用的 mock API、风险边界和审批状态；
+                        它不会登录、读取、写入、发送或创建任何外部记录。
+                      </div>
+
+                      <div className="mt-3 grid gap-2 sm:grid-cols-2">
+                        <Button
+                          type="button"
+                          size="sm"
+                          variant="secondary"
+                          disabled={selectedConnector.requiredApprovalIds.length === 0}
+                          data-approval-decision-action="allow_once"
+                          data-approval-decision-target={selectedConnector.id}
+                          className="h-8 rounded-[8px] border-cyan-200 bg-white text-cyan-800 hover:bg-cyan-50"
+                          onClick={() =>
+                            updateConnectorPreviewDecision(
+                              selectedConnector,
+                              "allowed_once"
+                            )
+                          }
+                        >
+                          <CheckCircle2 className="size-4" aria-hidden="true" />
+                          批准预览
+                        </Button>
+                        <Button
+                          type="button"
+                          size="sm"
+                          variant="secondary"
+                          disabled={selectedConnector.requiredApprovalIds.length === 0}
+                          data-approval-decision-action="deny"
+                          data-approval-decision-target={selectedConnector.id}
+                          className="h-8 rounded-[8px] border-slate-200 bg-white text-slate-700 hover:bg-slate-50"
+                          onClick={() =>
+                            updateConnectorPreviewDecision(
+                              selectedConnector,
+                              "denied"
+                            )
+                          }
+                        >
+                          <Square className="size-4" aria-hidden="true" />
+                          拒绝预览
+                        </Button>
                       </div>
                     </div>
 
@@ -4690,6 +4873,38 @@ function approvalStatusLabel(status: ApprovalStatus) {
     case "blocked":
       return "阻断";
   }
+}
+
+function connectorPreviewApprovalStatus(
+  connector: ConnectorItem | null,
+  approvalRequestsForConnector: ApprovalRequestItem[]
+): ApprovalStatus {
+  if (!connector) {
+    return "waiting";
+  }
+
+  if (connector.requiredApprovalIds.length === 0) {
+    return "allowed_once";
+  }
+
+  if (approvalRequestsForConnector.some((request) => request.status === "blocked")) {
+    return "blocked";
+  }
+
+  if (approvalRequestsForConnector.some((request) => request.status === "denied")) {
+    return "denied";
+  }
+
+  if (
+    approvalRequestsForConnector.length === connector.requiredApprovalIds.length &&
+    approvalRequestsForConnector.every(
+      (request) => request.status === "allowed_once"
+    )
+  ) {
+    return "allowed_once";
+  }
+
+  return "waiting";
 }
 
 function approvalStatusConfig(status: ApprovalStatus) {
