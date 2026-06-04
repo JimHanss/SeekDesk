@@ -1339,13 +1339,18 @@ describe("api server", () => {
     process.env.DEEPSEEK_BASE_URL = "https://api.deepseek.example";
     process.env.DEEPSEEK_MODEL_FAST = "deepseek-v4-pro";
 
-    const fetchMock = vi.fn(async () =>
-      createDeepSeekStreamResponse([
+    const fetchMock = vi.fn(
+      async (input: RequestInfo | URL, init?: RequestInit) => {
+        void input;
+        void init;
+
+        return createDeepSeekStreamResponse([
         `data: ${JSON.stringify({
           choices: [{ delta: { content: "DeepSeek hello" } }]
         })}\n\n`,
         "data: [DONE]\n\n"
-      ])
+        ]);
+      }
     );
     vi.stubGlobal("fetch", fetchMock);
 
@@ -1369,8 +1374,7 @@ describe("api server", () => {
     expect(response.body).toContain("DeepSeek hello");
     expect(fetchMock).toHaveBeenCalledOnce();
 
-    const [, init] =
-      (fetchMock.mock.calls[0] as [RequestInfo | URL, RequestInit]) ?? [];
+    const [, init] = fetchMock.mock.calls[0] ?? [];
     const body = JSON.parse(String(init?.body));
 
     expect(body.model).toBe("deepseek-v4-pro");
