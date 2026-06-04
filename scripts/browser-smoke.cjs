@@ -45,6 +45,7 @@ async function main() {
   try {
     client = await openPage(browser.debugPort, smokePageUrl(apiServer.url));
     await runDailyEndpointsSmoke(apiServer.url);
+    await runArtifactsSmoke(client, apiServer.url);
     await runActivityStreamSmoke(client, apiServer.url);
     await runModelUsageSmoke(client, apiServer.url);
     await runDataLayerStateSmoke(client);
@@ -545,6 +546,60 @@ async function runDailyEndpointsSmoke(apiUrl) {
   });
 }
 
+async function runArtifactsSmoke(client, apiUrl) {
+  const artifactSnapshot = await fetchDailyEndpointSnapshot(
+    apiUrl,
+    "/api/daily/artifacts?mode=daily_work"
+  );
+  const trackedArtifacts = assertArtifactsSnapshot(artifactSnapshot);
+
+  const panelState = await waitForValue(
+    client,
+    artifactsPanelExpression(),
+    (state) =>
+      state.present &&
+      state.source === "api" &&
+      state.syncStatus === "live" &&
+      state.count >= 4 &&
+      state.hasEmailCard &&
+      state.hasResearchCard,
+    "artifacts API panel state"
+  );
+
+  const emailCardRect = await waitForRect(
+    client,
+    artifactCardExpression("email-draft-artifact"),
+    "email draft artifact card"
+  );
+  await clickAt(client, emailCardRect);
+  await evaluate(client, artifactCardClickExpression("email-draft-artifact"));
+
+  const detailState = await waitForValue(
+    client,
+    artifactDetailExpression("email-draft-artifact"),
+    (state) =>
+      state.present &&
+      state.detailId === "email-draft-artifact" &&
+      state.textLength > 0 &&
+      state.hasCustomerContext &&
+      state.hasApprovalText &&
+      state.hasContextText,
+    "email draft artifact detail"
+  );
+
+  checks.push({
+    name: "artifacts API and UI",
+    status: "passed",
+    artifacts: artifactSnapshot.artifacts.length,
+    trackedArtifacts: trackedArtifacts.map((artifact) => artifact.id),
+    source: panelState.source,
+    syncStatus: panelState.syncStatus,
+    count: panelState.count,
+    selectedArtifact: detailState.detailId,
+    detailTextLength: detailState.textLength
+  });
+}
+
 async function runModelUsageSmoke(client, apiUrl) {
   const apiSnapshot = await fetchModelUsageSnapshot(apiUrl);
   assertModelUsageSnapshot(apiSnapshot, "model usage API response");
@@ -919,6 +974,57 @@ function dataLayerStateExpression() {
       activityConnectionStatus: activityRoot ? activityRoot.getAttribute("data-activity-connection-status") || "" : "",
       modelUsageSource: modelUsageRoot ? modelUsageRoot.getAttribute("data-model-usage-source") || "" : "",
       modelUsageStatus: modelUsageRoot ? modelUsageRoot.getAttribute("data-model-usage-status") || "" : ""
+    };
+  })()`);
+}
+
+function artifactsPanelExpression() {
+  return withSmokeHelpers(`(() => {
+    const root = document.querySelector("[data-artifacts-panel]");
+    const cards = root ? [...root.querySelectorAll("[data-artifact-card]")] : [];
+    return {
+      present: Boolean(root),
+      source: root ? root.getAttribute("data-artifacts-source") || "" : "",
+      syncStatus: root ? root.getAttribute("data-artifacts-sync-status") || "" : "",
+      count: root ? Number(root.getAttribute("data-artifacts-count") || cards.length) : 0,
+      selectedArtifactId: root ? root.getAttribute("data-selected-artifact-id") || "" : "",
+      hasEmailCard: cards.some((card) => card.getAttribute("data-artifact-card") === "email-draft-artifact"),
+      hasResearchCard: cards.some((card) => card.getAttribute("data-artifact-card") === "research-note-artifact")
+    };
+  })()`);
+}
+
+function artifactCardExpression(artifactId) {
+  return withSmokeHelpers(`(() => {
+    const root = document.querySelector("[data-artifacts-panel]");
+    if (!root) return null;
+    const button = root.querySelector(${JSON.stringify(`[data-artifact-card="${artifactId}"]`)});
+    return smokeRect(button && isClickableSmokeButton(button) ? button : null);
+  })()`);
+}
+
+function artifactCardClickExpression(artifactId) {
+  return withSmokeHelpers(`(() => {
+    const root = document.querySelector("[data-artifacts-panel]");
+    if (!root) return false;
+    const button = root.querySelector(${JSON.stringify(`[data-artifact-card="${artifactId}"]`)});
+    if (!button || button.disabled) return false;
+    button.click();
+    return true;
+  })()`);
+}
+
+function artifactDetailExpression(artifactId) {
+  return withSmokeHelpers(`(() => {
+    const detail = document.querySelector(${JSON.stringify(`[data-artifact-detail="${artifactId}"]`)});
+    const text = detail ? detail.textContent || "" : "";
+    return {
+      present: Boolean(detail),
+      detailId: detail ? detail.getAttribute("data-artifact-detail") || "" : "",
+      textLength: text.trim().length,
+      hasCustomerContext: /customer-email|customer success|customer-facing|客户|沟通/i.test(text),
+      hasApprovalText: /draft-external-reply|read-customer-email-context|approval|approvals|review|审批/i.test(text),
+      hasContextText: /source context|context|customer-email|meeting-notes|上下文/i.test(text)
     };
   })()`);
 }
@@ -1634,6 +1740,76 @@ function assertDailyEndpointSnapshot(snapshot, collectionKey, path) {
   if (!snapshot[collectionKey].length) {
     throw new Error(`${path} returned an empty ${collectionKey} array.`);
   }
+}
+
+function assertArtifactsSnapshot(snapshot) {
+  if (!snapshot || snapshot.mode !== "daily_work" || !Array.isArray(snapshot.artifacts)) {
+    throw new Error("Artifacts API did not return a daily_work artifacts array.");
+  }
+
+  if (snapshot.artifacts.length < 4) {
+    throw new Error(
+      `Artifacts API returned ${snapshot.artifacts.length} artifact(s), expected at least 4.`
+    );
+  }
+
+  const expectedIds = ["email-draft-artifact", "research-note-artifact"];
+  const artifactsById = new Map(
+    snapshot.artifacts
+      .filter((artifact) => artifact && typeof artifact.id === "string")
+      .map((artifact) => [artifact.id, artifact])
+  );
+  const missingIds = expectedIds.filter((id) => !artifactsById.has(id));
+
+  if (missingIds.length) {
+    throw new Error(`Artifacts API missed expected artifact(s): ${missingIds.join(", ")}.`);
+  }
+
+  const trackedArtifacts = expectedIds.map((id) => artifactsById.get(id));
+
+  for (const artifact of trackedArtifacts) {
+    if (
+      !artifact ||
+      artifact.mode !== "daily_work" ||
+      typeof artifact.artifactType !== "string" ||
+      typeof artifact.status !== "string" ||
+      !artifact.owner ||
+      typeof artifact.owner.displayName !== "string"
+    ) {
+      throw new Error("Artifacts API returned an invalid tracked artifact payload.");
+    }
+
+    if (!Array.isArray(artifact.sourceContextIds) || !artifact.sourceContextIds.length) {
+      throw new Error(`${artifact.id} did not include sourceContextIds linkage.`);
+    }
+
+    if (!Array.isArray(artifact.approvalRequestIds)) {
+      throw new Error(`${artifact.id} did not include approvalRequestIds linkage.`);
+    }
+
+    if (
+      !artifact.trace ||
+      typeof artifact.trace.origin !== "string" ||
+      !Array.isArray(artifact.trace.events) ||
+      !artifact.trace.events.length
+    ) {
+      throw new Error(`${artifact.id} did not include trace events.`);
+    }
+
+    if (!Array.isArray(artifact.lifecycle) || !artifact.lifecycle.length) {
+      throw new Error(`${artifact.id} did not include lifecycle events.`);
+    }
+  }
+
+  const emailDraft = artifactsById.get("email-draft-artifact");
+  if (
+    !emailDraft.approvalRequestIds.includes("read-customer-email-context") ||
+    !emailDraft.approvalRequestIds.includes("draft-external-reply")
+  ) {
+    throw new Error("email-draft-artifact did not include the expected approval linkage.");
+  }
+
+  return trackedArtifacts;
 }
 
 function assertMatchingActivityEvents(apiEvents, wsEvents) {
