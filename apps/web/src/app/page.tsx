@@ -384,7 +384,73 @@ interface ContextItem {
   summary: string;
   privacy: string;
   prompt: string;
+  tags: string[];
   icon: LucideIcon;
+}
+
+type ContextPanelSource = "fallback" | "api" | "degraded";
+type ContextPanelSyncStatus = "syncing" | "live" | "degraded";
+type ContextPreviewSource = "fallback" | "api" | "degraded";
+type ContextPreviewSyncStatus = "idle" | "syncing" | "live" | "degraded";
+
+interface DailyContextItemDto {
+  id?: string;
+  mode?: AppMode;
+  sourceType?: string;
+  title?: string;
+  summary?: string;
+  permissionState?: string;
+  tags?: string[];
+}
+
+interface DailyContextResponseDto {
+  mode?: AppMode;
+  items?: DailyContextItemDto[];
+}
+
+interface DailyContextUsePreviewDto {
+  id?: string;
+  mode?: AppMode;
+  contextItemId?: string;
+  contextTitle?: string;
+  sourceType?: string;
+  summary?: string;
+  permissionState?: string;
+  promptDraft?: string;
+  tags?: string[];
+  previewOnly?: boolean;
+  externalEffects?: string[];
+  safetyBoundary?: {
+    previewOnly?: boolean;
+    externalEffects?: string[];
+    statement?: string;
+  };
+  generatedAt?: string;
+}
+
+interface DailyContextUsePreviewResponseDto {
+  mode?: AppMode;
+  preview?: DailyContextUsePreviewDto;
+}
+
+interface ContextPreviewPanelState {
+  contextItemId: string;
+  source: ContextPreviewSource;
+  syncStatus: ContextPreviewSyncStatus;
+  previewOnly: boolean;
+  externalEffects: string[];
+  safetyStatement: string;
+  promptDraft: string;
+  generatedAt: string;
+  notice: string;
+}
+
+interface ContextPanelState {
+  items: ContextItem[];
+  source: ContextPanelSource;
+  syncStatus: ContextPanelSyncStatus;
+  notice: string;
+  preview: ContextPreviewPanelState;
 }
 
 type ConnectorCategory = "文档" | "日历" | "邮箱" | "笔记" | "团队知识";
@@ -1378,6 +1444,7 @@ const contextItems: ContextItem[] = [
     privacy: "仅项目成员可见",
     prompt:
       "请基于「项目简报」帮我整理一版日常工作更新，重点说明本周目标、当前进展、风险和下一步动作。",
+    tags: ["项目", "计划", "周报"],
     icon: Target
   },
   {
@@ -1390,6 +1457,7 @@ const contextItems: ContextItem[] = [
     privacy: "仅当前会话可用",
     prompt:
       "请基于「会议记录」整理一份可分享的会议摘要，输出关键决策、待办事项、负责人和开放问题。",
+    tags: ["会议", "行动项", "待核验"],
     icon: Presentation
   },
   {
@@ -1402,6 +1470,7 @@ const contextItems: ContextItem[] = [
     privacy: "敏感信息，需确认引用范围",
     prompt:
       "请基于「客户邮件」帮我起草回复，先确认客户关心的交付时间、范围变更和验收口径，再给出专业且克制的回应。",
+    tags: ["客户", "邮件", "需审批"],
     icon: Mail
   },
   {
@@ -1414,6 +1483,7 @@ const contextItems: ContextItem[] = [
     privacy: "公开来源，可直接引用",
     prompt:
       "请基于「研究链接」整理一份研究简报，概括结论、可引用依据和仍需验证的点。",
+    tags: ["研究", "公开资料", "引用"],
     icon: Globe
   },
   {
@@ -1426,9 +1496,229 @@ const contextItems: ContextItem[] = [
     privacy: "内部草稿，不可外发",
     prompt:
       "请基于「团队备忘」整理出下一步行动清单，标出优先级、负责人和依赖关系。",
+    tags: ["团队", "备忘", "交接"],
     icon: ShieldCheck
   }
 ];
+
+function createFallbackContextPanelState(): ContextPanelState {
+  return {
+    items: contextItems,
+    source: "fallback",
+    syncStatus: "syncing",
+    notice:
+      "正在从 /api/daily/context?mode=daily_work 同步会话知识上下文；连接完成前保留前端 fallback 快照。",
+    preview: createLocalContextPreviewState(null)
+  };
+}
+
+function createLocalContextPreviewState(
+  item: ContextItem | null,
+  syncStatus: ContextPreviewSyncStatus = "idle",
+  notice = "尚未调用 context use-preview；点击上下文后会生成 preview-only 输入框提示。"
+): ContextPreviewPanelState {
+  return {
+    contextItemId: item?.id ?? "",
+    source: "fallback",
+    syncStatus,
+    previewOnly: true,
+    externalEffects: ["none"],
+    safetyStatement:
+      "Preview only: 当前上下文引用只填入输入框，不读取真实外部文件、不发送邮件、不写入文档或日历。",
+    promptDraft: item ? item.prompt : "",
+    generatedAt: "前端 fallback",
+    notice
+  };
+}
+
+function mapContextResponse(payload: DailyContextResponseDto) {
+  if (payload.mode !== activeMode) {
+    throw new Error("Daily-work context response did not match the active mode.");
+  }
+
+  return (payload.items ?? []).map((item, index) =>
+    mapContextDtoToItem(item, index)
+  );
+}
+
+function mapContextDtoToItem(
+  item: DailyContextItemDto,
+  index: number
+): ContextItem {
+  const sourceType = nonEmptyText(item.sourceType, "workspace_shared");
+  const title = nonEmptyText(item.title, `会话上下文 ${index + 1}`);
+  const tags = sanitizeSessionIds(item.tags);
+
+  return {
+    id: nonEmptyText(item.id, `daily-context-${index + 1}`),
+    title,
+    source: contextSourceLabel(sourceType, tags),
+    sourceType: contextSourceTypeLabel(sourceType),
+    status: contextPermissionStatusLabel(item.permissionState),
+    summary: nonEmptyText(item.summary, "后端返回了上下文条目，但暂未提供摘要。"),
+    privacy: contextPrivacyLabel(item.permissionState),
+    prompt: buildContextPrompt({
+      title,
+      sourceType,
+      summary: item.summary,
+      permissionState: item.permissionState,
+      tags
+    }),
+    tags,
+    icon: contextIcon(sourceType, tags)
+  };
+}
+
+function mapContextUsePreviewResponse(
+  item: ContextItem,
+  payload: DailyContextUsePreviewResponseDto
+): ContextPreviewPanelState {
+  const preview = payload.preview;
+  const externalEffects =
+    preview?.externalEffects ??
+    preview?.safetyBoundary?.externalEffects ??
+    [];
+  const normalizedExternalEffects =
+    externalEffects.length > 0 ? externalEffects : ["none"];
+  const previewOnly =
+    preview?.previewOnly === true || preview?.safetyBoundary?.previewOnly === true;
+
+  if (
+    payload.mode !== activeMode ||
+    preview?.contextItemId !== item.id ||
+    previewOnly !== true ||
+    normalizedExternalEffects.some((effect) => effect !== "none")
+  ) {
+    throw new Error("Context use-preview response did not match the selected item.");
+  }
+
+  return {
+    contextItemId: item.id,
+    source: "api",
+    syncStatus: "live",
+    previewOnly: true,
+    externalEffects: normalizedExternalEffects,
+    safetyStatement: nonEmptyText(
+      preview.safetyBoundary?.statement,
+      "Preview only: 后端声明上下文预演不会产生外部效果。"
+    ),
+    promptDraft: nonEmptyText(preview.promptDraft, item.prompt),
+    generatedAt: formatSessionHistoryTimestamp(preview.generatedAt),
+    notice:
+      "已从 /api/daily/context/:contextItemId/use-preview 同步；响应声明 previewOnly=true 且 externalEffects=['none']。"
+  };
+}
+
+function contextSourceLabel(sourceType: string, tags: string[]) {
+  const tagText = tags.length > 0 ? ` / ${tags.slice(0, 2).join("、")}` : "";
+
+  switch (sourceType) {
+    case "meeting_notes":
+      return `会议记录 API${tagText}`;
+    case "project_brief":
+      return `项目简报 API${tagText}`;
+    case "customer_email":
+      return `客户邮件 API${tagText}`;
+    case "research_links":
+      return `公开资料 API${tagText}`;
+    case "team_notes":
+      return `团队知识 API${tagText}`;
+    default:
+      return `工作区上下文 API${tagText}`;
+  }
+}
+
+function contextSourceTypeLabel(sourceType: string) {
+  switch (sourceType) {
+    case "meeting_notes":
+      return "会议记录";
+    case "project_brief":
+      return "项目简报";
+    case "customer_email":
+      return "客户邮件";
+    case "research_links":
+      return "研究链接";
+    case "team_notes":
+      return "团队备忘";
+    default:
+      return sourceType;
+  }
+}
+
+function contextPermissionStatusLabel(permissionState: string | undefined) {
+  switch (permissionState) {
+    case "public":
+      return "可引用";
+    case "workspace_shared":
+      return "工作区共享";
+    case "requires_review":
+      return "需确认";
+    case "restricted":
+      return "受限";
+    default:
+      return "待确认";
+  }
+}
+
+function contextPrivacyLabel(permissionState: string | undefined) {
+  switch (permissionState) {
+    case "public":
+      return "公开来源，可直接引用";
+    case "workspace_shared":
+      return "工作区共享，仅当前项目使用";
+    case "requires_review":
+      return "敏感上下文，引用前需确认";
+    case "restricted":
+      return "受限上下文，不可外发";
+    default:
+      return "权限边界待确认";
+  }
+}
+
+function buildContextPrompt(input: {
+  title: string;
+  sourceType: string;
+  summary: string | undefined;
+  permissionState: string | undefined;
+  tags: string[];
+}) {
+  return [
+    `请在 daily_work 模式下使用「${input.title}」作为会话知识上下文。`,
+    `上下文类型：${contextSourceTypeLabel(input.sourceType)}。`,
+    `摘要：${nonEmptyText(input.summary, "暂无摘要，请先归纳可用事实。")}`,
+    `权限边界：${contextPrivacyLabel(input.permissionState)}。`,
+    input.tags.length > 0 ? `标签：${input.tags.join("、")}。` : undefined,
+    "请只生成可复核的草稿或建议，不触发外部写入、发送或真实工具调用。"
+  ]
+    .filter(Boolean)
+    .join("\n");
+}
+
+function contextIcon(sourceType: string, tags: string[]): LucideIcon {
+  const searchable = [sourceType, ...tags].join(" ").toLowerCase();
+
+  if (searchable.includes("email") || searchable.includes("mail") || searchable.includes("客户")) {
+    return Mail;
+  }
+
+  if (searchable.includes("meeting") || searchable.includes("会议")) {
+    return Presentation;
+  }
+
+  if (searchable.includes("research") || searchable.includes("links") || searchable.includes("研究")) {
+    return Globe;
+  }
+
+  if (searchable.includes("project") || searchable.includes("brief") || searchable.includes("计划")) {
+    return Target;
+  }
+
+  if (searchable.includes("team") || searchable.includes("notes") || searchable.includes("团队")) {
+    return ShieldCheck;
+  }
+
+  return FileText;
+}
 
 const connectorFilters: ConnectorFilter[] = ["全部", "需审批", "可预览"];
 
@@ -2635,6 +2925,9 @@ export default function Page() {
   const [sessionHistoryPanel, setSessionHistoryPanel] =
     useState<SessionHistoryPanelState>(() => createFallbackSessionHistoryPanelState());
   const [selectedContextId, setSelectedContextId] = useState<string | null>(null);
+  const [contextPanel, setContextPanel] = useState<ContextPanelState>(() =>
+    createFallbackContextPanelState()
+  );
   const [connectorFilter, setConnectorFilter] = useState<ConnectorFilter>("全部");
   const [selectedConnectorId, setSelectedConnectorId] = useState<string | null>(
     connectorItems[0]?.id ?? null
@@ -2701,6 +2994,12 @@ export default function Page() {
       ? "快速模式示例：适合写客户更新、整理会议纪要、把笔记转成任务计划"
       : "深度模式示例：适合复杂资料归纳、风险复核和长上下文分析";
   const templateItems = templatePanel.items;
+  const contextPanelItems = contextPanel.items;
+  const selectedContextItem = useMemo(
+    () =>
+      contextPanelItems.find((item) => item.id === selectedContextId) ?? null,
+    [contextPanelItems, selectedContextId]
+  );
   const filteredConnectors = useMemo(
     () =>
       connectorFilter === "全部"
@@ -2850,6 +3149,77 @@ export default function Page() {
     }
 
     void fetchTemplates();
+
+    return () => {
+      isDisposed = true;
+      controller.abort();
+    };
+  }, [apiBaseUrl]);
+
+  useEffect(() => {
+    let isDisposed = false;
+    const controller = new AbortController();
+
+    async function fetchContextItems() {
+      setContextPanel((current) => ({
+        ...current,
+        syncStatus: "syncing",
+        notice: "正在从 /api/daily/context?mode=daily_work 同步会话知识上下文。"
+      }));
+
+      try {
+        const response = await fetch(
+          `${apiBaseUrl}/api/daily/context?mode=${activeMode}`,
+          {
+            signal: controller.signal
+          }
+        );
+
+        if (!response.ok) {
+          throw new Error(`Context request failed: ${response.status}`);
+        }
+
+        const items = mapContextResponse(
+          (await response.json()) as DailyContextResponseDto
+        );
+
+        if (!isDisposed) {
+          setContextPanel((current) => {
+            const preview =
+              current.preview.contextItemId &&
+              items.some((item) => item.id === current.preview.contextItemId)
+                ? current.preview
+                : createLocalContextPreviewState(null);
+
+            return {
+              items,
+              source: "api",
+              syncStatus: "live",
+              notice:
+                "已从 /api/daily/context?mode=daily_work 同步上下文来源、权限、标签和摘要。",
+              preview
+            };
+          });
+          setSelectedContextId((current) =>
+            current && items.some((item) => item.id === current) ? current : null
+          );
+        }
+      } catch {
+        if (controller.signal.aborted || isDisposed) {
+          return;
+        }
+
+        setContextPanel((current) => ({
+          ...current,
+          source: "degraded",
+          syncStatus: "degraded",
+          notice:
+            "暂未从后端同步会话知识上下文，已保留本地 context fallback。"
+        }));
+      }
+    }
+
+    void fetchContextItems();
 
     return () => {
       isDisposed = true;
@@ -3726,9 +4096,61 @@ export default function Page() {
     }
   }
 
-  function useContextItem(item: ContextItem) {
+  async function useContextItem(item: ContextItem) {
     setSelectedContextId(item.id);
-    applyPrompt(item.prompt);
+    setContextPanel((current) => ({
+      ...current,
+      preview: createLocalContextPreviewState(
+        item,
+        "syncing",
+        "正在请求 /api/daily/context/:contextItemId/use-preview，成功后会把后端 promptDraft 填入输入框。"
+      )
+    }));
+
+    try {
+      const response = await fetch(
+        `${apiBaseUrl}/api/daily/context/${item.id}/use-preview`,
+        {
+          method: "POST",
+          headers: {
+            "Content-Type": "application/json"
+          },
+          body: JSON.stringify({
+            mode: activeMode
+          })
+        }
+      );
+
+      if (!response.ok) {
+        throw new Error(`Context use-preview failed: ${response.status}`);
+      }
+
+      const preview = mapContextUsePreviewResponse(
+        item,
+        (await response.json()) as DailyContextUsePreviewResponseDto
+      );
+
+      applyPrompt(preview.promptDraft);
+      setContextPanel((current) => ({
+        ...current,
+        preview
+      }));
+    } catch {
+      const fallbackPreview: ContextPreviewPanelState = {
+        ...createLocalContextPreviewState(
+          item,
+          "degraded",
+          "暂未从后端生成 context use-preview，已回退到本地 preview-only 上下文提示。"
+        ),
+        source: "degraded"
+      };
+
+      applyPrompt(fallbackPreview.promptDraft);
+      setContextPanel((current) => ({
+        ...current,
+        preview: fallbackPreview
+      }));
+    }
   }
 
   function applyConnectorPrompt(item: ConnectorItem) {
@@ -5028,7 +5450,11 @@ export default function Page() {
                 <span>模式: daily_work</span>
                 <span>状态: {statusLabel(status)}</span>
                 {selectedContextId ? (
-                  <span>上下文: {selectedContextLabel(selectedContextId)}</span>
+                  <span>
+                    上下文:{" "}
+                    {selectedContextItem?.title ??
+                      selectedContextLabel(selectedContextId, contextPanelItems)}
+                  </span>
                 ) : null}
               </div>
             </form>
@@ -5120,13 +5546,48 @@ export default function Page() {
                 </p>
               </div>
 
-              <div className="rounded-[8px] border border-teal-100 bg-teal-50 p-3">
-                <div className="mb-3 flex items-center gap-2 text-sm font-medium text-teal-950">
-                  <ShieldCheck className="size-4 text-teal-700" aria-hidden="true" />
-                  会话知识上下文
+              <div
+                className="rounded-[8px] border border-teal-100 bg-teal-50 p-3"
+                data-context-panel
+                data-context-source={contextPanel.source}
+                data-context-sync-status={contextPanel.syncStatus}
+                data-context-count={contextPanelItems.length}
+                data-context-preview-source={contextPanel.preview.source}
+                data-context-preview-status={contextPanel.preview.syncStatus}
+                data-context-preview-only={
+                  contextPanel.preview.previewOnly ? "true" : "false"
+                }
+                data-context-preview-external-effects={contextPanel.preview.externalEffects.join(
+                  ","
+                )}
+                data-selected-context-id={selectedContextId ?? ""}
+              >
+                <div className="mb-3 flex flex-col gap-2">
+                  <div className="flex items-center justify-between gap-3">
+                    <div className="min-w-0 flex items-center gap-2 text-sm font-medium text-teal-950">
+                      <ShieldCheck className="size-4 shrink-0 text-teal-700" aria-hidden="true" />
+                      <span className="min-w-0 break-words">会话知识上下文</span>
+                    </div>
+                    <span className="shrink-0 rounded-[999px] bg-white px-2 py-0.5 text-[11px] font-medium text-teal-700">
+                      {contextPanelItems.length}
+                    </span>
+                  </div>
+                  <div className="rounded-[8px] border border-teal-100 bg-white/80 px-2.5 py-2 text-[11px] leading-5 text-teal-800">
+                    <div className="flex flex-wrap items-center gap-1.5">
+                      <span className="rounded-[999px] bg-teal-100 px-2 py-0.5 font-medium text-teal-800">
+                        {contextPanelSourceLabel(contextPanel.source)}
+                      </span>
+                      <span className="rounded-[999px] bg-slate-100 px-2 py-0.5 font-medium text-slate-700">
+                        {contextPanelSyncStatusLabel(contextPanel.syncStatus)}
+                      </span>
+                    </div>
+                    <div className="mt-1 break-words" data-context-panel-notice>
+                      {contextPanel.notice}
+                    </div>
+                  </div>
                 </div>
                 <div className="space-y-2">
-                  {contextItems.map((item) => {
+                  {contextPanelItems.map((item) => {
                     const Icon = item.icon;
                     const isSelected = selectedContextId === item.id;
 
@@ -5134,9 +5595,10 @@ export default function Page() {
                       <button
                         key={item.id}
                         type="button"
-                        onClick={() => useContextItem(item)}
+                        data-context-card={item.id}
+                        onClick={() => void useContextItem(item)}
                         className={cn(
-                          "w-full rounded-[8px] border px-3 py-3 text-left transition-colors duration-200 focus-visible:outline focus-visible:outline-2 focus-visible:outline-teal-600",
+                          "w-full cursor-pointer rounded-[8px] border px-3 py-3 text-left transition-colors duration-200 focus-visible:outline focus-visible:outline-2 focus-visible:outline-teal-600",
                           isSelected
                             ? "border-teal-300 bg-white shadow-sm"
                             : "border-teal-100 bg-white hover:border-teal-300 hover:bg-teal-50"
@@ -5155,15 +5617,25 @@ export default function Page() {
                                 {item.status}
                               </span>
                             </span>
-                            <span className="mt-1 block text-xs leading-5 text-teal-700">
+                            <span className="mt-1 block break-words text-xs leading-5 text-teal-700">
                               {item.source} / {item.sourceType}
                             </span>
-                            <span className="mt-2 block text-xs leading-5 text-slate-700">
+                            <span className="mt-2 block break-words text-xs leading-5 text-slate-700">
                               {item.summary}
                             </span>
-                            <span className="mt-2 inline-flex items-center gap-1 rounded-[999px] bg-slate-100 px-2 py-0.5 text-[11px] font-medium text-slate-700">
-                              <Lock className="size-3.5" aria-hidden="true" />
-                              {item.privacy}
+                            <span className="mt-2 flex flex-wrap gap-1.5">
+                              <span className="inline-flex items-center gap-1 rounded-[999px] bg-slate-100 px-2 py-0.5 text-[11px] font-medium text-slate-700">
+                                <Lock className="size-3.5" aria-hidden="true" />
+                                <span className="break-words">{item.privacy}</span>
+                              </span>
+                              {item.tags.slice(0, 3).map((tag) => (
+                                <span
+                                  key={`${item.id}-${tag}`}
+                                  className="rounded-[999px] bg-orange-50 px-2 py-0.5 text-[11px] font-medium text-orange-800"
+                                >
+                                  {tag}
+                                </span>
+                              ))}
                             </span>
                           </span>
                         </div>
@@ -5171,9 +5643,30 @@ export default function Page() {
                     );
                   })}
                 </div>
-                <p className="mt-3 text-xs leading-5 text-teal-700">
-                  点击任一上下文会把它带入输入框。当前版本只做会话级示意，不读取真实文件或文档内容。
-                </p>
+                <div
+                  className="mt-3 rounded-[8px] border border-orange-100 bg-orange-50 px-2.5 py-2 text-[11px] leading-5 text-orange-900"
+                  data-context-preview-notice={contextPanel.preview.notice}
+                  data-context-preview-safety={contextPanel.preview.safetyStatement}
+                >
+                  <div className="flex flex-wrap items-center gap-1.5">
+                    <span className="rounded-[999px] bg-white px-2 py-0.5 font-medium text-orange-800">
+                      {contextPreviewSourceLabel(contextPanel.preview.source)}
+                    </span>
+                    <span className="rounded-[999px] bg-white px-2 py-0.5 font-medium text-slate-700">
+                      {contextPreviewSyncStatusLabel(contextPanel.preview.syncStatus)}
+                    </span>
+                    <span className="rounded-[999px] bg-white px-2 py-0.5 font-medium text-teal-800">
+                      previewOnly={contextPanel.preview.previewOnly ? "true" : "false"}
+                    </span>
+                    <span className="rounded-[999px] bg-white px-2 py-0.5 font-medium text-teal-800">
+                      externalEffects={contextPanel.preview.externalEffects.join(",")}
+                    </span>
+                  </div>
+                  <div className="mt-1 break-words">{contextPanel.preview.notice}</div>
+                  <div className="mt-1 break-words">
+                    {contextPanel.preview.safetyStatement}
+                  </div>
+                </div>
               </div>
 
               <div
@@ -7599,8 +8092,54 @@ function connectorRiskClass(riskLevel: ConnectorRiskLevel) {
   }
 }
 
-function selectedContextLabel(contextId: string) {
-  const item = contextItems.find((entry) => entry.id === contextId);
+function contextPanelSourceLabel(source: ContextPanelSource) {
+  switch (source) {
+    case "fallback":
+      return "前端 fallback";
+    case "api":
+      return "Context API";
+    case "degraded":
+      return "降级 fallback";
+  }
+}
+
+function contextPanelSyncStatusLabel(status: ContextPanelSyncStatus) {
+  switch (status) {
+    case "syncing":
+      return "同步中";
+    case "live":
+      return "API 已同步";
+    case "degraded":
+      return "保留快照";
+  }
+}
+
+function contextPreviewSourceLabel(source: ContextPreviewSource) {
+  switch (source) {
+    case "fallback":
+      return "本地预演";
+    case "api":
+      return "Context Preview API";
+    case "degraded":
+      return "降级预演";
+  }
+}
+
+function contextPreviewSyncStatusLabel(status: ContextPreviewSyncStatus) {
+  switch (status) {
+    case "idle":
+      return "待触发";
+    case "syncing":
+      return "生成中";
+    case "live":
+      return "预演已同步";
+    case "degraded":
+      return "已回退";
+  }
+}
+
+function selectedContextLabel(contextId: string, items: ContextItem[] = contextItems) {
+  const item = items.find((entry) => entry.id === contextId);
   return item ? item.title : "未知上下文";
 }
 
