@@ -15,7 +15,9 @@ import {
   createDailyModelUsageResponse,
   dailyApprovalDecisionRequestSchema,
   dailyWorkSessionRestorePreviewRequestSchema,
+  dailyWorkTemplateApplyPreviewRequestSchema,
   dailyWorkWorkflowPreviewRequestSchema,
+  type ArtifactType,
   type AppMode,
   type ApprovalDecision,
   type ApprovalDecisionInput,
@@ -41,6 +43,8 @@ import {
   type DailyWorkSessionMessage,
   type DailyWorkSessionRestorePreviewResponse,
   type DailyWorkSessionsResponse,
+  type DailyWorkTemplate,
+  type DailyWorkTemplateApplyPreviewResponse,
   type DailyWorkTemplatesResponse,
   type DailyWorkWorkflow,
   type DailyWorkWorkflowResponse,
@@ -91,6 +95,10 @@ export async function buildServer(options?: {
   );
   app.options("/api/daily/templates", async (_request, reply) =>
     reply.code(204).send()
+  );
+  app.options(
+    "/api/daily/templates/:templateId/apply-preview",
+    async (_request, reply) => reply.code(204).send()
   );
   app.options("/api/daily/model-usage", async (_request, reply) =>
     reply.code(204).send()
@@ -229,6 +237,62 @@ export async function buildServer(options?: {
         mode,
         templates: await filterDailyWorkTemplates(dailyWorkRepository, mode)
       };
+    }
+  );
+
+  app.post<{
+    Params: { templateId: string };
+    Body: unknown;
+  }>(
+    "/api/daily/templates/:templateId/apply-preview",
+    async (
+      request,
+      reply
+    ): Promise<DailyWorkTemplateApplyPreviewResponse | void> => {
+      const parsed = dailyWorkTemplateApplyPreviewRequestSchema.safeParse(
+        request.body ?? {}
+      );
+      if (!parsed.success) {
+        reply
+          .code(400)
+          .send(
+            createValidationError(
+              "Invalid template apply preview request.",
+              parsed.error.issues
+            )
+          );
+        return;
+      }
+
+      const mode = normalizeAppMode(parsed.data.mode);
+      if (mode !== "daily_work") {
+        reply.code(400).send({
+          mode,
+          error: "Template apply previews are only available in daily_work mode."
+        });
+        return;
+      }
+
+      const template = await filterDailyWorkTemplate(
+        dailyWorkRepository,
+        mode,
+        request.params.templateId
+      );
+
+      if (!template) {
+        reply.code(404).send({
+          mode,
+          error: "Daily-work template not found."
+        });
+        return;
+      }
+
+      return createDailyWorkTemplateApplyPreviewResponse({
+        mode,
+        template,
+        contextItemIds: parsed.data.contextItemIds,
+        ...(parsed.data.prompt ? { prompt: parsed.data.prompt } : {})
+      });
     }
   );
 
@@ -730,6 +794,177 @@ function createValidationError(
       message: issue.message
     }))
   };
+}
+
+function createDailyWorkTemplateApplyPreviewResponse(input: {
+  mode: AppMode;
+  template: DailyWorkTemplate;
+  contextItemIds: string[];
+  prompt?: string;
+}): DailyWorkTemplateApplyPreviewResponse {
+  const requestedContextItemIds = uniqueStrings(input.contextItemIds);
+  const suggestedArtifactType =
+    input.template.artifactType ?? suggestArtifactType(input.template.category);
+  const requiredApprovalRequestIds =
+    getTemplateApplyApprovalRequestIds(input.template);
+  const promptDraft = createDailyWorkTemplateApplyPrompt({
+    template: input.template,
+    suggestedArtifactType,
+    requestedContextItemIds,
+    requiredApprovalRequestIds,
+    ...(input.prompt ? { prompt: input.prompt } : {})
+  });
+
+  return {
+    mode: input.mode,
+    preview: {
+      id: `${input.template.id}:apply-preview`,
+      mode: input.mode,
+      templateId: input.template.id,
+      templateTitle: input.template.title,
+      category: input.template.category,
+      ...(input.template.artifactType
+        ? { artifactType: input.template.artifactType }
+        : {}),
+      promptDraft,
+      requestedContextItemIds,
+      suggestedArtifactType,
+      requiredApprovalRequestIds,
+      steps: createDailyWorkTemplateApplyPreviewSteps({
+        template: input.template,
+        suggestedArtifactType,
+        requestedContextItemIds,
+        requiredApprovalRequestIds
+      }),
+      previewOnly: true,
+      externalEffects: ["none"],
+      safetyBoundary: {
+        previewOnly: true,
+        externalEffects: ["none"],
+        prohibitedExternalActions: [
+          "send_email",
+          "write_document",
+          "schedule_calendar_event",
+          "create_task",
+          "read_private_external_data",
+          "create_artifact"
+        ],
+        statement:
+          "Preview-only template application: SeekDesk drafts the daily_work prompt and artifact plan in the response only. It creates no artifact, reads no private external data, sends no email, writes no document, schedules no calendar event, and creates no task."
+      },
+      generatedAt: new Date().toISOString()
+    }
+  };
+}
+
+function createDailyWorkTemplateApplyPrompt(input: {
+  template: DailyWorkTemplate;
+  suggestedArtifactType: ArtifactType;
+  requestedContextItemIds: string[];
+  requiredApprovalRequestIds: string[];
+  prompt?: string;
+}) {
+  const templateArtifactType = input.template.artifactType ?? "unspecified";
+  const userPrompt = input.prompt
+    ? `User prompt: ${input.prompt}`
+    : "User prompt: apply the template with the provided context and ask for missing inputs before drafting.";
+
+  return [
+    "Apply SeekDesk daily_work template as a preview only.",
+    `Template id: ${input.template.id}`,
+    `Template title: ${input.template.title}`,
+    `Category: ${input.template.category}`,
+    `Template artifact type: ${templateArtifactType}`,
+    `Suggested artifact type: ${input.suggestedArtifactType}`,
+    `Requested context item ids: ${joinSessionRefIds(input.requestedContextItemIds)}`,
+    `Required approval request ids: ${joinSessionRefIds(input.requiredApprovalRequestIds)}`,
+    "Safety boundary: previewOnly=true; externalEffects=[none]; no external effects; do not create artifacts, send email, write documents, schedule calendar events, create tasks, or read private external data.",
+    `Template prompt: ${input.template.prompt}`,
+    userPrompt
+  ].join("\n");
+}
+
+function createDailyWorkTemplateApplyPreviewSteps(input: {
+  template: DailyWorkTemplate;
+  suggestedArtifactType: ArtifactType;
+  requestedContextItemIds: string[];
+  requiredApprovalRequestIds: string[];
+}) {
+  return [
+    {
+      id: `${input.template.id}:apply-preview:step-1`,
+      title: "Resolve template",
+      description:
+        `Load metadata for ${input.template.title} and keep the action scoped to daily_work preview mode.`,
+      previewOnly: true as const,
+      externalEffect: "none" as const
+    },
+    {
+      id: `${input.template.id}:apply-preview:step-2`,
+      title: "Bind context",
+      description:
+        `Attach requested context ids: ${joinSessionRefIds(input.requestedContextItemIds)}.`,
+      previewOnly: true as const,
+      externalEffect: "none" as const
+    },
+    {
+      id: `${input.template.id}:apply-preview:step-3`,
+      title: "Draft artifact plan",
+      description:
+        `Prepare an in-response ${input.suggestedArtifactType} draft plan without creating an artifact record.`,
+      previewOnly: true as const,
+      externalEffect: "none" as const
+    },
+    {
+      id: `${input.template.id}:apply-preview:step-4`,
+      title: "Hold for review",
+      description:
+        input.requiredApprovalRequestIds.length > 0
+          ? `Surface approval gates: ${joinSessionRefIds(input.requiredApprovalRequestIds)}.`
+          : "No approval request is required for this preview, and no external action is executed.",
+      previewOnly: true as const,
+      externalEffect: "none" as const
+    }
+  ];
+}
+
+function getTemplateApplyApprovalRequestIds(template: DailyWorkTemplate) {
+  if (template.id === "email-draft" || template.artifactType === "email_draft") {
+    return ["draft-external-reply"];
+  }
+
+  if (
+    template.id === "meeting-summary" ||
+    template.artifactType === "meeting_summary"
+  ) {
+    return ["use-internal-meeting-notes"];
+  }
+
+  if (template.tags.includes("calendar")) {
+    return ["schedule-calendar-follow-up"];
+  }
+
+  return [];
+}
+
+function suggestArtifactType(
+  category: DailyWorkTemplate["category"]
+): ArtifactType {
+  const categorySuggestions: Record<
+    DailyWorkTemplate["category"],
+    ArtifactType
+  > = {
+    triage: "brief",
+    planning: "task_list",
+    execution: "checklist",
+    review: "status_update",
+    handoff: "handoff_note",
+    writing: "email_draft",
+    research: "research_note",
+    knowledge: "brief"
+  };
+
+  return categorySuggestions[category];
 }
 
 function createConnectorActionPreviewResponse(input: {
@@ -1239,6 +1474,16 @@ async function filterDailyWorkTemplates(
   }
 
   return repository.listTemplates();
+}
+
+async function filterDailyWorkTemplate(
+  repository: DailyWorkRepository,
+  mode: AppMode,
+  templateId: string
+) {
+  return (await filterDailyWorkTemplates(repository, mode)).find(
+    (template) => template.id === templateId
+  );
 }
 
 async function filterDailyWorkArtifacts(

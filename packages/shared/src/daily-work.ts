@@ -143,6 +143,66 @@ export const dailyWorkArtifactResponseSchema = z.object({
   artifact: dailyWorkArtifactSchema
 });
 
+export const dailyWorkTemplateApplyPreviewRequestSchema = z.object({
+  mode: appModeSchema.default("daily_work"),
+  prompt: z.string().trim().min(1).max(2000).optional(),
+  contextItemIds: z.array(z.string().trim().min(1)).default([])
+});
+
+export const dailyWorkTemplateApplyPreviewStepSchema = z.object({
+  id: z.string(),
+  title: z.string(),
+  description: z.string(),
+  previewOnly: z.literal(true).default(true),
+  externalEffect: z.literal("none").default("none")
+});
+
+export const dailyWorkTemplateApplyPreviewSchema = z.object({
+  id: z.string(),
+  mode: appModeSchema.default("daily_work"),
+  templateId: z.string(),
+  templateTitle: z.string(),
+  category: templateCategorySchema,
+  artifactType: artifactTypeSchema.optional(),
+  promptDraft: z.string(),
+  requestedContextItemIds: z.array(z.string()).default([]),
+  suggestedArtifactType: artifactTypeSchema,
+  requiredApprovalRequestIds: z.array(z.string()).default([]),
+  steps: z.array(dailyWorkTemplateApplyPreviewStepSchema).default([]),
+  previewOnly: z.literal(true).default(true),
+  externalEffects: z.array(z.literal("none")).default(["none"]),
+  safetyBoundary: z.object({
+    previewOnly: z.literal(true).default(true),
+    externalEffects: z.array(z.literal("none")).default(["none"]),
+    prohibitedExternalActions: z
+      .array(
+        z.enum([
+          "send_email",
+          "write_document",
+          "schedule_calendar_event",
+          "create_task",
+          "read_private_external_data",
+          "create_artifact"
+        ])
+      )
+      .default([
+        "send_email",
+        "write_document",
+        "schedule_calendar_event",
+        "create_task",
+        "read_private_external_data",
+        "create_artifact"
+      ]),
+    statement: z.string()
+  }),
+  generatedAt: z.string().datetime()
+});
+
+export const dailyWorkTemplateApplyPreviewResponseSchema = z.object({
+  mode: appModeSchema,
+  preview: dailyWorkTemplateApplyPreviewSchema
+});
+
 export const defaultDailyWorkTemplates: DailyWorkTemplate[] = [
   {
     id: "email-draft",
@@ -482,6 +542,18 @@ export type DailyWorkArtifactsResponse = z.infer<
 >;
 export type DailyWorkArtifactResponse = z.infer<
   typeof dailyWorkArtifactResponseSchema
+>;
+export type DailyWorkTemplateApplyPreviewRequest = z.infer<
+  typeof dailyWorkTemplateApplyPreviewRequestSchema
+>;
+export type DailyWorkTemplateApplyPreviewStep = z.infer<
+  typeof dailyWorkTemplateApplyPreviewStepSchema
+>;
+export type DailyWorkTemplateApplyPreview = z.infer<
+  typeof dailyWorkTemplateApplyPreviewSchema
+>;
+export type DailyWorkTemplateApplyPreviewResponse = z.infer<
+  typeof dailyWorkTemplateApplyPreviewResponseSchema
 >;
 export type TemplateCategory = z.infer<typeof templateCategorySchema>;
 export type ArtifactType = z.infer<typeof artifactTypeSchema>;
