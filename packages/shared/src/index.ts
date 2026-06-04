@@ -1,5 +1,6 @@
 export * from "./app-modes.js";
 export * from "./approvals.js";
+export * from "./chat.js";
 export * from "./connectors.js";
 export * from "./daily-events.js";
 export * from "./daily-work.js";

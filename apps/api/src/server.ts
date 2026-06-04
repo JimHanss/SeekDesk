@@ -1,11 +1,13 @@
 import {
   DeepSeekModelProvider,
   MockModelProvider,
-  type ModelMessage,
+  streamAgentLoop,
+  type ModelStreamChunk,
   type ModelProvider
 } from "@seekdesk/agent";
 import {
   appModeSchema,
+  chatRequestSchema,
   defaultDailyWorkApprovalRequests,
   defaultDailyWorkConnectors,
   defaultDailyActivityEvents,
@@ -20,6 +22,8 @@ import {
   createDailyActivitySnapshotMessage,
   createDailyModelUsageResponse,
   type AppMode,
+  type ChatProvider,
+  type ChatRequest,
   type DailyApprovalRequestsResponse,
   type DailyWorkArtifactResponse,
   type DailyWorkArtifactsResponse,
@@ -38,17 +42,6 @@ import {
 import websocket from "@fastify/websocket";
 import Fastify, { type FastifyReply, type FastifyRequest } from "fastify";
 import { pathToFileURL } from "node:url";
-
-type ChatRequest = {
-  mode?: AppMode;
-  prompt?: string;
-  messages?: Array<{
-    role: "system" | "user" | "assistant";
-    content: string;
-  }>;
-};
-
-type ChatRequestBody = ChatRequest | undefined;
 
 const allowedOrigins = new Set([
   "http://localhost:3000",
@@ -351,27 +344,30 @@ export async function buildServer() {
     }
   );
 
-  app.post<{ Body: ChatRequestBody }>("/api/chat", async (request, reply) => {
-    const mode = normalizeAppMode(request.body?.mode);
-    const messages = normalizeMessages(request.body);
-    if (!messages.length) {
+  app.post<{ Body: unknown }>("/api/chat", async (request, reply) => {
+    const parsed = chatRequestSchema.safeParse(request.body);
+    if (!parsed.success) {
       return reply.code(400).send({
-        error: "A prompt or at least one chat message is required."
+        error: "Invalid chat request.",
+        issues: parsed.error.issues.map((issue) => ({
+          path: issue.path.join("."),
+          message: issue.message
+        }))
       });
     }
 
+    const chatRequest = parsed.data;
+    const providerSelection = createModelProvider();
     const stream = modelStreamToReadableStream(
-      createModelProvider().streamChat({
-        mode,
-        messages,
-        maxTurns: 1
-      })
+      streamAgentLoop(createAgentLoopInput(chatRequest, providerSelection.provider))
     );
 
     return reply
       .header("Content-Type", "text/plain; charset=utf-8")
       .header("Cache-Control", "no-cache, no-transform")
       .header("X-Accel-Buffering", "no")
+      .header("X-SeekDesk-Chat-Mode", chatRequest.mode)
+      .header("X-SeekDesk-Chat-Provider", providerSelection.providerName)
       .send(stream);
   });
 
@@ -536,56 +532,47 @@ function hasDeepSeekApiKey() {
   return Boolean(process.env.DEEPSEEK_API_KEY?.trim());
 }
 
-function normalizeMessages(body: ChatRequestBody): ModelMessage[] {
-  if (!body || typeof body !== "object") {
-    return [];
-  }
-
-  if (typeof body.prompt === "string" && body.prompt.trim()) {
-    return [{ role: "user", content: body.prompt.trim() }];
-  }
-
-  if (!Array.isArray(body.messages)) {
-    return [];
-  }
-
-  return body.messages
-    .filter(
-      (message) =>
-        isSupportedRole(message.role) &&
-        typeof message.content === "string" &&
-        message.content.trim().length > 0
-    )
-    .map((message) => ({
-      role: message.role,
-      content: message.content
-    }));
+function createAgentLoopInput(chatRequest: ChatRequest, provider: ModelProvider) {
+  return {
+    provider,
+    mode: chatRequest.mode,
+    maxTurns: 1,
+    ...(chatRequest.prompt ? { prompt: chatRequest.prompt } : {}),
+    ...(chatRequest.messages ? { messages: chatRequest.messages } : {}),
+    ...(chatRequest.sessionId ? { sessionId: chatRequest.sessionId } : {}),
+    ...(chatRequest.context ? { context: chatRequest.context } : {})
+  };
 }
 
-function isSupportedRole(role: string): role is "system" | "user" | "assistant" {
-  return role === "system" || role === "user" || role === "assistant";
-}
-
-function createModelProvider(): ModelProvider {
+function createModelProvider(): {
+  provider: ModelProvider;
+  providerName: ChatProvider;
+} {
   const apiKey = process.env.DEEPSEEK_API_KEY?.trim();
 
   if (!apiKey) {
-    return new MockModelProvider();
+    return {
+      provider: new MockModelProvider(),
+      providerName: "mock"
+    };
   }
 
   const modelConfig = createDailyModelUsageSnapshot("daily_work").config;
 
-  return new DeepSeekModelProvider({
-    apiKey,
-    baseUrl: modelConfig.baseUrl,
-    model: modelConfig.selectedModel,
-    thinkingMode: modelConfig.thinkingMode,
-    includeUsage: modelConfig.streamUsageEnabled
-  });
+  return {
+    provider: new DeepSeekModelProvider({
+      apiKey,
+      baseUrl: modelConfig.baseUrl,
+      model: modelConfig.selectedModel,
+      thinkingMode: modelConfig.thinkingMode,
+      includeUsage: modelConfig.streamUsageEnabled
+    }),
+    providerName: "deepseek"
+  };
 }
 
 function modelStreamToReadableStream(
-  chunks: AsyncIterable<{ type: string; delta?: string }>
+  chunks: AsyncIterable<ModelStreamChunk>
 ) {
   const encoder = new TextEncoder();
 

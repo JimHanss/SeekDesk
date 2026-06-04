@@ -45,6 +45,7 @@ async function main() {
     await runActivityStreamSmoke(client, apiServer.url);
     await runModelUsageSmoke(client, apiServer.url);
     await runPromptSmoke(client);
+    await runChatSendSmoke(client);
     await runCodeBlockSmoke(client);
 
     const payload = {
@@ -80,8 +81,9 @@ Environment:
 
 The smoke starts or connects to a production web page, launches Chrome/Edge with
 Chrome DevTools Protocol, clicks prompt controls with real mouse events, and
-asserts that the activity stream binds to the API/WebSocket snapshot, then
-checks that the chat input is populated and submit is enabled.`);
+asserts that the activity stream binds to the API/WebSocket snapshot, verifies
+that chat submit renders the API response, then checks code block highlighting
+DOM for stable language and token markup.`);
 }
 
 async function ensureApiServer() {
@@ -585,6 +587,47 @@ async function runCodeBlockSmoke(client) {
   );
 }
 
+async function runChatSendSmoke(client) {
+  const endpoint = await getChatEndpoint(client);
+  if (!endpoint) {
+    throw new Error("Chat send smoke could not find a visible chat endpoint.");
+  }
+
+  const prompt = `daily_work browser smoke chat send ${Date.now()}`;
+  const apiResponse = await fetchChatTextResponse(endpoint, prompt);
+  assertChatTextApiResponse(apiResponse, prompt, "chat API response");
+  const responseSignature = apiResponse.body.includes("Mock daily-work AI response")
+    ? `Mock daily-work AI response for: ${prompt}`
+    : "";
+
+  const submitRect = await waitForRect(
+    client,
+    setSmokeInputExpression(prompt),
+    "chat send smoke prompt"
+  );
+  await clickAt(client, submitRect);
+
+  const pageState = await waitForValue(
+    client,
+    chatResponseExpression(prompt, responseSignature),
+    (state) =>
+      (state.hasStructuredChatResponse || state.hasResponseSignature) &&
+      state.inputValue === "" &&
+      state.submitDisabled === true &&
+      !state.hasErrorText,
+    "chat submit API response"
+  );
+
+  checks.push({
+    name: "chat submit renders API response",
+    status: "passed",
+    endpoint,
+    structuredChatDom: pageState.present,
+    matchedResponseSignature: pageState.hasResponseSignature,
+    responseLength: pageState.responseTextLength
+  });
+}
+
 function activityFeedExpression(expectedTitles) {
   return withSmokeHelpers(`(() => {
     const root = document.querySelector("[data-activity-feed]");
@@ -687,6 +730,41 @@ function codeBlockOrFenceExpression() {
   })()`);
 }
 
+function chatResponseExpression(prompt, responseSignature) {
+  return withSmokeHelpers(`(() => {
+    const root = document.querySelector("[data-chat-thread]");
+    const input = getSmokeInput();
+    const submit = getSmokeSubmit();
+    const messages = root ? [...root.querySelectorAll("[data-chat-message-role]")] : [];
+    const userMessages = messages.filter((message) => message.getAttribute("data-chat-message-role") === "user");
+    const assistantMessages = messages.filter((message) => message.getAttribute("data-chat-message-role") === "assistant");
+    const lastAssistant = assistantMessages.at(-1);
+    const bodyText = root ? root.textContent || "" : document.body.textContent || "";
+    const responseText = lastAssistant ? (lastAssistant.textContent || "").trim() : "";
+    const responseSignature = ${JSON.stringify(responseSignature)};
+    const hasStructuredChatResponse =
+      Boolean(root) &&
+      (root.getAttribute("data-chat-status") || "") === "idle" &&
+      userMessages.length >= 1 &&
+      assistantMessages.length >= 1 &&
+      responseText.length > 0;
+    return {
+      present: Boolean(root),
+      status: root ? root.getAttribute("data-chat-status") || "" : "",
+      hasPrompt: bodyText.includes(${JSON.stringify(prompt)}),
+      userCount: userMessages.length,
+      assistantCount: assistantMessages.length,
+      hasStructuredChatResponse,
+      hasAssistantResponse: responseText.length > 0,
+      hasResponseSignature: responseSignature ? bodyText.includes(responseSignature) : false,
+      responseTextLength: responseText.length || responseSignature.length,
+      inputValue: input ? input.value : null,
+      submitDisabled: submit ? submit.disabled : true,
+      hasErrorText: /request failed|chat api|code block smoke could not|璇锋眰澶辫触/i.test(bodyText)
+    };
+  })()`);
+}
+
 function withSmokeHelpers(expression) {
   return `(() => {
     window.getSmokeInput = function getSmokeInput() {
@@ -732,11 +810,14 @@ function withSmokeHelpers(expression) {
         count: blocks.length,
         blocks: blocks.slice(0, 3).map((block) => {
           const label = block.querySelector("[data-code-language], [data-language]");
+          const pre = block.querySelector("pre");
+          const code = block.querySelector("code");
           const tokenSpans = [...block.querySelectorAll("span")]
             .filter((span) =>
               /token|keyword|string|comment|function|punctuation|property|number|operator|class-name/i.test(String(span.className || "")) ||
               span.hasAttribute("data-token")
             );
+          const tokenKinds = [...new Set(tokenSpans.map((span) => span.getAttribute("data-token") || String(span.className || "")))];
           return {
             language:
               block.getAttribute("data-language") ||
@@ -744,8 +825,10 @@ function withSmokeHelpers(expression) {
               block.getAttribute("data-code-block") ||
               (label ? label.textContent.trim() : ""),
             text: block.textContent || "",
-            hasPanel: true,
-            tokenCount: tokenSpans.length
+            hasPanel: block.hasAttribute("data-code-block"),
+            hasPreCode: Boolean(pre && code && pre.contains(code)),
+            tokenCount: tokenSpans.length,
+            tokenKinds: tokenKinds.slice(0, 8)
           };
         })
       };
@@ -807,6 +890,32 @@ async function fetchCodeFenceProbe(endpoint) {
       reason: `chat API probe failed: ${error instanceof Error ? error.message : String(error)}`
     };
   }
+}
+
+async function fetchChatTextResponse(endpoint, prompt) {
+  const response = await fetch(endpoint, {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json"
+    },
+    body: JSON.stringify({
+      mode: "daily_work",
+      messages: [
+        {
+          role: "user",
+          content: prompt
+        }
+      ]
+    }),
+    signal: AbortSignal.timeout(5000)
+  });
+
+  return {
+    ok: response.ok,
+    status: response.status,
+    contentType: response.headers.get("content-type") || "",
+    body: await response.text()
+  };
 }
 
 async function fetchActivityEventsSnapshot(apiUrl) {
@@ -956,6 +1065,27 @@ function assertMatchingActivityEvents(apiEvents, wsEvents) {
   }
 }
 
+function assertChatTextApiResponse(response, prompt, label) {
+  if (!response.ok) {
+    throw new Error(`${label} returned HTTP ${response.status}.`);
+  }
+
+  if (!response.contentType.includes("text/plain")) {
+    throw new Error(`${label} returned unexpected content type: ${response.contentType}.`);
+  }
+
+  if (!response.body.trim()) {
+    throw new Error(`${label} returned an empty response for prompt: ${prompt}.`);
+  }
+
+  if (
+    response.body.includes("Mock daily-work AI response") &&
+    !response.body.includes(prompt)
+  ) {
+    throw new Error(`${label} did not echo the submitted mock prompt.`);
+  }
+}
+
 function normalizeWebSocketData(data) {
   if (typeof data === "string") {
     return data;
@@ -992,6 +1122,10 @@ function assertCodeBlockDom(inspection, label) {
     throw new Error(`${label} was missing a data-code-block panel.`);
   }
 
+  if (!firstBlock.hasPreCode) {
+    throw new Error(`${label} was missing stable pre/code markup.`);
+  }
+
   if (!hasLanguageLabel) {
     throw new Error(`${label} was missing a stable language label.`);
   }
@@ -1005,7 +1139,8 @@ function assertCodeBlockDom(inspection, label) {
     status: "passed",
     blocks: inspection.count,
     language: firstBlock.language,
-    tokenCount: firstBlock.tokenCount
+    tokenCount: firstBlock.tokenCount,
+    tokenKinds: firstBlock.tokenKinds
   });
 }
 
