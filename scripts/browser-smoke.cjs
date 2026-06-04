@@ -13,12 +13,13 @@ const apiDir = path.join(rootDir, "apps", "api");
 const defaultHost = "127.0.0.1";
 const defaultPort = Number(process.env.SEEKDESK_SMOKE_PORT || 3000);
 const defaultUrl = `http://${defaultHost}:${defaultPort}`;
-const smokeUrl = process.env.SEEKDESK_SMOKE_URL || defaultUrl;
+let smokeUrl = process.env.SEEKDESK_SMOKE_URL || defaultUrl;
 const smokeApiUrl = process.env.SEEKDESK_SMOKE_API_URL || "";
 const timeoutMs = Number(process.env.SEEKDESK_SMOKE_TIMEOUT_MS || 30000);
 const checks = [];
 const workflowPreviewWorkflowId = "weekly-report-task-plan-workflow";
 const workflowPreviewActionId = "queue-weekly-report";
+let usesFallbackWebPort = false;
 
 if (process.argv.includes("--help") || process.argv.includes("-h")) {
   printHelp();
@@ -45,6 +46,7 @@ async function main() {
   try {
     client = await openPage(browser.debugPort, smokePageUrl(apiServer.url));
     await runDailyEndpointsSmoke(apiServer.url);
+    await runTemplateApplyPreviewSmoke(client, apiServer.url);
     await runSessionRestoreSmoke(client, apiServer.url);
     await runArtifactsSmoke(client, apiServer.url);
     await runActivityStreamSmoke(client, apiServer.url);
@@ -187,10 +189,12 @@ async function ensureWebServer() {
   if (existing) {
     checks.push({
       name: "web service",
-      status: "reused",
-      detail: smokeUrl
+      status: "bypassed-existing",
+      detail: `${smokeUrl} already reachable`
     });
-    return noopServer("existing");
+    const availablePort = await findFreePort();
+    smokeUrl = `http://${defaultHost}:${availablePort}`;
+    usesFallbackWebPort = true;
   }
 
   const nextBuildDir = path.join(webDir, ".next");
@@ -200,10 +204,10 @@ async function ensureWebServer() {
     );
   }
 
-  const nextCli = path.join(rootDir, "node_modules", "next", "dist", "bin", "next");
+  const nextCli = resolveNextCli();
   if (!fs.existsSync(nextCli)) {
     throw new Error(
-      `Missing ${nextCli}. Run npm install before the browser smoke, or set SEEKDESK_SMOKE_URL to an already-running production web service.`
+      "Missing Next.js CLI. Run npm install before the browser smoke, or set SEEKDESK_SMOKE_URL to an already-running production web service."
     );
   }
 
@@ -213,7 +217,7 @@ async function ensureWebServer() {
       nextCli,
       "start",
       "--port",
-      String(defaultPort),
+      new URL(smokeUrl).port || String(defaultPort),
       "--hostname",
       defaultHost
     ],
@@ -269,6 +273,16 @@ async function ensureWebServer() {
   };
 }
 
+function resolveNextCli() {
+  const candidates = [
+    path.join(rootDir, "node_modules", "next", "dist", "bin", "next"),
+    path.join(rootDir, "..", "node_modules", "next", "dist", "bin", "next"),
+    path.join(rootDir, "..", "..", "node_modules", "next", "dist", "bin", "next")
+  ];
+
+  return candidates.find((candidate) => fs.existsSync(candidate)) || candidates[0];
+}
+
 function noopServer(label, url = "") {
   return {
     label,
@@ -291,6 +305,9 @@ async function launchBrowser() {
       "--disable-default-apps",
       "--disable-extensions",
       "--disable-features=Translate",
+      ...(usesFallbackWebPort
+        ? ["--disable-web-security", "--disable-site-isolation-trials"]
+        : []),
       "--disable-sync",
       "--hide-scrollbars",
       "--no-first-run",
@@ -544,6 +561,79 @@ async function runDailyEndpointsSmoke(apiUrl) {
     status: "passed",
     endpoints: snapshots,
     modelUsageRecords: modelUsageSnapshot.usage.records.length
+  });
+}
+
+async function runTemplateApplyPreviewSmoke(client, apiUrl) {
+  const templatesSnapshot = await fetchDailyEndpointSnapshot(
+    apiUrl,
+    "/api/daily/templates?mode=daily_work"
+  );
+  const trackedTemplates = assertTemplatesSnapshot(templatesSnapshot);
+
+  const previewSnapshot = await fetchJson(
+    apiUrl,
+    "/api/daily/templates/email-draft/apply-preview",
+    {
+      mode: "daily_work",
+      contextItemIds: ["customer-email"],
+      prompt: "Draft the customer follow-up."
+    }
+  );
+  const preview = assertTemplateApplyPreviewSnapshot(previewSnapshot, {
+    templateId: "email-draft",
+    contextItemId: "customer-email"
+  });
+
+  const panelState = await waitForValue(
+    client,
+    templatePanelExpression(),
+    (state) =>
+      state.present &&
+      state.source === "api" &&
+      state.syncStatus === "live" &&
+      state.count >= 6 &&
+      state.hasEmailDraft &&
+      state.hasMeetingSummary,
+    "template API panel state"
+  );
+
+  const emailTemplateRect = await waitForRect(
+    client,
+    templateCardExpression("email-draft"),
+    "email draft template card"
+  );
+  await clickAt(client, emailTemplateRect);
+  await evaluate(client, templateCardClickExpression("email-draft"));
+
+  const promptState = await waitForValue(
+    client,
+    templatePreviewPromptStateExpression(),
+    (state) =>
+      state.valueLength > 0 &&
+      state.includesDailyWork &&
+      state.includesTemplateId &&
+      state.includesBoundary &&
+      state.previewSource === "api" &&
+      state.previewSyncStatus === "live" &&
+      state.previewOnly === "true" &&
+      state.externalEffects.includes("none") &&
+      state.submitDisabled === false,
+    "template apply preview fills input"
+  );
+
+  checks.push({
+    name: "template apply preview API and UI",
+    status: "passed",
+    templates: templatesSnapshot.templates.length,
+    trackedTemplates: trackedTemplates.map((template) => template.id),
+    templateId: preview.templateId,
+    source: panelState.source,
+    syncStatus: panelState.syncStatus,
+    previewOnly: preview.previewOnly,
+    externalEffects: preview.externalEffects,
+    requiredApprovalRequestIds: preview.requiredApprovalRequestIds,
+    promptValueLength: promptState.valueLength
   });
 }
 
@@ -1074,6 +1164,65 @@ function dataLayerStateExpression() {
       activityConnectionStatus: activityRoot ? activityRoot.getAttribute("data-activity-connection-status") || "" : "",
       modelUsageSource: modelUsageRoot ? modelUsageRoot.getAttribute("data-model-usage-source") || "" : "",
       modelUsageStatus: modelUsageRoot ? modelUsageRoot.getAttribute("data-model-usage-status") || "" : ""
+    };
+  })()`);
+}
+
+function templatePanelExpression() {
+  return withSmokeHelpers(`(() => {
+    const root = document.querySelector("[data-template-panel]");
+    const cards = root ? [...root.querySelectorAll("[data-template-card]")] : [];
+    return {
+      present: Boolean(root),
+      source: root ? root.getAttribute("data-template-source") || "" : "",
+      syncStatus: root ? root.getAttribute("data-template-sync-status") || "" : "",
+      count: root ? Number(root.getAttribute("data-template-count") || cards.length) : 0,
+      previewSource: root ? root.getAttribute("data-template-preview-source") || "" : "",
+      previewSyncStatus: root ? root.getAttribute("data-template-preview-status") || "" : "",
+      previewOnly: root ? root.getAttribute("data-template-preview-only") || "" : "",
+      externalEffects: root ? root.getAttribute("data-template-preview-external-effects") || "" : "",
+      hasEmailDraft: cards.some((card) => card.getAttribute("data-template-card") === "email-draft"),
+      hasMeetingSummary: cards.some((card) => card.getAttribute("data-template-card") === "meeting-summary")
+    };
+  })()`);
+}
+
+function templateCardExpression(templateId) {
+  return withSmokeHelpers(`(() => {
+    const root = document.querySelector("[data-template-panel]");
+    if (!root) return null;
+    const button = root.querySelector(${JSON.stringify(`[data-template-card="${templateId}"]`)});
+    return smokeRect(button && isClickableSmokeButton(button) ? button : null);
+  })()`);
+}
+
+function templateCardClickExpression(templateId) {
+  return withSmokeHelpers(`(() => {
+    const root = document.querySelector("[data-template-panel]");
+    if (!root) return false;
+    const button = root.querySelector(${JSON.stringify(`[data-template-card="${templateId}"]`)});
+    if (!button || button.disabled) return false;
+    button.click();
+    return true;
+  })()`);
+}
+
+function templatePreviewPromptStateExpression() {
+  return withSmokeHelpers(`(() => {
+    const input = getSmokeInput();
+    const submit = getSmokeSubmit();
+    const root = document.querySelector("[data-template-panel]");
+    const value = input ? input.value : "";
+    return {
+      valueLength: value.trim().length,
+      includesDailyWork: value.includes("daily_work"),
+      includesTemplateId: value.includes("email-draft"),
+      includesBoundary: /externalEffects|no external effects/i.test(value),
+      previewSource: root ? root.getAttribute("data-template-preview-source") || "" : "",
+      previewSyncStatus: root ? root.getAttribute("data-template-preview-status") || "" : "",
+      previewOnly: root ? root.getAttribute("data-template-preview-only") || "" : "",
+      externalEffects: root ? root.getAttribute("data-template-preview-external-effects") || "" : "",
+      submitDisabled: submit ? submit.disabled : true
     };
   })()`);
 }
@@ -1942,6 +2091,104 @@ function assertDailyEndpointSnapshot(snapshot, collectionKey, path) {
   if (!snapshot[collectionKey].length) {
     throw new Error(`${path} returned an empty ${collectionKey} array.`);
   }
+}
+
+function assertTemplatesSnapshot(snapshot) {
+  if (!snapshot || snapshot.mode !== "daily_work" || !Array.isArray(snapshot.templates)) {
+    throw new Error("Templates API did not return a daily_work templates array.");
+  }
+
+  if (snapshot.templates.length < 6) {
+    throw new Error(
+      `Templates API returned ${snapshot.templates.length} template(s), expected at least 6.`
+    );
+  }
+
+  const expectedIds = ["email-draft", "meeting-summary"];
+  const templatesById = new Map(
+    snapshot.templates
+      .filter((template) => template && typeof template.id === "string")
+      .map((template) => [template.id, template])
+  );
+  const missingIds = expectedIds.filter((id) => !templatesById.has(id));
+
+  if (missingIds.length) {
+    throw new Error(`Templates API missed expected template(s): ${missingIds.join(", ")}.`);
+  }
+
+  const trackedTemplates = expectedIds.map((id) => templatesById.get(id));
+
+  for (const template of trackedTemplates) {
+    if (
+      !template ||
+      template.mode !== "daily_work" ||
+      typeof template.title !== "string" ||
+      typeof template.category !== "string" ||
+      typeof template.prompt !== "string" ||
+      typeof template.artifactType !== "string"
+    ) {
+      throw new Error("Templates API returned an invalid tracked template payload.");
+    }
+  }
+
+  return trackedTemplates;
+}
+
+function assertTemplateApplyPreviewSnapshot(snapshot, expected) {
+  const preview = snapshot && snapshot.preview;
+
+  if (
+    !snapshot ||
+    snapshot.mode !== "daily_work" ||
+    !preview ||
+    preview.mode !== "daily_work" ||
+    preview.templateId !== expected.templateId ||
+    preview.previewOnly !== true
+  ) {
+    throw new Error("Template apply-preview API did not return the expected preview payload.");
+  }
+
+  if (
+    !Array.isArray(preview.externalEffects) ||
+    preview.externalEffects.length !== 1 ||
+    preview.externalEffects[0] !== "none" ||
+    !preview.safetyBoundary ||
+    !Array.isArray(preview.safetyBoundary.externalEffects) ||
+    !preview.safetyBoundary.externalEffects.includes("none")
+  ) {
+    throw new Error("Template apply-preview API did not preserve the no-effect boundary.");
+  }
+
+  if (
+    typeof preview.promptDraft !== "string" ||
+    !preview.promptDraft.includes("daily_work") ||
+    !preview.promptDraft.includes(expected.templateId) ||
+    !preview.promptDraft.includes(expected.contextItemId) ||
+    !/no external effects/i.test(preview.promptDraft)
+  ) {
+    throw new Error("Template apply-preview API promptDraft missed required context.");
+  }
+
+  const approvalBoundary =
+    Array.isArray(preview.requiredApprovalRequestIds) &&
+    preview.requiredApprovalRequestIds.includes("draft-external-reply");
+  const describesApprovalBoundary =
+    /approval|draft-external-reply/i.test(preview.promptDraft) ||
+    /approval|draft-external-reply/i.test(preview.safetyBoundary.statement || "");
+
+  if (!approvalBoundary && !describesApprovalBoundary) {
+    throw new Error("Template apply-preview API did not include or describe approval linkage.");
+  }
+
+  if (
+    !Array.isArray(preview.steps) ||
+    !preview.steps.length ||
+    !preview.steps.every((step) => step.previewOnly === true && step.externalEffect === "none")
+  ) {
+    throw new Error("Template apply-preview API did not include preview-only steps.");
+  }
+
+  return preview;
 }
 
 function assertSessionListSnapshot(snapshot) {
