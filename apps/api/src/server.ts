@@ -8,6 +8,7 @@ import {
   appModeSchema,
   defaultDailyWorkApprovalRequests,
   defaultDailyWorkConnectors,
+  defaultDailyActivityEvents,
   defaultDailyWorkArtifacts,
   defaultDailyWorkContextItems,
   defaultDailyWorkSessionDetails,
@@ -19,6 +20,8 @@ import {
   type DailyApprovalRequestsResponse,
   type DailyWorkArtifactResponse,
   type DailyWorkArtifactsResponse,
+  type DailyActivityEventResponse,
+  type DailyActivityEventsResponse,
   type DailyWorkConnectorResponse,
   type DailyWorkConnectorsResponse,
   type DailyModelUsageResponse,
@@ -83,6 +86,12 @@ export async function buildServer() {
     reply.code(204).send()
   );
   app.options("/api/daily/artifacts/:artifactId", async (_request, reply) =>
+    reply.code(204).send()
+  );
+  app.options("/api/daily/events", async (_request, reply) =>
+    reply.code(204).send()
+  );
+  app.options("/api/daily/events/:eventId", async (_request, reply) =>
     reply.code(204).send()
   );
   app.options("/api/daily/connectors", async (_request, reply) =>
@@ -225,6 +234,43 @@ export async function buildServer() {
   );
 
   app.get<{ Querystring: { mode?: string } }>(
+    "/api/daily/events",
+    async (request): Promise<DailyActivityEventsResponse> => {
+      const mode = normalizeAppMode(request.query.mode);
+
+      return {
+        mode,
+        events: filterDailyActivityEvents(mode)
+      };
+    }
+  );
+
+  app.get<{
+    Params: { eventId: string };
+    Querystring: { mode?: string };
+  }>(
+    "/api/daily/events/:eventId",
+    async (request, reply): Promise<DailyActivityEventResponse | void> => {
+      const mode = normalizeAppMode(request.query.mode);
+      const event = filterDailyActivityEvent(mode, request.params.eventId);
+
+      if (!event) {
+        reply.code(404).send({
+          mode,
+          eventId: request.params.eventId,
+          error: "Daily-work activity event not found."
+        });
+        return;
+      }
+
+      return {
+        mode,
+        event
+      };
+    }
+  );
+
+  app.get<{ Querystring: { mode?: string } }>(
     "/api/daily/connectors",
     async (request): Promise<DailyWorkConnectorsResponse> => {
       const mode = normalizeAppMode(request.query.mode);
@@ -334,6 +380,13 @@ export async function buildServer() {
         message: "WebSocket orchestration placeholder connected."
       })
     );
+    socket.send(
+      JSON.stringify({
+        type: "daily.activity.snapshot",
+        mode: "daily_work",
+        events: filterDailyActivityEvents("daily_work").slice(0, 1)
+      })
+    );
 
     socket.on("message", (message: Buffer) => {
       socket.send(
@@ -384,6 +437,18 @@ function filterDailyWorkArtifact(mode: AppMode, artifactId: string) {
   return filterDailyWorkArtifacts(mode).find(
     (artifact) => artifact.id === artifactId
   );
+}
+
+function filterDailyActivityEvents(mode: AppMode) {
+  if (mode !== "daily_work") {
+    return [];
+  }
+
+  return defaultDailyActivityEvents;
+}
+
+function filterDailyActivityEvent(mode: AppMode, eventId: string) {
+  return filterDailyActivityEvents(mode).find((event) => event.id === eventId);
 }
 
 function filterDailyWorkConnectors(mode: AppMode) {
