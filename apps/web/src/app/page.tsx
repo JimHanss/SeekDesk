@@ -9,8 +9,10 @@ import {
   CalendarClock,
   CheckCircle2,
   Code2,
+  Database,
   FileText,
   Globe,
+  HardDrive,
   Loader2,
   Lock,
   Mail,
@@ -20,6 +22,7 @@ import {
   Presentation,
   Search,
   Send,
+  Server,
   ShieldCheck,
   Square,
   Sparkles,
@@ -268,6 +271,10 @@ type ModelUsageBudgetState =
   | "over_budget";
 type ModelUsagePanelSource = "fallback" | "api" | "degraded";
 type ModelUsageSyncStatus = "syncing" | "live" | "degraded";
+type PersistenceLayerId = "seed_mock" | "json_local" | "future_database";
+type PersistenceLayerStatus = "active" | "available" | "planned" | "unknown";
+type PersistencePanelSource = "fallback" | "health" | "degraded";
+type PersistencePanelSyncStatus = "syncing" | "live" | "degraded";
 
 interface ApprovalRequestItem {
   id: string;
@@ -355,6 +362,42 @@ interface ModelUsagePanelState {
   source: ModelUsagePanelSource;
   syncStatus: ModelUsageSyncStatus;
   notice: string;
+}
+
+interface PersistenceLayerItem {
+  id: PersistenceLayerId;
+  label: string;
+  description: string;
+  status: PersistenceLayerStatus;
+  detail: string;
+  icon: LucideIcon;
+}
+
+interface PersistencePanelState {
+  layers: PersistenceLayerItem[];
+  source: PersistencePanelSource;
+  syncStatus: PersistencePanelSyncStatus;
+  currentLayer: PersistenceLayerId;
+  updatedAt: string;
+  notice: string;
+}
+
+interface HealthPersistenceSnapshotDto {
+  mode?: AppMode;
+  current?: string;
+  currentLayer?: string;
+  storage?: string;
+  layer?: string;
+  provider?: string;
+  source?: string;
+  status?: string;
+  writable?: boolean;
+  path?: string;
+  filePath?: string;
+  databaseReady?: boolean;
+  futureDatabaseReady?: boolean;
+  updatedAt?: string;
+  notes?: string[];
 }
 
 const activeMode: AppMode = "daily_work";
@@ -1043,6 +1086,121 @@ function createFallbackModelUsagePanelState(): ModelUsagePanelState {
   };
 }
 
+function createFallbackPersistencePanelState(): PersistencePanelState {
+  return {
+    layers: [
+      {
+        id: "seed_mock",
+        label: "Seed / Mock",
+        description: "前端可用的启动示例与后端 seed 快照。",
+        status: "active",
+        detail: "默认展示，等待 /health 暴露真实数据层字段。",
+        icon: Sparkles
+      },
+      {
+        id: "json_local",
+        label: "JSON / Local",
+        description: "轻量本地 JSON 或文件型持久化。",
+        status: "unknown",
+        detail: "后端未声明；界面保持兼容，不假设已落盘。",
+        icon: HardDrive
+      },
+      {
+        id: "future_database",
+        label: "Future Database",
+        description: "未来数据库持久化通道。",
+        status: "planned",
+        detail: "仅展示路线，不在前端创建数据库能力。",
+        icon: Server
+      }
+    ],
+    source: "fallback",
+    syncStatus: "syncing",
+    currentLayer: "seed_mock",
+    updatedAt: "前端 fallback",
+    notice: "正在读取 /health 的数据层状态；字段缺失时保持 seed/mock 快照。"
+  };
+}
+
+function mapHealthPersistenceResponse(payload: unknown): PersistencePanelState {
+  const snapshot = extractHealthPersistenceSnapshot(payload);
+  const currentLayer = normalizePersistenceLayer(
+    snapshot?.currentLayer ??
+      snapshot?.current ??
+      snapshot?.storage ??
+      snapshot?.layer ??
+      snapshot?.provider ??
+      snapshot?.source
+  );
+  const isJsonLocalAvailable =
+    currentLayer === "json_local" ||
+    snapshot?.writable === true ||
+    Boolean(snapshot?.path || snapshot?.filePath);
+  const isDatabaseReady =
+    currentLayer === "future_database" ||
+    snapshot?.databaseReady === true ||
+    snapshot?.futureDatabaseReady === true;
+  const statusText = nonEmptyText(snapshot?.status, "");
+  const healthSource = snapshot ? "health" : "fallback";
+  const updatedAt =
+    formatModelUsageTimestamp(snapshot?.updatedAt) ??
+    (healthSource === "health" ? "刚刚同步" : "前端 fallback");
+
+  return {
+    layers: [
+      {
+        id: "seed_mock",
+        label: "Seed / Mock",
+        description: "启动 seed、mock 数据和前端示例快照。",
+        status: currentLayer === "seed_mock" ? "active" : "available",
+        detail:
+          currentLayer === "seed_mock"
+            ? "当前工作台仍以 seed/mock 作为日常工作数据来源。"
+            : "保留为离线与 smoke fallback，不阻塞主流程。",
+        icon: Sparkles
+      },
+      {
+        id: "json_local",
+        label: "JSON / Local",
+        description: "本地 JSON 或文件型轻量持久化。",
+        status:
+          currentLayer === "json_local"
+            ? "active"
+            : isJsonLocalAvailable
+              ? "available"
+              : "unknown",
+        detail: isJsonLocalAvailable
+          ? nonEmptyText(snapshot?.path ?? snapshot?.filePath, "后端声明本地持久化可用。")
+          : "未从 /health 读到本地 JSON 状态。",
+        icon: HardDrive
+      },
+      {
+        id: "future_database",
+        label: "Future Database",
+        description: "未来数据库持久化入口。",
+        status:
+          currentLayer === "future_database"
+            ? "active"
+            : isDatabaseReady
+              ? "available"
+              : "planned",
+        detail: isDatabaseReady
+          ? "后端健康检查声明数据库通道可用。"
+          : "预留路线；本次不实现数据库后端。",
+        icon: Server
+      }
+    ],
+    source: healthSource,
+    syncStatus: healthSource === "health" ? "live" : "degraded",
+    currentLayer,
+    updatedAt,
+    notice:
+      healthSource === "health"
+        ? `已从 /health 同步数据层状态${statusText ? `：${statusText}` : "。"}`
+        : "后端 health 暂未暴露数据层字段，界面使用 seed/mock fallback。"
+  };
+}
+
 function mapDailyModelUsageResponse(
   payload: DailyModelUsageResponseDto
 ): ModelUsagePanelState {
@@ -1185,6 +1343,8 @@ export default function Page() {
   const [modelUsagePanel, setModelUsagePanel] = useState<ModelUsagePanelState>(
     () => createFallbackModelUsagePanelState()
   );
+  const [persistencePanel, setPersistencePanel] =
+    useState<PersistencePanelState>(() => createFallbackPersistencePanelState());
   const [approvalRequests, setApprovalRequests] = useState<ApprovalRequestItem[]>(
     initialApprovalRequests
   );
@@ -1273,6 +1433,54 @@ export default function Page() {
 
     return selectedInFilter ?? filteredSessionHistory[0] ?? sessionHistoryItems[0] ?? null;
   }, [filteredSessionHistory, selectedSessionHistoryId]);
+
+  useEffect(() => {
+    let isDisposed = false;
+    const controller = new AbortController();
+
+    async function fetchPersistenceStatus() {
+      setPersistencePanel((current) => ({
+        ...current,
+        syncStatus: "syncing",
+        notice: "正在读取 /health 的数据层状态。"
+      }));
+
+      try {
+        const response = await fetch(`${apiBaseUrl}/health`, {
+          signal: controller.signal
+        });
+
+        if (!response.ok) {
+          throw new Error(`Health request failed: ${response.status}`);
+        }
+
+        const nextState = mapHealthPersistenceResponse(await response.json());
+
+        if (!isDisposed) {
+          setPersistencePanel(nextState);
+        }
+      } catch {
+        if (controller.signal.aborted || isDisposed) {
+          return;
+        }
+
+        setPersistencePanel((current) => ({
+          ...current,
+          source: "degraded",
+          syncStatus: "degraded",
+          notice:
+            "暂未从 /health 读取到数据层状态；工作台继续使用 seed/mock fallback。"
+        }));
+      }
+    }
+
+    void fetchPersistenceStatus();
+
+    return () => {
+      isDisposed = true;
+      controller.abort();
+    };
+  }, [apiBaseUrl]);
 
   useEffect(() => {
     let isDisposed = false;
@@ -1753,6 +1961,8 @@ export default function Page() {
                   onClick={applyPrompt}
                 />
               </div>
+
+              <PersistenceStatusPanel state={persistencePanel} />
 
               <div
                 className="rounded-[8px] border border-teal-100 bg-teal-50 p-3"
@@ -4193,6 +4403,97 @@ function SessionStatusPill({ status }: { status: SessionHistoryStatus }) {
   );
 }
 
+function PersistenceStatusPanel({ state }: { state: PersistencePanelState }) {
+  return (
+    <section
+      className="rounded-[8px] border border-slate-200 bg-white p-3"
+      data-persistence-panel
+      data-persistence-current={state.currentLayer}
+      data-persistence-source={state.source}
+      data-persistence-status={state.syncStatus}
+    >
+      <div className="flex flex-col gap-3 md:flex-row md:items-start md:justify-between">
+        <div className="min-w-0">
+          <div className="flex items-center gap-2 text-sm font-semibold text-slate-950">
+            <Database className="size-4 shrink-0 text-teal-700" aria-hidden="true" />
+            <span className="min-w-0 break-words">数据层 / 同步状态</span>
+          </div>
+          <p className="mt-1 text-xs leading-5 text-slate-600">
+            日常工作数据当前状态从 /health 优先读取；缺少字段时保留安全 fallback。
+          </p>
+        </div>
+
+        <span
+          className={cn(
+            "inline-flex shrink-0 items-center gap-1 rounded-[999px] px-2.5 py-1 text-[11px] font-medium",
+            state.syncStatus === "live"
+              ? "bg-emerald-100 text-emerald-800"
+              : state.syncStatus === "syncing"
+                ? "bg-sky-100 text-sky-800"
+                : "bg-orange-100 text-orange-800"
+          )}
+        >
+          <Activity className="size-3.5" aria-hidden="true" />
+          {persistenceSyncStatusLabel(state.syncStatus)}
+        </span>
+      </div>
+
+      <div className="mt-3 grid gap-2 lg:grid-cols-3">
+        {state.layers.map((layer) => {
+          const Icon = layer.icon;
+
+          return (
+            <div
+              key={layer.id}
+              className={cn(
+                "min-w-0 rounded-[8px] border px-3 py-2",
+                persistenceLayerStatusClass(layer.status)
+              )}
+              data-persistence-layer={layer.id}
+              data-persistence-layer-status={layer.status}
+            >
+              <div className="flex items-start justify-between gap-2">
+                <div className="flex min-w-0 items-center gap-2">
+                  <span className="grid size-7 shrink-0 place-items-center rounded-[6px] bg-white/75">
+                    <Icon className="size-4" aria-hidden="true" />
+                  </span>
+                  <div className="min-w-0">
+                    <div className="truncate text-xs font-semibold">
+                      {layer.label}
+                    </div>
+                    <div className="mt-0.5 line-clamp-2 text-[11px] leading-4 opacity-80">
+                      {layer.description}
+                    </div>
+                  </div>
+                </div>
+                <span className="shrink-0 rounded-[999px] bg-white/80 px-2 py-0.5 text-[10px] font-medium">
+                  {persistenceLayerStatusLabel(layer.status)}
+                </span>
+              </div>
+              <div className="mt-2 break-words text-[11px] leading-4 opacity-85">
+                {layer.detail}
+              </div>
+            </div>
+          );
+        })}
+      </div>
+
+      <div
+        className={cn(
+          "mt-3 rounded-[8px] border px-3 py-2 text-xs leading-5",
+          state.syncStatus === "degraded"
+            ? "border-orange-200 bg-orange-50 text-orange-800"
+            : "border-teal-100 bg-teal-50 text-teal-800"
+        )}
+      >
+        <span className="font-medium">最近更新：{state.updatedAt}</span>
+        <span className="mx-2 text-slate-300">/</span>
+        {state.notice}
+      </div>
+    </section>
+  );
+}
+
 function SessionMetric({ label, value }: { label: string; value: string }) {
   return (
     <div className="min-w-0 rounded-[8px] border border-teal-100 bg-teal-50 px-2.5 py-2 text-center">
@@ -4585,6 +4886,112 @@ function modelUsageSyncStatusLabel(status: ModelUsageSyncStatus) {
     case "degraded":
       return "降级快照";
   }
+}
+
+function persistenceSyncStatusLabel(status: PersistencePanelSyncStatus) {
+  switch (status) {
+    case "syncing":
+      return "同步中";
+    case "live":
+      return "Health 已同步";
+    case "degraded":
+      return "Fallback";
+  }
+}
+
+function persistenceLayerStatusLabel(status: PersistenceLayerStatus) {
+  switch (status) {
+    case "active":
+      return "当前";
+    case "available":
+      return "可用";
+    case "planned":
+      return "预留";
+    case "unknown":
+      return "未声明";
+  }
+}
+
+function persistenceLayerStatusClass(status: PersistenceLayerStatus) {
+  switch (status) {
+    case "active":
+      return "border-teal-300 bg-teal-50 text-teal-900";
+    case "available":
+      return "border-emerald-200 bg-emerald-50 text-emerald-900";
+    case "planned":
+      return "border-slate-200 bg-slate-50 text-slate-700";
+    case "unknown":
+      return "border-orange-200 bg-orange-50 text-orange-800";
+  }
+}
+
+function normalizePersistenceLayer(value: string | undefined): PersistenceLayerId {
+  const normalized = value?.trim().toLowerCase().replace(/[-\s]/g, "_");
+
+  if (
+    normalized === "json" ||
+    normalized === "local" ||
+    normalized === "json_local" ||
+    normalized === "local_json" ||
+    normalized === "file" ||
+    normalized === "filesystem"
+  ) {
+    return "json_local";
+  }
+
+  if (
+    normalized === "database" ||
+    normalized === "db" ||
+    normalized === "future_database" ||
+    normalized === "postgres" ||
+    normalized === "postgresql" ||
+    normalized === "sqlite"
+  ) {
+    return "future_database";
+  }
+
+  return "seed_mock";
+}
+
+function extractHealthPersistenceSnapshot(
+  payload: unknown
+): HealthPersistenceSnapshotDto | undefined {
+  if (!isRecord(payload)) {
+    return undefined;
+  }
+
+  const nested =
+    readRecord(payload.persistence) ??
+    readRecord(payload.dataLayer) ??
+    readRecord(payload.storage) ??
+    readRecord(payload.dailyWorkPersistence);
+  const candidate = nested ?? payload;
+
+  if (!hasPersistenceSignal(candidate)) {
+    return undefined;
+  }
+
+  return candidate as HealthPersistenceSnapshotDto;
+}
+
+function hasPersistenceSignal(value: Record<string, unknown>) {
+  return [
+    "current",
+    "currentLayer",
+    "storage",
+    "layer",
+    "provider",
+    "source",
+    "writable",
+    "path",
+    "filePath",
+    "databaseReady",
+    "futureDatabaseReady"
+  ].some((key) => key in value);
+}
+
+function readRecord(value: unknown) {
+  return isRecord(value) && !Array.isArray(value) ? value : undefined;
 }
 
 function normalizeModelRoute(value: ModelRouteMode | undefined): ModelRouteMode {
