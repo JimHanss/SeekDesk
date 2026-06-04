@@ -17,6 +17,8 @@ const smokeUrl = process.env.SEEKDESK_SMOKE_URL || defaultUrl;
 const smokeApiUrl = process.env.SEEKDESK_SMOKE_API_URL || "";
 const timeoutMs = Number(process.env.SEEKDESK_SMOKE_TIMEOUT_MS || 30000);
 const checks = [];
+const workflowPreviewWorkflowId = "weekly-report-task-plan-workflow";
+const workflowPreviewActionId = "queue-weekly-report";
 
 if (process.argv.includes("--help") || process.argv.includes("-h")) {
   printHelp();
@@ -47,6 +49,7 @@ async function main() {
     await runModelUsageSmoke(client, apiServer.url);
     await runDataLayerStateSmoke(client);
     await runApprovalPreviewSmoke(client, apiServer.url);
+    await runWorkflowPreviewSmoke(client, apiServer.url);
     await runPromptSmoke(client);
     await runChatSendSmoke(client);
     await runCodeBlockSmoke(client);
@@ -683,6 +686,91 @@ async function runApprovalPreviewSmoke(client, apiUrl) {
   });
 }
 
+async function runWorkflowPreviewSmoke(client, apiUrl) {
+  const previewSnapshot = await fetchJson(
+    apiUrl,
+    `/api/daily/workflows/${workflowPreviewWorkflowId}/preview`,
+    {
+      mode: "daily_work",
+      actionId: workflowPreviewActionId,
+      contextItemIds: ["project-brief", "team-notes"],
+      prompt: "Preview the weekly report workflow without external effects."
+    }
+  );
+  assertWorkflowPreviewSnapshot(previewSnapshot, {
+    workflowId: workflowPreviewWorkflowId,
+    actionId: workflowPreviewActionId
+  });
+
+  const actionRect = await waitForRect(
+    client,
+    workflowPreviewActionButtonExpression(),
+    "weekly report workflow action button"
+  );
+  await clickAt(client, actionRect);
+  await evaluate(client, workflowPreviewActionClickExpression());
+
+  const panelState = await waitForValue(
+    client,
+    workflowPreviewPanelExpression(),
+    (state) =>
+      state.present &&
+      state.workflowId === workflowPreviewWorkflowId &&
+      state.action === workflowPreviewActionId &&
+      state.previewOnly === "true" &&
+      state.source === "api" &&
+      state.syncStatus === "live" &&
+      state.stepCount >= 1 &&
+      state.summaryLength > 0,
+    "workflow preview panel state"
+  );
+
+  const promptRect = await waitForRect(
+    client,
+    workflowPreviewPromptButtonExpression(),
+    "workflow preview prompt button"
+  );
+  await clickAt(client, promptRect);
+  await evaluate(client, workflowPreviewPromptClickExpression());
+
+  const promptState = await waitForValue(
+    client,
+    `(() => {
+      const input = getSmokeInput();
+      const submit = getSmokeSubmit();
+      const value = input ? input.value : "";
+      return {
+        value,
+        includesDailyWork: value.includes("daily_work"),
+        includesWorkflow: /workflow|工作流|预演/i.test(value),
+        includesBoundary: /安全边界|preview|不发送|不写入/i.test(value),
+        includesApiSignal: /api|live|后端来源/i.test(value),
+        submitDisabled: submit ? submit.disabled : true
+      };
+    })()`,
+    (state) =>
+      state.value.trim().length > 0 &&
+      state.includesDailyWork &&
+      state.includesWorkflow &&
+      state.includesBoundary &&
+      state.includesApiSignal &&
+      state.submitDisabled === false,
+    "workflow preview prompt fills input"
+  );
+
+  checks.push({
+    name: "workflow preview API and UI",
+    status: "passed",
+    workflowId: panelState.workflowId,
+    action: panelState.action,
+    source: panelState.source,
+    syncStatus: panelState.syncStatus,
+    stepCount: panelState.stepCount,
+    apiPreviewOnly: previewSnapshot.preview.previewOnly,
+    promptIncludesDailyWork: promptState.includesDailyWork
+  });
+}
+
 async function runCodeBlockSmoke(client) {
   const initialInspection = await inspectCodeBlockDom(client);
   if (initialInspection.hasBlocks) {
@@ -889,6 +977,30 @@ function approvalPreviewDecisionClickExpression(action) {
     if (!button || button.disabled) return false;
     button.click();
     return true;
+  })()`);
+}
+
+function workflowPreviewPanelExpression() {
+  return withSmokeHelpers(`(() => {
+    const root = document.querySelector("[data-workflow-preview-panel]");
+    const text = root ? root.textContent || "" : "";
+    const steps = root
+      ? [...root.querySelectorAll("[data-workflow-preview-step]")]
+      : [];
+    const summary = root ? root.querySelector("[data-workflow-preview-summary]") : null;
+
+    return {
+      present: Boolean(root),
+      workflowId: root ? root.getAttribute("data-api-workflow-id") || "" : "",
+      action: root ? root.getAttribute("data-workflow-preview-action") || "" : "",
+      source: root ? root.getAttribute("data-workflow-preview-source") || "" : "",
+      syncStatus: root ? root.getAttribute("data-workflow-preview-sync-status") || "" : "",
+      status: root ? root.getAttribute("data-workflow-preview-status") || "" : "",
+      previewOnly: root ? root.getAttribute("data-workflow-preview-only") || "" : "",
+      stepCount: steps.length,
+      summaryLength: summary ? (summary.textContent || "").trim().length : 0,
+      hasBoundaryText: /preview-only|previewOnly|externalEffects|不会发送|不会写入|不会.*日历|安全边界/i.test(text)
+    };
   })()`);
 }
 
@@ -1338,6 +1450,52 @@ function assertConnectorPreviewSnapshot(snapshot) {
     !preview.requiredApprovalRequestIds.includes("draft-external-reply")
   ) {
     throw new Error("Connector preview API did not include approval linkage.");
+  }
+}
+
+function assertWorkflowPreviewSnapshot(snapshot, expected) {
+  const preview = snapshot && snapshot.preview;
+  if (
+    !snapshot ||
+    snapshot.mode !== "daily_work" ||
+    !preview ||
+    preview.workflowId !== expected.workflowId ||
+    preview.selectedActionId !== expected.actionId ||
+    preview.previewOnly !== true
+  ) {
+    throw new Error("Workflow preview API did not return the expected preview payload.");
+  }
+
+  if (
+    !Array.isArray(preview.externalEffects) ||
+    preview.externalEffects.length !== 1 ||
+    preview.externalEffects[0] !== "none" ||
+    !preview.safetyBoundary ||
+    !Array.isArray(preview.safetyBoundary.externalEffects) ||
+    !preview.safetyBoundary.externalEffects.includes("none")
+  ) {
+    throw new Error("Workflow preview API did not preserve the no-effect boundary.");
+  }
+
+  if (
+    !Array.isArray(preview.steps) ||
+    !preview.steps.length ||
+    !preview.steps.every((step) => step.previewOnly === true && step.externalEffect === "none")
+  ) {
+    throw new Error("Workflow preview API did not include preview-only steps.");
+  }
+
+  if (
+    !Array.isArray(preview.connectorLinks) ||
+    !preview.connectorLinks.length ||
+    !Array.isArray(preview.contextLinks) ||
+    !preview.contextLinks.length ||
+    !Array.isArray(preview.artifactLinks) ||
+    !preview.artifactLinks.length ||
+    !Array.isArray(preview.approvalLinks) ||
+    !preview.approvalLinks.length
+  ) {
+    throw new Error("Workflow preview API did not include workflow linkage.");
   }
 }
 
