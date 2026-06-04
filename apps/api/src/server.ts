@@ -14,6 +14,7 @@ import {
   createDailyActivitySnapshotMessage,
   createDailyModelUsageResponse,
   dailyApprovalDecisionRequestSchema,
+  dailyWorkSessionRestorePreviewRequestSchema,
   dailyWorkWorkflowPreviewRequestSchema,
   type AppMode,
   type ApprovalDecision,
@@ -36,6 +37,9 @@ import {
   type DailyWorkConnectorResponse,
   type DailyWorkConnectorsResponse,
   type DailyWorkSessionResponse,
+  type DailyWorkSessionDetail,
+  type DailyWorkSessionMessage,
+  type DailyWorkSessionRestorePreviewResponse,
   type DailyWorkSessionsResponse,
   type DailyWorkTemplatesResponse,
   type DailyWorkWorkflow,
@@ -96,6 +100,10 @@ export async function buildServer(options?: {
   );
   app.options("/api/daily/sessions/:sessionId", async (_request, reply) =>
     reply.code(204).send()
+  );
+  app.options(
+    "/api/daily/sessions/:sessionId/restore-preview",
+    async (_request, reply) => reply.code(204).send()
   );
   app.options("/api/daily/artifacts", async (_request, reply) =>
     reply.code(204).send()
@@ -283,6 +291,63 @@ export async function buildServer(options?: {
         mode,
         session: resolvedSession
       };
+    }
+  );
+
+  app.post<{
+    Params: { sessionId: string };
+    Body: unknown;
+  }>(
+    "/api/daily/sessions/:sessionId/restore-preview",
+    async (
+      request,
+      reply
+    ): Promise<DailyWorkSessionRestorePreviewResponse | void> => {
+      const parsed = dailyWorkSessionRestorePreviewRequestSchema.safeParse(
+        request.body ?? {}
+      );
+      if (!parsed.success) {
+        reply
+          .code(400)
+          .send(
+            createValidationError(
+              "Invalid session restore preview request.",
+              parsed.error.issues
+            )
+          );
+        return;
+      }
+
+      const mode = normalizeAppMode(parsed.data.mode);
+      if (mode !== "daily_work") {
+        reply.code(400).send({
+          mode,
+          error:
+            "Session restore previews are only available in daily_work mode."
+        });
+        return;
+      }
+
+      const session = await filterDailyWorkSessionDetail(
+        dailyWorkRepository,
+        mode,
+        request.params.sessionId
+      );
+
+      if (!session) {
+        reply.code(404).send({
+          mode,
+          error: "Daily-work session not found."
+        });
+        return;
+      }
+
+      return createDailyWorkSessionRestorePreviewResponse({
+        mode,
+        session,
+        includeRecentMessages: parsed.data.includeRecentMessages,
+        ...(parsed.data.prompt ? { prompt: parsed.data.prompt } : {})
+      });
     }
   );
 
@@ -800,6 +865,120 @@ function createDailyWorkWorkflowPreviewResponse(input: {
       }
     }
   };
+}
+
+function createDailyWorkSessionRestorePreviewResponse(input: {
+  mode: AppMode;
+  session: DailyWorkSessionDetail;
+  includeRecentMessages: boolean;
+  prompt?: string;
+}): DailyWorkSessionRestorePreviewResponse {
+  const generatedAt = new Date().toISOString();
+  const restorePrompt = createDailyWorkSessionRestorePrompt(input);
+
+  return {
+    mode: input.mode,
+    preview: {
+      id: `${input.session.id}:restore-preview`,
+      mode: input.mode,
+      sessionId: input.session.id,
+      sessionTitle: input.session.title,
+      status: input.session.status,
+      summary: input.session.summary,
+      lastAction: input.session.lastAction,
+      restorePrompt,
+      artifactIds: input.session.artifactIds,
+      contextItemIds: input.session.contextItemIds,
+      approvalRequestIds: input.session.approvalRequestIds,
+      ...(input.includeRecentMessages
+        ? {
+            recentMessagesPreview: input.session.recentMessages
+              .slice(-3)
+              .map(createRecentMessagePreview)
+          }
+        : {}),
+      previewOnly: true,
+      externalEffects: ["none"],
+      safetyBoundary: {
+        previewOnly: true,
+        externalEffects: ["none"],
+        prohibitedExternalActions: [
+          "send_email",
+          "write_document",
+          "schedule_calendar_event",
+          "create_task",
+          "read_private_external_data",
+          "resume_real_execution"
+        ],
+        statement:
+          "Preview-only restore: SeekDesk generates a daily_work prompt from stored session metadata and optional recent-message snippets. It performs no external effects and does not resume execution, read private external data, send, write, schedule, or create records."
+      },
+      generatedAt
+    }
+  };
+}
+
+function createDailyWorkSessionRestorePrompt(input: {
+  session: DailyWorkSessionDetail;
+  prompt?: string;
+}) {
+  const lastAction = formatSessionLastAction(input.session);
+  const userPrompt = input.prompt
+    ? `User continuation prompt: ${input.prompt}`
+    : "User continuation prompt: ask the user what to do next before continuing.";
+
+  return [
+    "Restore SeekDesk daily_work session as a preview only.",
+    `Session id: ${input.session.id}`,
+    `Session title: ${input.session.title}`,
+    `Status: ${input.session.status}`,
+    `Summary: ${input.session.summary}`,
+    `Last action: ${lastAction}`,
+    `Artifact ids: ${joinSessionRefIds(input.session.artifactIds)}`,
+    `Context item ids: ${joinSessionRefIds(input.session.contextItemIds)}`,
+    `Approval request ids: ${joinSessionRefIds(input.session.approvalRequestIds)}`,
+    "Safety boundary: previewOnly=true; externalEffects=[none]; no external effects; do not send email, write documents, schedule calendar events, create tasks, read private external data, or resume real execution.",
+    userPrompt
+  ].join("\n");
+}
+
+function createRecentMessagePreview(
+  message: DailyWorkSessionMessage
+): DailyWorkSessionMessage {
+  return {
+    ...message,
+    content: truncateSessionRestoreText(message.content, 220)
+  };
+}
+
+function formatSessionLastAction(session: DailyWorkSessionDetail) {
+  if (!session.lastAction) {
+    return "none";
+  }
+
+  return [
+    `${session.lastAction.label} by ${session.lastAction.actor} at ${session.lastAction.at}`,
+    session.lastAction.artifactId
+      ? `artifact=${session.lastAction.artifactId}`
+      : undefined,
+    session.lastAction.approvalRequestId
+      ? `approval=${session.lastAction.approvalRequestId}`
+      : undefined
+  ]
+    .filter(Boolean)
+    .join("; ");
+}
+
+function joinSessionRefIds(ids: string[]) {
+  return ids.length > 0 ? ids.join(", ") : "none";
+}
+
+function truncateSessionRestoreText(value: string, maxLength: number) {
+  if (value.length <= maxLength) {
+    return value;
+  }
+
+  return `${value.slice(0, maxLength - 3)}...`;
 }
 
 function selectWorkflowPreviewAction(

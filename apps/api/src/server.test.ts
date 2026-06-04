@@ -1320,6 +1320,136 @@ describe("api server", () => {
     await app.close();
   });
 
+  it("returns a preview-only daily-work session restore prompt", async () => {
+    const app = await buildServer();
+    const response = await app.inject({
+      method: "POST",
+      url: "/api/daily/sessions/customer-follow-up-session/restore-preview",
+      payload: {
+        includeRecentMessages: true,
+        prompt: "Resume by preparing the next approval-safe reply step."
+      }
+    });
+    const body = response.json();
+
+    expect(response.statusCode).toBe(200);
+    expect(body).toEqual({
+      mode: "daily_work",
+      preview: expect.objectContaining({
+        id: "customer-follow-up-session:restore-preview",
+        mode: "daily_work",
+        sessionId: "customer-follow-up-session",
+        sessionTitle: "Customer follow-up draft",
+        status: "waiting_for_approval",
+        previewOnly: true,
+        externalEffects: ["none"],
+        summary:
+          "Drafted a customer-facing reply grounded in meeting notes and protected email context.",
+        lastAction: expect.objectContaining({
+          label: "Requested review for the external reply draft.",
+          artifactId: "email-draft-artifact",
+          approvalRequestId: "draft-external-reply"
+        }),
+        artifactIds: ["email-draft-artifact"],
+        contextItemIds: ["customer-email", "meeting-notes"],
+        approvalRequestIds: [
+          "read-customer-email-context",
+          "draft-external-reply"
+        ],
+        recentMessagesPreview: expect.arrayContaining([
+          expect.objectContaining({
+            id: "customer-follow-up-message-1",
+            role: "user"
+          }),
+          expect.objectContaining({
+            id: "customer-follow-up-message-2",
+            role: "assistant"
+          })
+        ]),
+        safetyBoundary: expect.objectContaining({
+          previewOnly: true,
+          externalEffects: ["none"],
+          prohibitedExternalActions: expect.arrayContaining([
+            "send_email",
+            "write_document",
+            "schedule_calendar_event",
+            "create_task",
+            "read_private_external_data",
+            "resume_real_execution"
+          ]),
+          statement: expect.stringContaining("no external effects")
+        }),
+        generatedAt: expect.any(String)
+      })
+    });
+    expect(body.preview.restorePrompt).toEqual(
+      expect.stringContaining("daily_work")
+    );
+    expect(body.preview.restorePrompt).toEqual(
+      expect.stringContaining("customer-follow-up-session")
+    );
+    expect(body.preview.restorePrompt).toEqual(
+      expect.stringContaining("Customer follow-up draft")
+    );
+    expect(body.preview.restorePrompt).toEqual(
+      expect.stringContaining("Requested review for the external reply draft.")
+    );
+    expect(body.preview.restorePrompt).toEqual(
+      expect.stringContaining("email-draft-artifact")
+    );
+    expect(body.preview.restorePrompt).toEqual(
+      expect.stringContaining("customer-email")
+    );
+    expect(body.preview.restorePrompt).toEqual(
+      expect.stringContaining("draft-external-reply")
+    );
+    expect(body.preview.restorePrompt).toEqual(
+      expect.stringContaining("no external effects")
+    );
+    expect(body.preview.restorePrompt).toEqual(
+      expect.stringContaining("Resume by preparing the next approval-safe reply step.")
+    );
+    expect(body.preview.recentMessagesPreview).toHaveLength(2);
+
+    await app.close();
+  });
+
+  it("rejects coding-agent session restore previews as reserved", async () => {
+    const app = await buildServer();
+    const response = await app.inject({
+      method: "POST",
+      url: "/api/daily/sessions/customer-follow-up-session/restore-preview",
+      payload: {
+        mode: "coding_agent"
+      }
+    });
+
+    expect(response.statusCode).toBe(400);
+    expect(response.json()).toEqual({
+      mode: "coding_agent",
+      error: "Session restore previews are only available in daily_work mode."
+    });
+
+    await app.close();
+  });
+
+  it("returns 404 when a daily-work session restore preview is missing", async () => {
+    const app = await buildServer();
+    const response = await app.inject({
+      method: "POST",
+      url: "/api/daily/sessions/missing-session/restore-preview",
+      payload: {}
+    });
+
+    expect(response.statusCode).toBe(404);
+    expect(response.json()).toEqual({
+      mode: "daily_work",
+      error: "Daily-work session not found."
+    });
+
+    await app.close();
+  });
+
   it("keeps the reserved coding-agent compatibility path for daily sessions", async () => {
     const app = await buildServer();
     const response = await app.inject({
@@ -1348,6 +1478,27 @@ describe("api server", () => {
       mode: "daily_work",
       error: "Daily-work session not found."
     });
+
+    await app.close();
+  });
+
+  it("handles CORS preflight for session restore previews", async () => {
+    const app = await buildServer();
+    const response = await app.inject({
+      method: "OPTIONS",
+      url: "/api/daily/sessions/customer-follow-up-session/restore-preview",
+      headers: {
+        origin: "http://localhost:3000"
+      }
+    });
+
+    expect(response.statusCode).toBe(204);
+    expect(response.headers["access-control-allow-origin"]).toBe(
+      "http://localhost:3000"
+    );
+    expect(response.headers["access-control-allow-methods"]).toBe(
+      "GET,POST,OPTIONS"
+    );
 
     await app.close();
   });
