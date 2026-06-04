@@ -9,10 +9,12 @@ const { spawn, spawnSync } = require("node:child_process");
 
 const rootDir = path.resolve(__dirname, "..");
 const webDir = path.join(rootDir, "apps", "web");
+const apiDir = path.join(rootDir, "apps", "api");
 const defaultHost = "127.0.0.1";
 const defaultPort = Number(process.env.SEEKDESK_SMOKE_PORT || 3000);
 const defaultUrl = `http://${defaultHost}:${defaultPort}`;
 const smokeUrl = process.env.SEEKDESK_SMOKE_URL || defaultUrl;
+const smokeApiUrl = process.env.SEEKDESK_SMOKE_API_URL || "";
 const timeoutMs = Number(process.env.SEEKDESK_SMOKE_TIMEOUT_MS || 30000);
 const checks = [];
 
@@ -33,14 +35,15 @@ main().catch(async (error) => {
 });
 
 async function main() {
+  const apiServer = await ensureApiServer();
   const server = await ensureWebServer();
   const browser = await launchBrowser();
   let client;
 
   try {
-    client = await openPage(browser.debugPort, smokeUrl);
+    client = await openPage(browser.debugPort, smokePageUrl(apiServer.url));
     await runPromptSmoke(client);
-    await runOptionalCodeBlockSmoke(client);
+    await runCodeBlockSmoke(client);
 
     const payload = {
       status: "passed",
@@ -55,6 +58,7 @@ async function main() {
     }
     await browser.close();
     await server.close();
+    await apiServer.close();
   }
 }
 
@@ -67,6 +71,7 @@ Usage:
 
 Environment:
   SEEKDESK_SMOKE_URL          Reuse an already-running web service.
+  SEEKDESK_SMOKE_API_URL      Reuse an already-running API service.
   SEEKDESK_SMOKE_PORT         Port used when starting Next locally. Default: 3000.
   SEEKDESK_SMOKE_TIMEOUT_MS   Per-step timeout. Default: 30000.
   BROWSER_PATH                Chrome or Edge executable override.
@@ -74,6 +79,89 @@ Environment:
 The smoke starts or connects to a production web page, launches Chrome/Edge with
 Chrome DevTools Protocol, clicks prompt controls with real mouse events, and
 asserts that the chat input is populated and submit is enabled.`);
+}
+
+async function ensureApiServer() {
+  if (smokeApiUrl) {
+    await waitForHttp(new URL("/health", smokeApiUrl).toString(), timeoutMs);
+    checks.push({
+      name: "api service",
+      status: "reused",
+      detail: smokeApiUrl
+    });
+    return noopServer("external api", smokeApiUrl);
+  }
+
+  const serverEntry = path.join(apiDir, "dist", "server.js");
+  if (!fs.existsSync(serverEntry)) {
+    throw new Error(
+      `Missing ${serverEntry}. Run npm run build before the browser smoke, or set SEEKDESK_SMOKE_API_URL to an already-running API service.`
+    );
+  }
+
+  const apiPort = await findFreePort();
+  const apiUrl = `http://${defaultHost}:${apiPort}`;
+  const child = spawn(process.execPath, [serverEntry], {
+    cwd: apiDir,
+    env: {
+      ...process.env,
+      SEEKDESK_API_HOST: defaultHost,
+      SEEKDESK_API_PORT: String(apiPort)
+    },
+    stdio: ["ignore", "pipe", "pipe"]
+  });
+
+  let output = "";
+  child.stdout.on("data", (chunk) => {
+    output += chunk.toString();
+  });
+  child.stderr.on("data", (chunk) => {
+    output += chunk.toString();
+  });
+
+  child.on("exit", (code, signal) => {
+    if (code !== null && code !== 0) {
+      output += `\napi server exited with code ${code}`;
+    }
+    if (signal) {
+      output += `\napi server exited via signal ${signal}`;
+    }
+  });
+
+  try {
+    await waitForHttp(new URL("/health", apiUrl).toString(), timeoutMs, () => {
+      if (child.exitCode !== null) {
+        throw new Error(`api server exited early.\n${output.trim()}`);
+      }
+    });
+  } catch (error) {
+    killTree(child.pid);
+    throw error;
+  }
+
+  checks.push({
+    name: "api service",
+    status: "started",
+    detail: apiUrl
+  });
+
+  return {
+    label: "api start",
+    url: apiUrl,
+    async close() {
+      killTree(child.pid);
+    }
+  };
+}
+
+function smokePageUrl(apiUrl) {
+  if (!apiUrl) {
+    return smokeUrl;
+  }
+
+  const url = new URL(smokeUrl);
+  url.searchParams.set("seekdeskSmokeApiUrl", apiUrl);
+  return url.toString();
 }
 
 async function ensureWebServer() {
@@ -168,9 +256,10 @@ async function ensureWebServer() {
   };
 }
 
-function noopServer(label) {
+function noopServer(label, url = "") {
   return {
     label,
+    url,
     async close() {}
   };
 }
@@ -374,7 +463,7 @@ async function runPromptSmoke(client) {
   });
 }
 
-async function runOptionalCodeBlockSmoke(client) {
+async function runCodeBlockSmoke(client) {
   const initialInspection = await inspectCodeBlockDom(client);
   if (initialInspection.hasBlocks) {
     assertCodeBlockDom(initialInspection, "existing code block highlighting DOM");
@@ -383,32 +472,17 @@ async function runOptionalCodeBlockSmoke(client) {
 
   const endpoint = await getChatEndpoint(client);
   if (!endpoint) {
-    checks.push({
-      name: "code block highlighting DOM",
-      status: "skipped",
-      reason: "chat endpoint was not visible on the page"
-    });
-    return;
+    throw new Error("Code block smoke could not find a visible chat endpoint.");
   }
 
   const healthUrl = new URL("/health", endpoint).toString();
   if (!(await isReachable(healthUrl))) {
-    checks.push({
-      name: "code block highlighting DOM",
-      status: "skipped",
-      reason: `chat API was not reachable at ${healthUrl}`
-    });
-    return;
+    throw new Error(`Code block smoke could not reach chat API at ${healthUrl}.`);
   }
 
   const probe = await fetchCodeFenceProbe(endpoint);
   if (!probe.ok) {
-    checks.push({
-      name: "code block highlighting DOM",
-      status: "skipped",
-      reason: probe.reason
-    });
-    return;
+    throw new Error(`Code block smoke probe failed: ${probe.reason}`);
   }
 
   const prompt = "Please return TypeScript code for a daily_work code block smoke.";
@@ -429,14 +503,11 @@ async function runOptionalCodeBlockSmoke(client) {
       Math.min(timeoutMs, 8000)
     );
   } catch (error) {
-    checks.push({
-      name: "code block highlighting DOM",
-      status: "skipped",
-      reason: `fenced code probe passed, but the browser response did not finish: ${
+    throw new Error(
+      `Code block smoke probe passed, but the browser response did not finish: ${
         error instanceof Error ? error.message : String(error)
       }`
-    });
-    return;
+    );
   }
 
   if (streamedState.inspection.hasBlocks) {
@@ -444,11 +515,9 @@ async function runOptionalCodeBlockSmoke(client) {
     return;
   }
 
-  checks.push({
-    name: "code block highlighting DOM",
-    status: "skipped",
-    reason: "fenced code streamed, but highlighted code block DOM is not implemented yet"
-  });
+  throw new Error(
+    "Code block smoke streamed fenced code, but highlighted code block DOM was not rendered."
+  );
 }
 
 function templateButtonExpression() {

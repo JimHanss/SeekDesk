@@ -231,7 +231,7 @@ interface UsageSnapshotItem {
 }
 
 const activeMode: AppMode = "daily_work";
-const apiBaseUrl =
+const defaultApiBaseUrl =
   process.env.NEXT_PUBLIC_SEEKDESK_API_URL ?? "http://127.0.0.1:4000";
 
 const templates: TemplateItem[] = [
@@ -936,7 +936,7 @@ export default function Page() {
 
   const isBusy = status === "submitting" || status === "streaming";
   const endpoint = useMemo(
-    () => `${apiBaseUrl.replace(/\/$/, "")}/api/chat`,
+    () => `${getRuntimeApiBaseUrl().replace(/\/$/, "")}/api/chat`,
     []
   );
   const activeModelSnapshot = modelSnapshots[modelRouteMode];
@@ -2468,6 +2468,18 @@ export default function Page() {
   );
 }
 
+function getRuntimeApiBaseUrl() {
+  if (typeof window === "undefined") {
+    return defaultApiBaseUrl;
+  }
+
+  const smokeApiUrl = new URLSearchParams(window.location.search).get(
+    "seekdeskSmokeApiUrl"
+  );
+
+  return smokeApiUrl || defaultApiBaseUrl;
+}
+
 function ChatBubble({
   message,
   streaming
@@ -2539,9 +2551,16 @@ function CodeBlock({ code, language }: { code: string; language: string }) {
   const tokens = tokenizeCode(code, normalizedLanguage);
 
   return (
-    <div className="min-w-0 overflow-hidden rounded-[8px] border border-slate-700/80 bg-slate-950 text-slate-100 shadow-sm">
+    <div
+      className="min-w-0 overflow-hidden rounded-[8px] border border-slate-700/80 bg-slate-950 text-slate-100 shadow-sm"
+      data-code-block={normalizedLanguage || "code"}
+      data-language={normalizedLanguage || "code"}
+    >
       <div className="flex items-center justify-between gap-3 border-b border-slate-800 bg-slate-900/90 px-3 py-2">
-        <span className="min-w-0 truncate font-mono text-[11px] font-semibold uppercase tracking-normal text-teal-200">
+        <span
+          className="min-w-0 truncate font-mono text-[11px] font-semibold uppercase tracking-normal text-teal-200"
+          data-code-language={normalizedLanguage || "code"}
+        >
           {normalizedLanguage || "code"}
         </span>
       </div>
@@ -2551,6 +2570,7 @@ function CodeBlock({ code, language }: { code: string; language: string }) {
             <span
               key={`${token.kind}-${index}`}
               className={syntaxTokenClass(token.kind)}
+              data-token={token.kind}
             >
               {token.value}
             </span>
