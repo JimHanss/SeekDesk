@@ -9,6 +9,7 @@ import {
   dailyActivityEventsResponseSchema,
   dailyActivitySnapshotMessageSchema,
   dailyApprovalDecisionResponseSchema,
+  dailyWorkTemplateApplyPreviewResponseSchema,
   dailyWorkWorkflowPreviewResponseSchema
 } from "@seekdesk/shared";
 
@@ -149,6 +150,168 @@ describe("api server", () => {
     } finally {
       await rm(dataDir, { force: true, recursive: true });
     }
+  });
+
+  it("previews a daily-work template application without external effects", async () => {
+    const app = await buildServer();
+    const response = await app.inject({
+      method: "POST",
+      url: "/api/daily/templates/email-draft/apply-preview",
+      payload: {
+        prompt: "Draft a concise customer reply from the latest notes.",
+        contextItemIds: ["customer-email", "meeting-notes", "customer-email"]
+      }
+    });
+    const body = dailyWorkTemplateApplyPreviewResponseSchema.parse(
+      response.json()
+    );
+
+    expect(response.statusCode).toBe(200);
+    expect(body).toEqual({
+      mode: "daily_work",
+      preview: expect.objectContaining({
+        id: "email-draft:apply-preview",
+        mode: "daily_work",
+        templateId: "email-draft",
+        templateTitle: expect.any(String),
+        category: "writing",
+        artifactType: "email_draft",
+        suggestedArtifactType: "email_draft",
+        requestedContextItemIds: ["customer-email", "meeting-notes"],
+        requiredApprovalRequestIds: ["draft-external-reply"],
+        previewOnly: true,
+        externalEffects: ["none"],
+        promptDraft: expect.stringContaining("daily_work"),
+        safetyBoundary: expect.objectContaining({
+          previewOnly: true,
+          externalEffects: ["none"],
+          prohibitedExternalActions: expect.arrayContaining([
+            "create_artifact",
+            "send_email",
+            "write_document",
+            "read_private_external_data"
+          ]),
+          statement: expect.stringContaining("creates no artifact")
+        })
+      })
+    });
+    expect(body.preview.promptDraft).toEqual(
+      expect.stringContaining("Template id: email-draft")
+    );
+    expect(body.preview.promptDraft).toEqual(
+      expect.stringContaining("Template artifact type: email_draft")
+    );
+    expect(body.preview.promptDraft).toEqual(
+      expect.stringContaining("Requested context item ids: customer-email, meeting-notes")
+    );
+    expect(body.preview.promptDraft).toEqual(
+      expect.stringContaining("no external effects")
+    );
+    expect(body.preview.promptDraft).toEqual(
+      expect.stringContaining("Draft a concise customer reply from the latest notes.")
+    );
+    expect(body.preview.steps).toHaveLength(4);
+    expect(body.preview.steps).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          id: "email-draft:apply-preview:step-3",
+          previewOnly: true,
+          externalEffect: "none",
+          description: expect.stringContaining("without creating an artifact")
+        }),
+        expect.objectContaining({
+          id: "email-draft:apply-preview:step-4",
+          description: expect.stringContaining("draft-external-reply")
+        })
+      ])
+    );
+    expect(Date.parse(body.preview.generatedAt)).not.toBeNaN();
+
+    await app.close();
+  });
+
+  it("refuses template apply previews for the reserved coding-agent mode", async () => {
+    const app = await buildServer();
+    const response = await app.inject({
+      method: "POST",
+      url: "/api/daily/templates/email-draft/apply-preview",
+      payload: {
+        mode: "coding_agent"
+      }
+    });
+
+    expect(response.statusCode).toBe(400);
+    expect(response.json()).toEqual({
+      mode: "coding_agent",
+      error: "Template apply previews are only available in daily_work mode."
+    });
+
+    await app.close();
+  });
+
+  it("returns 404 when a daily-work template apply preview target is missing", async () => {
+    const app = await buildServer();
+    const response = await app.inject({
+      method: "POST",
+      url: "/api/daily/templates/missing-template/apply-preview",
+      payload: {}
+    });
+
+    expect(response.statusCode).toBe(404);
+    expect(response.json()).toEqual({
+      mode: "daily_work",
+      error: "Daily-work template not found."
+    });
+
+    await app.close();
+  });
+
+  it("returns 400 for an invalid template apply preview request", async () => {
+    const app = await buildServer();
+    const response = await app.inject({
+      method: "POST",
+      url: "/api/daily/templates/email-draft/apply-preview",
+      payload: {
+        prompt: "",
+        contextItemIds: ["meeting-notes", ""]
+      }
+    });
+
+    expect(response.statusCode).toBe(400);
+    expect(response.json()).toEqual({
+      error: "Invalid template apply preview request.",
+      issues: expect.arrayContaining([
+        expect.objectContaining({
+          path: "prompt"
+        }),
+        expect.objectContaining({
+          path: "contextItemIds.1"
+        })
+      ])
+    });
+
+    await app.close();
+  });
+
+  it("handles CORS preflight for template apply previews", async () => {
+    const app = await buildServer();
+    const response = await app.inject({
+      method: "OPTIONS",
+      url: "/api/daily/templates/email-draft/apply-preview",
+      headers: {
+        origin: "http://localhost:3000"
+      }
+    });
+
+    expect(response.statusCode).toBe(204);
+    expect(response.headers["access-control-allow-origin"]).toBe(
+      "http://localhost:3000"
+    );
+    expect(response.headers["access-control-allow-methods"]).toBe(
+      "GET,POST,OPTIONS"
+    );
+
+    await app.close();
   });
 
   it("returns the default daily-work context items when no mode is provided", async () => {
