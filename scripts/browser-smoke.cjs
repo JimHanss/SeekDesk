@@ -46,6 +46,7 @@ async function main() {
     await runActivityStreamSmoke(client, apiServer.url);
     await runModelUsageSmoke(client, apiServer.url);
     await runDataLayerStateSmoke(client);
+    await runApprovalPreviewSmoke(client, apiServer.url);
     await runPromptSmoke(client);
     await runChatSendSmoke(client);
     await runCodeBlockSmoke(client);
@@ -597,6 +598,85 @@ async function runDataLayerStateSmoke(client) {
   });
 }
 
+async function runApprovalPreviewSmoke(client, apiUrl) {
+  const previewSnapshot = await fetchJson(
+    apiUrl,
+    "/api/daily/connectors/customer-email/preview",
+    {
+      action: "prepare_email_draft",
+      contextItemIds: ["meeting-notes"],
+      prompt: "Preview a customer follow-up draft."
+    }
+  );
+  assertConnectorPreviewSnapshot(previewSnapshot);
+
+  const decisionSnapshot = await fetchJson(
+    apiUrl,
+    "/api/daily/approvals/draft-external-reply/decision",
+    {
+      decision: "approved",
+      reason: "Browser smoke approved the preview-only action."
+    }
+  );
+  assertApprovalDecisionSnapshot(decisionSnapshot);
+
+  const panelState = await waitForValue(
+    client,
+    approvalPreviewPanelExpression(),
+    (state) =>
+      state.present &&
+      state.previewOnly === "true" &&
+      state.apiConnectorId &&
+      state.action &&
+      state.status &&
+      state.requestCount >= 1 &&
+      state.hasBoundaryText,
+    "approval preview panel state"
+  );
+
+  const denyRect = await waitForRect(
+    client,
+    approvalPreviewDecisionButtonExpression("deny"),
+    "approval preview deny button"
+  );
+  await clickAt(client, denyRect);
+
+  const deniedState = await waitForValue(
+    client,
+    approvalPreviewPanelExpression(),
+    (state) => state.status === "denied" && state.requestStatuses.includes("denied"),
+    "approval preview deny state"
+  );
+
+  const allowRect = await waitForRect(
+    client,
+    approvalPreviewDecisionButtonExpression("allow_once"),
+    "approval preview allow button"
+  );
+  await clickAt(client, allowRect);
+
+  const allowedState = await waitForValue(
+    client,
+    approvalPreviewPanelExpression(),
+    (state) =>
+      state.status === "allowed_once" &&
+      state.requestStatuses.every((status) => status === "allowed_once"),
+    "approval preview allow state"
+  );
+
+  checks.push({
+    name: "approval preview API and UI",
+    status: "passed",
+    apiConnectorId: panelState.apiConnectorId,
+    action: panelState.action,
+    initialStatus: panelState.status,
+    deniedStatus: deniedState.status,
+    allowedStatus: allowedState.status,
+    apiPreviewOnly: previewSnapshot.preview.previewOnly,
+    apiDecisionStatus: decisionSnapshot.request.status
+  });
+}
+
 async function runCodeBlockSmoke(client) {
   const initialInspection = await inspectCodeBlockDom(client);
   if (initialInspection.hasBlocks) {
@@ -755,6 +835,39 @@ function dataLayerStateExpression() {
       modelUsageSource: modelUsageRoot ? modelUsageRoot.getAttribute("data-model-usage-source") || "" : "",
       modelUsageStatus: modelUsageRoot ? modelUsageRoot.getAttribute("data-model-usage-status") || "" : ""
     };
+  })()`);
+}
+
+function approvalPreviewPanelExpression() {
+  return withSmokeHelpers(`(() => {
+    const root = document.querySelector("[data-approval-preview-panel]");
+    const text = root ? root.textContent || "" : "";
+    const requestStatuses = root
+      ? [...root.querySelectorAll("[data-approval-preview-status]")]
+          .map((element) => element.getAttribute("data-approval-preview-status") || "")
+      : [];
+
+    return {
+      present: Boolean(root),
+      apiConnectorId: root ? root.getAttribute("data-api-connector-id") || "" : "",
+      action: root ? root.getAttribute("data-connector-action-preview") || "" : "",
+      status: root ? root.getAttribute("data-connector-preview-status") || "" : "",
+      previewOnly: root ? root.getAttribute("data-connector-preview-only") || "" : "",
+      requestCount: requestStatuses.length,
+      requestStatuses,
+      hasBoundaryText: /preview-only|mock API|不会登录|不会.*外部记录/i.test(text)
+    };
+  })()`);
+}
+
+function approvalPreviewDecisionButtonExpression(action) {
+  return withSmokeHelpers(`(() => {
+    const root = document.querySelector("[data-approval-preview-panel]");
+    if (!root) return null;
+    const button = root.querySelector(
+      ${JSON.stringify(`[data-approval-decision-action="${action}"]`)}
+    );
+    return smokeRect(button && isClickableSmokeButton(button) ? button : null);
   })()`);
 }
 
@@ -1065,6 +1178,24 @@ async function fetchDailyEndpointSnapshot(apiUrl, path) {
   return response.json();
 }
 
+async function fetchJson(apiUrl, path, payload) {
+  const response = await fetch(new URL(path, apiUrl).toString(), {
+    method: "POST",
+    headers: {
+      Accept: "application/json",
+      "Content-Type": "application/json"
+    },
+    body: JSON.stringify(payload),
+    signal: AbortSignal.timeout(5000)
+  });
+
+  if (!response.ok) {
+    throw new Error(`${path} returned HTTP ${response.status}.`);
+  }
+
+  return response.json();
+}
+
 async function fetchActivityWebSocketSnapshot(apiUrl) {
   const wsUrl = activityWebSocketUrl(apiUrl);
   return new Promise((resolve, reject) => {
@@ -1157,6 +1288,57 @@ function assertModelUsageSnapshot(snapshot, label) {
 
   if (!snapshot.usage.records.length) {
     throw new Error(`${label} did not include any usage records.`);
+  }
+}
+
+function assertConnectorPreviewSnapshot(snapshot) {
+  const preview = snapshot && snapshot.preview;
+  if (
+    !snapshot ||
+    snapshot.mode !== "daily_work" ||
+    !preview ||
+    preview.connectorId !== "customer-email" ||
+    preview.action !== "prepare_email_draft" ||
+    preview.previewOnly !== true
+  ) {
+    throw new Error("Connector preview API did not return the expected preview payload.");
+  }
+
+  if (
+    !preview.safetyBoundary ||
+    !Array.isArray(preview.safetyBoundary.externalEffects) ||
+    !preview.safetyBoundary.externalEffects.includes("none")
+  ) {
+    throw new Error("Connector preview API did not preserve the no-effect boundary.");
+  }
+
+  if (
+    !Array.isArray(preview.requiredApprovalRequestIds) ||
+    !preview.requiredApprovalRequestIds.includes("draft-external-reply")
+  ) {
+    throw new Error("Connector preview API did not include approval linkage.");
+  }
+}
+
+function assertApprovalDecisionSnapshot(snapshot) {
+  if (
+    !snapshot ||
+    snapshot.mode !== "daily_work" ||
+    !snapshot.request ||
+    snapshot.request.id !== "draft-external-reply" ||
+    snapshot.request.status !== "approved" ||
+    snapshot.request.decision !== "allow_once" ||
+    !snapshot.audit ||
+    snapshot.audit.previewOnly !== true
+  ) {
+    throw new Error("Approval decision API did not return the expected decision payload.");
+  }
+
+  if (
+    !Array.isArray(snapshot.audit.externalEffects) ||
+    !snapshot.audit.externalEffects.includes("none")
+  ) {
+    throw new Error("Approval decision API did not preserve the no-effect audit.");
   }
 }
 
