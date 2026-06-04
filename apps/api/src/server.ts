@@ -8,15 +8,6 @@ import {
 import {
   appModeSchema,
   chatRequestSchema,
-  defaultDailyWorkApprovalRequests,
-  defaultDailyWorkConnectors,
-  defaultDailyActivityEvents,
-  defaultDailyWorkArtifacts,
-  defaultDailyWorkContextItems,
-  defaultDailyWorkSessionDetails,
-  defaultDailyWorkSessionSummaries,
-  defaultDailyWorkTemplates,
-  defaultDailyWorkflows,
   createDailyActivityEventResponse,
   createDailyActivityEventsResponse,
   createDailyActivitySnapshotMessage,
@@ -43,12 +34,21 @@ import websocket from "@fastify/websocket";
 import Fastify, { type FastifyReply, type FastifyRequest } from "fastify";
 import { pathToFileURL } from "node:url";
 
+import {
+  createDailyWorkRepositoryFromEnv,
+  type DailyWorkRepository
+} from "./repositories/daily-work-repository.js";
+
 const allowedOrigins = new Set([
   "http://localhost:3000",
   "http://127.0.0.1:3000"
 ]);
 
-export async function buildServer() {
+export async function buildServer(options?: {
+  dailyWorkRepository?: DailyWorkRepository;
+}) {
+  const dailyWorkRepository =
+    options?.dailyWorkRepository ?? createDailyWorkRepositoryFromEnv();
   const app = Fastify({
     logger: true
   });
@@ -116,7 +116,7 @@ export async function buildServer() {
 
       return {
         mode,
-        items: filterDailyWorkContextItems(mode)
+        items: await filterDailyWorkContextItems(dailyWorkRepository, mode)
       };
     }
   );
@@ -128,7 +128,7 @@ export async function buildServer() {
 
       return {
         mode,
-        requests: filterDailyWorkApprovalRequests(mode)
+        requests: await filterDailyWorkApprovalRequests(dailyWorkRepository, mode)
       };
     }
   );
@@ -140,7 +140,7 @@ export async function buildServer() {
 
       return {
         mode,
-        templates: filterDailyWorkTemplates(mode)
+        templates: await filterDailyWorkTemplates(dailyWorkRepository, mode)
       };
     }
   );
@@ -152,7 +152,7 @@ export async function buildServer() {
 
       return {
         mode,
-        artifacts: filterDailyWorkArtifacts(mode)
+        artifacts: await filterDailyWorkArtifacts(dailyWorkRepository, mode)
       };
     }
   );
@@ -173,7 +173,7 @@ export async function buildServer() {
 
       return {
         mode,
-        sessions: filterDailyWorkSessionSummaries(mode)
+        sessions: await filterDailyWorkSessionSummaries(dailyWorkRepository, mode)
       };
     }
   );
@@ -186,11 +186,13 @@ export async function buildServer() {
     async (request, reply): Promise<DailyWorkSessionResponse | void> => {
       const mode = normalizeAppMode(request.query.mode);
       const session = filterDailyWorkSessionDetail(
+        dailyWorkRepository,
         mode,
         request.params.sessionId
       );
+      const resolvedSession = await session;
 
-      if (!session) {
+      if (!resolvedSession) {
         reply.code(404).send({
           mode,
           error: "Daily-work session not found."
@@ -200,7 +202,7 @@ export async function buildServer() {
 
       return {
         mode,
-        session
+        session: resolvedSession
       };
     }
   );
@@ -212,7 +214,11 @@ export async function buildServer() {
     "/api/daily/artifacts/:artifactId",
     async (request, reply): Promise<DailyWorkArtifactResponse | void> => {
       const mode = normalizeAppMode(request.query.mode);
-      const artifact = filterDailyWorkArtifact(mode, request.params.artifactId);
+      const artifact = await filterDailyWorkArtifact(
+        dailyWorkRepository,
+        mode,
+        request.params.artifactId
+      );
 
       if (!artifact) {
         reply.code(404).send({
@@ -236,7 +242,7 @@ export async function buildServer() {
 
       return createDailyActivityEventsResponse({
         mode,
-        events: filterDailyActivityEvents(mode)
+        events: await filterDailyActivityEvents(dailyWorkRepository, mode)
       });
     }
   );
@@ -248,7 +254,11 @@ export async function buildServer() {
     "/api/daily/events/:eventId",
     async (request, reply): Promise<DailyActivityEventResponse | void> => {
       const mode = normalizeAppMode(request.query.mode);
-      const event = filterDailyActivityEvent(mode, request.params.eventId);
+      const event = await filterDailyActivityEvent(
+        dailyWorkRepository,
+        mode,
+        request.params.eventId
+      );
 
       if (!event) {
         reply.code(404).send({
@@ -273,7 +283,7 @@ export async function buildServer() {
 
       return {
         mode,
-        connectors: filterDailyWorkConnectors(mode)
+        connectors: await filterDailyWorkConnectors(dailyWorkRepository, mode)
       };
     }
   );
@@ -285,7 +295,8 @@ export async function buildServer() {
     "/api/daily/connectors/:connectorId",
     async (request, reply): Promise<DailyWorkConnectorResponse | void> => {
       const mode = normalizeAppMode(request.query.mode);
-      const connector = filterDailyWorkConnector(
+      const connector = await filterDailyWorkConnector(
+        dailyWorkRepository,
         mode,
         request.params.connectorId
       );
@@ -312,7 +323,7 @@ export async function buildServer() {
 
       return {
         mode,
-        workflows: filterDailyWorkWorkflows(mode)
+        workflows: await filterDailyWorkWorkflows(dailyWorkRepository, mode)
       };
     }
   );
@@ -324,7 +335,8 @@ export async function buildServer() {
     "/api/daily/workflows/:workflowId",
     async (request, reply): Promise<DailyWorkWorkflowResponse | void> => {
       const mode = normalizeAppMode(request.query.mode);
-      const workflow = filterDailyWorkWorkflow(
+      const workflow = await filterDailyWorkWorkflow(
+        dailyWorkRepository,
         mode,
         request.params.workflowId
       );
@@ -371,7 +383,7 @@ export async function buildServer() {
       .send(stream);
   });
 
-  app.get("/ws", { websocket: true }, (socket) => {
+  app.get("/ws", { websocket: true }, async (socket) => {
     socket.send(
       JSON.stringify({
         type: "connection.ready",
@@ -383,7 +395,10 @@ export async function buildServer() {
       JSON.stringify(
         createDailyActivitySnapshotMessage({
           mode: "daily_work",
-          events: filterDailyActivityEvents("daily_work")
+          events: await filterDailyActivityEvents(
+            dailyWorkRepository,
+            "daily_work"
+          )
         })
       )
     );
@@ -417,100 +432,146 @@ function normalizeAppMode(mode: unknown): AppMode {
   return parsed.success ? parsed.data : "daily_work";
 }
 
-function filterDailyWorkTemplates(mode: AppMode) {
+async function filterDailyWorkTemplates(
+  repository: DailyWorkRepository,
+  mode: AppMode
+) {
   if (mode !== "daily_work") {
     return [];
   }
 
-  return defaultDailyWorkTemplates;
+  return repository.listTemplates();
 }
 
-function filterDailyWorkArtifacts(mode: AppMode) {
+async function filterDailyWorkArtifacts(
+  repository: DailyWorkRepository,
+  mode: AppMode
+) {
   if (mode !== "daily_work") {
     return [];
   }
 
-  return defaultDailyWorkArtifacts;
+  return repository.listArtifacts();
 }
 
-function filterDailyWorkArtifact(mode: AppMode, artifactId: string) {
-  return filterDailyWorkArtifacts(mode).find(
+async function filterDailyWorkArtifact(
+  repository: DailyWorkRepository,
+  mode: AppMode,
+  artifactId: string
+) {
+  return (await filterDailyWorkArtifacts(repository, mode)).find(
     (artifact) => artifact.id === artifactId
   );
 }
 
-function filterDailyActivityEvents(mode: AppMode) {
+async function filterDailyActivityEvents(
+  repository: DailyWorkRepository,
+  mode: AppMode
+) {
   if (mode !== "daily_work") {
     return [];
   }
 
-  return defaultDailyActivityEvents;
+  return repository.listEvents();
 }
 
-function filterDailyActivityEvent(mode: AppMode, eventId: string) {
-  return filterDailyActivityEvents(mode).find((event) => event.id === eventId);
+async function filterDailyActivityEvent(
+  repository: DailyWorkRepository,
+  mode: AppMode,
+  eventId: string
+) {
+  return (await filterDailyActivityEvents(repository, mode)).find(
+    (event) => event.id === eventId
+  );
 }
 
-function filterDailyWorkConnectors(mode: AppMode) {
+async function filterDailyWorkConnectors(
+  repository: DailyWorkRepository,
+  mode: AppMode
+) {
   if (mode !== "daily_work") {
     return [];
   }
 
-  return defaultDailyWorkConnectors;
+  return repository.listConnectors();
 }
 
-function filterDailyWorkConnector(mode: AppMode, connectorId: string) {
-  return filterDailyWorkConnectors(mode).find(
+async function filterDailyWorkConnector(
+  repository: DailyWorkRepository,
+  mode: AppMode,
+  connectorId: string
+) {
+  return (await filterDailyWorkConnectors(repository, mode)).find(
     (connector) => connector.id === connectorId
   );
 }
 
-function filterDailyWorkWorkflows(mode: AppMode) {
+async function filterDailyWorkWorkflows(
+  repository: DailyWorkRepository,
+  mode: AppMode
+) {
   if (mode !== "daily_work") {
     return [];
   }
 
-  return defaultDailyWorkflows;
+  return repository.listWorkflows();
 }
 
-function filterDailyWorkWorkflow(mode: AppMode, workflowId: string) {
-  return filterDailyWorkWorkflows(mode).find(
+async function filterDailyWorkWorkflow(
+  repository: DailyWorkRepository,
+  mode: AppMode,
+  workflowId: string
+) {
+  return (await filterDailyWorkWorkflows(repository, mode)).find(
     (workflow) => workflow.id === workflowId
   );
 }
 
-function filterDailyWorkSessionSummaries(mode: AppMode) {
+async function filterDailyWorkSessionSummaries(
+  repository: DailyWorkRepository,
+  mode: AppMode
+) {
   if (mode !== "daily_work") {
     return [];
   }
 
-  return defaultDailyWorkSessionSummaries;
+  return repository.listSessionSummaries();
 }
 
-function filterDailyWorkSessionDetail(mode: AppMode, sessionId: string) {
+async function filterDailyWorkSessionDetail(
+  repository: DailyWorkRepository,
+  mode: AppMode,
+  sessionId: string
+) {
   if (mode !== "daily_work") {
     return undefined;
   }
 
-  return defaultDailyWorkSessionDetails.find(
+  return (await repository.listSessionDetails()).find(
     (session) => session.id === sessionId
   );
 }
 
-function filterDailyWorkContextItems(mode: AppMode) {
+async function filterDailyWorkContextItems(
+  repository: DailyWorkRepository,
+  mode: AppMode
+) {
   if (mode !== "daily_work") {
     return [];
   }
 
-  return defaultDailyWorkContextItems;
+  return repository.listContextItems();
 }
 
-function filterDailyWorkApprovalRequests(mode: AppMode) {
+async function filterDailyWorkApprovalRequests(
+  repository: DailyWorkRepository,
+  mode: AppMode
+) {
   if (mode !== "daily_work") {
     return [];
   }
 
-  return defaultDailyWorkApprovalRequests;
+  return repository.listApprovalRequests();
 }
 
 function createDailyModelUsageSnapshot(mode: AppMode): DailyModelUsageResponse {

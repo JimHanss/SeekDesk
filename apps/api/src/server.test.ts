@@ -1,5 +1,8 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { mkdtemp, rm, writeFile } from "node:fs/promises";
 import type { AddressInfo } from "node:net";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import {
   dailyActivityEventResponseSchema,
   dailyActivityEventsResponseSchema,
@@ -16,7 +19,8 @@ const deepSeekEnvKeys = [
   "DEEPSEEK_MODEL_ROUTE",
   "DEEPSEEK_THINKING_MODE",
   "DEEPSEEK_STREAM_USAGE",
-  "DEEPSEEK_STREAM_USAGE_ENABLED"
+  "DEEPSEEK_STREAM_USAGE_ENABLED",
+  "SEEKDESK_DATA_DIR"
 ] as const;
 
 const originalDeepSeekEnv = new Map(
@@ -86,6 +90,62 @@ describe("api server", () => {
     expect(response.json().templates).toHaveLength(6);
 
     await app.close();
+  });
+
+  it("reads daily-work templates from the configured JSON data directory", async () => {
+    const dataDir = await mkdtemp(join(tmpdir(), "seekdesk-api-data-"));
+    process.env.SEEKDESK_DATA_DIR = dataDir;
+
+    await writeFile(
+      join(dataDir, "templates.json"),
+      JSON.stringify(
+        {
+          templates: [
+            {
+              id: "json-template",
+              mode: "daily_work",
+              category: "planning",
+              title: "JSON template",
+              description: "Loaded from a local JSON data directory.",
+              prompt: "Create a persisted daily plan.",
+              artifactType: "task_list",
+              tags: ["json", "repository"],
+              enabled: true
+            }
+          ]
+        },
+        null,
+        2
+      )
+    );
+
+    try {
+      const app = await buildServer();
+
+      try {
+        const response = await app.inject({
+          method: "GET",
+          url: "/api/daily/templates"
+        });
+
+        expect(response.statusCode).toBe(200);
+        expect(response.json()).toEqual({
+          mode: "daily_work",
+          templates: [
+            expect.objectContaining({
+              id: "json-template",
+              mode: "daily_work",
+              category: "planning",
+              artifactType: "task_list"
+            })
+          ]
+        });
+      } finally {
+        await app.close();
+      }
+    } finally {
+      await rm(dataDir, { force: true, recursive: true });
+    }
   });
 
   it("returns the default daily-work context items when no mode is provided", async () => {
