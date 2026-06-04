@@ -1,6 +1,6 @@
 "use client";
 
-import type { FormEvent, ReactNode } from "react";
+import type { FormEvent, ReactNode, RefObject } from "react";
 import { useEffect, useMemo, useRef, useState } from "react";
 import {
   Activity,
@@ -36,6 +36,7 @@ import { cn } from "@/lib/utils";
 type AppMode = "daily_work" | "coding_agent";
 type ChatRole = "user" | "assistant";
 type ChatStatus = "idle" | "submitting" | "streaming" | "error";
+type AssistantResponseMode = "text" | "json" | "sse" | "ndjson";
 
 interface ChatMessage {
   id: string;
@@ -911,14 +912,7 @@ const artifacts: ArtifactItem[] = [
   }
 ];
 
-const initialMessages: ChatMessage[] = [
-  {
-    id: "assistant-welcome",
-    role: "assistant",
-    content:
-      "SeekDesk 当前运行在日常工作模式。你可以从左侧模板快速开始，也可以从右侧选择会话知识上下文；当前版本只引用会话级示例，不读取真实文件或外部文档。"
-  }
-];
+const initialMessages: ChatMessage[] = [];
 
 const initialApprovalRequests: ApprovalRequestItem[] = [
   {
@@ -1151,6 +1145,9 @@ export default function Page() {
   const [input, setInput] = useState("");
   const [status, setStatus] = useState<ChatStatus>("idle");
   const [error, setError] = useState<string | null>(null);
+  const [lastSubmittedPrompt, setLastSubmittedPrompt] = useState<string | null>(
+    null
+  );
   const [sessionHistoryFilter, setSessionHistoryFilter] =
     useState<SessionHistoryFilter>("全部");
   const [selectedSessionHistoryId, setSelectedSessionHistoryId] = useState<
@@ -1192,7 +1189,8 @@ export default function Page() {
     initialApprovalRequests
   );
   const abortRef = useRef<AbortController | null>(null);
-  const inputRef = useRef<HTMLInputElement | null>(null);
+  const inputRef = useRef<HTMLTextAreaElement | null>(null);
+  const messagesEndRef = useRef<HTMLDivElement | null>(null);
 
   const isBusy = status === "submitting" || status === "streaming";
   const apiBaseUrl = useMemo(() => getRuntimeApiBaseUrl().replace(/\/$/, ""), []);
@@ -1438,10 +1436,22 @@ export default function Page() {
     };
   }, [apiBaseUrl]);
 
+  useEffect(() => {
+    messagesEndRef.current?.scrollIntoView({ block: "end" });
+  }, [messages, status]);
+
   async function handleSubmit(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
 
     const prompt = input.trim();
+    if (!prompt) {
+      return;
+    }
+
+    await submitPrompt(prompt);
+  }
+
+  async function submitPrompt(prompt: string) {
     if (!prompt || isBusy) {
       return;
     }
@@ -1458,10 +1468,12 @@ export default function Page() {
     };
     const controller = new AbortController();
     const nextMessages = [...messages, userMessage];
+    let receivedContent = "";
 
     abortRef.current = controller;
     setInput("");
     setError(null);
+    setLastSubmittedPrompt(prompt);
     setStatus("submitting");
     setMessages((current) => [...current, userMessage, assistantMessage]);
 
@@ -1482,37 +1494,29 @@ export default function Page() {
       });
 
       if (!response.ok) {
-        throw new Error(`请求失败：${response.status}`);
-      }
-
-      if (!response.body) {
-        throw new Error("后端没有返回可读取的流。");
+        throw new Error(await formatChatError(response));
       }
 
       setStatus("streaming");
+      await readAssistantResponse(response, (delta) => {
+        receivedContent += delta;
+        appendAssistantDelta(assistantMessage.id, delta);
+      });
 
-      const reader = response.body.getReader();
-      const decoder = new TextDecoder();
-
-      while (true) {
-        const { done, value } = await reader.read();
-        if (done) {
-          break;
-        }
-
-        const chunk = decoder.decode(value, { stream: true });
-        appendAssistantDelta(assistantMessage.id, chunk);
-      }
-
-      const finalChunk = decoder.decode();
-      if (finalChunk) {
-        appendAssistantDelta(assistantMessage.id, finalChunk);
+      if (!receivedContent.trim()) {
+        setAssistantMessageContent(
+          assistantMessage.id,
+          "后端返回了空响应。请补充上下文后重试，或检查当前模型服务是否可用。"
+        );
       }
 
       setStatus("idle");
     } catch (requestError) {
       if (controller.signal.aborted) {
-        appendAssistantDelta(assistantMessage.id, "\n\n任务已取消。");
+        appendAssistantDelta(
+          assistantMessage.id,
+          receivedContent.trim() ? "\n\n已停止生成。" : "已停止生成。"
+        );
         setStatus("idle");
       } else {
         const message =
@@ -1522,7 +1526,14 @@ export default function Page() {
 
         setError(message);
         setStatus("error");
-        appendAssistantDelta(assistantMessage.id, `\n\n${message}`);
+        if (receivedContent.trim()) {
+          appendAssistantDelta(assistantMessage.id, `\n\n请求中断：${message}`);
+        } else {
+          setAssistantMessageContent(
+            assistantMessage.id,
+            `请求没有完成。\n\n${message}`
+          );
+        }
       }
     } finally {
       if (abortRef.current === controller) {
@@ -1532,6 +1543,10 @@ export default function Page() {
   }
 
   function appendAssistantDelta(messageId: string, delta: string) {
+    if (!delta) {
+      return;
+    }
+
     setMessages((current) =>
       current.map((message) =>
         message.id === messageId
@@ -1541,13 +1556,30 @@ export default function Page() {
     );
   }
 
+  function setAssistantMessageContent(messageId: string, content: string) {
+    setMessages((current) =>
+      current.map((message) =>
+        message.id === messageId ? { ...message, content } : message
+      )
+    );
+  }
+
   function cancelRequest() {
     abortRef.current?.abort();
   }
 
   function applyPrompt(prompt: string) {
+    setError(null);
     setInput(prompt);
     inputRef.current?.focus();
+  }
+
+  function retryLastPrompt() {
+    if (!lastSubmittedPrompt || isBusy) {
+      return;
+    }
+
+    void submitPrompt(lastSubmittedPrompt);
   }
 
   function restoreSessionHistory(item: SessionHistoryItem) {
@@ -1935,6 +1967,18 @@ export default function Page() {
                   {activeUsageSnapshot.updatedAt}
                 </div>
               </div>
+
+              <ChatThread
+                endpoint={endpoint}
+                error={error}
+                lastSubmittedPrompt={lastSubmittedPrompt}
+                messages={messages}
+                messagesEndRef={messagesEndRef}
+                modelName={activeModelSnapshot.selectedModel}
+                onDismissError={() => setError(null)}
+                onRetry={retryLastPrompt}
+                status={status}
+              />
 
               <div
                 className="rounded-[8px] border border-teal-100 bg-white p-3"
@@ -2404,36 +2448,19 @@ export default function Page() {
                 </div>
               </div>
 
-              {messages.map((message, index) => (
-                <ChatBubble
-                  key={message.id}
-                  message={message}
-                  streaming={
-                    status === "streaming" &&
-                    message.role === "assistant" &&
-                    index === messages.length - 1
-                  }
-                />
-              ))}
-
-              {error ? (
-                <div className="flex items-start gap-2 rounded-[8px] border border-red-200 bg-red-50 px-3 py-2 text-sm text-red-800">
-                  <AlertCircle className="mt-0.5 size-4 shrink-0" aria-hidden="true" />
-                  <span>{error}</span>
-                </div>
-              ) : null}
             </div>
 
             <form className="border-t border-teal-100 bg-white p-4" onSubmit={handleSubmit}>
-              <div className="flex min-h-14 items-center gap-3 rounded-[8px] border border-teal-200 bg-white px-3 py-2 shadow-inner focus-within:border-teal-500 focus-within:ring-2 focus-within:ring-teal-100">
-                <input
+              <div className="flex min-h-16 items-end gap-3 rounded-[8px] border border-teal-200 bg-white px-3 py-2 shadow-inner focus-within:border-teal-500 focus-within:ring-2 focus-within:ring-teal-100">
+                <textarea
                   ref={inputRef}
-                  className="min-w-0 flex-1 bg-transparent text-sm text-teal-950 outline-none placeholder:text-teal-500"
+                  className="max-h-40 min-h-10 min-w-0 flex-1 resize-none bg-transparent py-2 text-sm leading-5 text-teal-950 outline-none placeholder:text-teal-500"
                   placeholder={modelInputPlaceholder}
                   aria-label="日常工作输入"
                   value={input}
                   onChange={(event) => setInput(event.target.value)}
                   disabled={isBusy}
+                  rows={1}
                 />
                 <Button
                   size="sm"
@@ -3002,6 +3029,269 @@ function getRuntimeWebSocketUrl(apiBaseUrl: string) {
   }
 }
 
+async function readAssistantResponse(
+  response: Response,
+  onDelta: (delta: string) => void
+) {
+  const mode = assistantResponseMode(response.headers.get("content-type") ?? "");
+
+  if (mode === "json" || !response.body) {
+    const content = extractAssistantTextPayload(await response.text());
+    if (content) {
+      onDelta(content);
+    }
+    return content;
+  }
+
+  const reader = response.body.getReader();
+  const decoder = new TextDecoder();
+
+  switch (mode) {
+    case "sse":
+      return readAssistantSseStream(reader, decoder, onDelta);
+    case "ndjson":
+      return readAssistantNdjsonStream(reader, decoder, onDelta);
+    case "text":
+      return readAssistantTextStream(reader, decoder, onDelta);
+  }
+}
+
+async function readAssistantTextStream(
+  reader: ReadableStreamDefaultReader<Uint8Array>,
+  decoder: TextDecoder,
+  onDelta: (delta: string) => void
+) {
+  let content = "";
+
+  while (true) {
+    const { done, value } = await reader.read();
+    if (done) {
+      break;
+    }
+
+    const delta = decoder.decode(value, { stream: true });
+    content += delta;
+    onDelta(delta);
+  }
+
+  const finalChunk = decoder.decode();
+  if (finalChunk) {
+    content += finalChunk;
+    onDelta(finalChunk);
+  }
+
+  return content;
+}
+
+async function readAssistantSseStream(
+  reader: ReadableStreamDefaultReader<Uint8Array>,
+  decoder: TextDecoder,
+  onDelta: (delta: string) => void
+) {
+  let buffer = "";
+  let dataLines: string[] = [];
+  let content = "";
+
+  const flushEvent = () => {
+    if (!dataLines.length) {
+      return;
+    }
+
+    const delta = extractAssistantTextPayload(dataLines.join("\n"));
+    dataLines = [];
+
+    if (!delta) {
+      return;
+    }
+
+    content += delta;
+    onDelta(delta);
+  };
+
+  const processLine = (line: string) => {
+    if (!line.trim()) {
+      flushEvent();
+      return;
+    }
+
+    if (line.startsWith("data:")) {
+      dataLines.push(line.slice(5).trimStart());
+    }
+  };
+
+  while (true) {
+    const { done, value } = await reader.read();
+    if (done) {
+      break;
+    }
+
+    buffer += decoder.decode(value, { stream: true });
+    const lines = buffer.split(/\r?\n/);
+    buffer = lines.pop() ?? "";
+    lines.forEach(processLine);
+  }
+
+  buffer += decoder.decode();
+  if (buffer) {
+    buffer.split(/\r?\n/).forEach(processLine);
+  }
+  flushEvent();
+
+  return content;
+}
+
+async function readAssistantNdjsonStream(
+  reader: ReadableStreamDefaultReader<Uint8Array>,
+  decoder: TextDecoder,
+  onDelta: (delta: string) => void
+) {
+  let buffer = "";
+  let content = "";
+
+  const processLine = (line: string) => {
+    const delta = extractAssistantTextPayload(line);
+    if (!delta) {
+      return;
+    }
+
+    content += delta;
+    onDelta(delta);
+  };
+
+  while (true) {
+    const { done, value } = await reader.read();
+    if (done) {
+      break;
+    }
+
+    buffer += decoder.decode(value, { stream: true });
+    const lines = buffer.split(/\r?\n/);
+    buffer = lines.pop() ?? "";
+    lines.forEach(processLine);
+  }
+
+  buffer += decoder.decode();
+  if (buffer.trim()) {
+    processLine(buffer);
+  }
+
+  return content;
+}
+
+function assistantResponseMode(contentType: string): AssistantResponseMode {
+  const normalized = contentType.toLowerCase();
+
+  if (normalized.includes("text/event-stream")) {
+    return "sse";
+  }
+
+  if (
+    normalized.includes("application/x-ndjson") ||
+    normalized.includes("application/jsonl") ||
+    normalized.includes("ndjson")
+  ) {
+    return "ndjson";
+  }
+
+  if (normalized.includes("application/json")) {
+    return "json";
+  }
+
+  return "text";
+}
+
+async function formatChatError(response: Response) {
+  const fallback = `请求失败：${response.status}`;
+
+  try {
+    const detail = extractAssistantTextPayload(await response.text());
+    return detail ? `${fallback}：${detail}` : fallback;
+  } catch {
+    return fallback;
+  }
+}
+
+function extractAssistantTextPayload(payload: string): string {
+  const trimmed = payload.trim();
+
+  if (!trimmed || trimmed === "[DONE]") {
+    return "";
+  }
+
+  if (!isJsonLike(trimmed)) {
+    return payload;
+  }
+
+  try {
+    return extractAssistantTextFromJson(JSON.parse(trimmed)) ?? "";
+  } catch {
+    return payload;
+  }
+}
+
+function extractAssistantTextFromJson(value: unknown): string | null {
+  if (typeof value === "string") {
+    return value;
+  }
+
+  if (Array.isArray(value)) {
+    return joinAssistantText(value.map(extractAssistantTextFromJson));
+  }
+
+  if (!isRecord(value)) {
+    return null;
+  }
+
+  for (const key of [
+    "delta",
+    "content",
+    "text",
+    "response",
+    "message",
+    "output_text",
+    "error"
+  ]) {
+    if (typeof value[key] === "string") {
+      return value[key];
+    }
+  }
+
+  if (Array.isArray(value.choices)) {
+    return joinAssistantText(
+      value.choices.map((choice) => {
+        if (!isRecord(choice)) {
+          return null;
+        }
+
+        return (
+          extractAssistantTextFromJson(choice.delta) ??
+          extractAssistantTextFromJson(choice.message) ??
+          extractAssistantTextFromJson(choice.text)
+        );
+      })
+    );
+  }
+
+  return (
+    extractAssistantTextFromJson(value.message) ??
+    extractAssistantTextFromJson(value.delta) ??
+    extractAssistantTextFromJson(value.output) ??
+    extractAssistantTextFromJson(value.content)
+  );
+}
+
+function joinAssistantText(parts: Array<string | null>) {
+  const content = parts.filter((part): part is string => Boolean(part)).join("");
+  return content || null;
+}
+
+function isJsonLike(value: string) {
+  return (
+    (value.startsWith("{") && value.endsWith("}")) ||
+    (value.startsWith("[") && value.endsWith("]"))
+  );
+}
+
 function parseDailyActivitySnapshot(data: unknown): DailyActivitySnapshotDto | null {
   if (typeof data !== "string") {
     return null;
@@ -3212,17 +3502,189 @@ function formatActivityUpdatedAt(date: Date) {
   }).format(date);
 }
 
-function ChatBubble({
-  message,
-  streaming
+function ChatThread({
+  endpoint,
+  error,
+  lastSubmittedPrompt,
+  messages,
+  messagesEndRef,
+  modelName,
+  onDismissError,
+  onRetry,
+  status
 }: {
-  message: ChatMessage;
-  streaming: boolean;
+  endpoint: string;
+  error: string | null;
+  lastSubmittedPrompt: string | null;
+  messages: ChatMessage[];
+  messagesEndRef: RefObject<HTMLDivElement | null>;
+  modelName: string;
+  onDismissError: () => void;
+  onRetry: () => void;
+  status: ChatStatus;
 }) {
-  const isUser = message.role === "user";
+  const isBusy = status === "submitting" || status === "streaming";
 
   return (
-    <div className={cn("flex gap-3", isUser ? "justify-end" : "justify-start")}>
+    <div
+      className="rounded-[8px] border border-teal-100 bg-white p-3 shadow-sm"
+      data-chat-message-count={messages.length}
+      data-chat-status={status}
+      data-chat-thread
+    >
+      <div className="mb-3 flex flex-col gap-2 md:flex-row md:items-start md:justify-between">
+        <div className="min-w-0">
+          <div className="flex items-center gap-2 text-sm font-semibold text-teal-950">
+            <MessageSquare className="size-4 shrink-0 text-teal-700" aria-hidden="true" />
+            <span className="min-w-0 break-words">对话工作区</span>
+          </div>
+          <p className="mt-1 text-xs leading-5 text-teal-700">
+            daily_work 消息发送到 /api/chat，模型响应会在此增量写入。
+          </p>
+        </div>
+        <span className="inline-flex shrink-0 items-center gap-1 rounded-[999px] bg-teal-50 px-2.5 py-1 text-[11px] font-medium text-teal-700">
+          <Activity className="size-3.5" aria-hidden="true" />
+          {statusLabel(status)}
+        </span>
+      </div>
+
+      <div className="space-y-3">
+        {messages.length === 0 ? (
+          <ChatEmptyState endpoint={endpoint} modelName={modelName} />
+        ) : (
+          messages.map((message, index) => (
+            <ChatBubble
+              key={message.id}
+              message={message}
+              pending={
+                isBusy &&
+                message.role === "assistant" &&
+                index === messages.length - 1
+              }
+            />
+          ))
+        )}
+
+        {isBusy ? <ChatProgress status={status} /> : null}
+
+        {error ? (
+          <ChatErrorState
+            canRetry={Boolean(lastSubmittedPrompt) && !isBusy}
+            error={error}
+            onDismiss={onDismissError}
+            onRetry={onRetry}
+          />
+        ) : null}
+
+        <div ref={messagesEndRef} />
+      </div>
+    </div>
+  );
+}
+
+function ChatEmptyState({
+  endpoint,
+  modelName
+}: {
+  endpoint: string;
+  modelName: string;
+}) {
+  return (
+    <div
+      className="rounded-[8px] border border-dashed border-teal-200 bg-teal-50/70 px-4 py-4"
+      data-chat-empty-state
+    >
+      <div className="flex flex-col gap-3 md:flex-row md:items-start md:justify-between">
+        <div className="min-w-0">
+          <div className="flex items-center gap-2 text-sm font-semibold text-teal-950">
+            <Bot className="size-4 shrink-0 text-teal-700" aria-hidden="true" />
+            <span className="min-w-0 break-words">等待第一条日常工作任务</span>
+          </div>
+          <p className="mt-1 text-xs leading-5 text-teal-700">
+            当前会话保持审批边界，输出可包含正文、清单和高亮代码块。
+          </p>
+        </div>
+        <span className="inline-flex shrink-0 items-center gap-1 rounded-[999px] bg-white px-2.5 py-1 text-[11px] font-medium text-teal-700">
+          <CheckCircle2 className="size-3.5" aria-hidden="true" />
+          API ready
+        </span>
+      </div>
+      <div className="mt-3 grid gap-2 md:grid-cols-2">
+        <StatusRow label="Endpoint" value={endpoint} />
+        <StatusRow label="Model" value={modelName} />
+      </div>
+    </div>
+  );
+}
+
+function ChatProgress({ status }: { status: ChatStatus }) {
+  const label =
+    status === "submitting"
+      ? "正在连接日常工作模型..."
+      : "正在接收增量响应...";
+
+  return (
+    <div
+      className="flex items-center gap-2 rounded-[8px] border border-sky-100 bg-sky-50 px-3 py-2 text-sm text-sky-800"
+      data-chat-progress
+    >
+      <Loader2 className="size-4 shrink-0 animate-spin" aria-hidden="true" />
+      <span className="min-w-0 break-words">{label}</span>
+    </div>
+  );
+}
+
+function ChatErrorState({
+  canRetry,
+  error,
+  onDismiss,
+  onRetry
+}: {
+  canRetry: boolean;
+  error: string;
+  onDismiss: () => void;
+  onRetry: () => void;
+}) {
+  return (
+    <div className="rounded-[8px] border border-red-200 bg-red-50 px-3 py-3 text-sm text-red-800">
+      <div className="flex items-start gap-2">
+        <AlertCircle className="mt-0.5 size-4 shrink-0" aria-hidden="true" />
+        <span className="min-w-0 break-words">{error}</span>
+      </div>
+      <div className="mt-3 flex flex-wrap gap-2">
+        <Button
+          type="button"
+          size="sm"
+          className="bg-red-600 hover:bg-red-700"
+          disabled={!canRetry}
+          onClick={onRetry}
+        >
+          <Play className="size-4" aria-hidden="true" />
+          重新发送
+        </Button>
+        <Button type="button" variant="secondary" size="sm" onClick={onDismiss}>
+          清除错误
+        </Button>
+      </div>
+    </div>
+  );
+}
+
+function ChatBubble({
+  message,
+  pending
+}: {
+  message: ChatMessage;
+  pending: boolean;
+}) {
+  const isUser = message.role === "user";
+  const hasContent = message.content.trim().length > 0;
+
+  return (
+    <div
+      className={cn("flex gap-3", isUser ? "justify-end" : "justify-start")}
+      data-chat-message-role={message.role}
+    >
       {!isUser ? (
         <div className="mt-1 grid size-8 shrink-0 place-items-center rounded-[8px] bg-teal-50 text-teal-700">
           <Bot className="size-4" aria-hidden="true" />
@@ -3243,11 +3705,18 @@ function ChatBubble({
             <Sparkles className="size-3.5" aria-hidden="true" />
           )}
           {isUser ? "你" : "SeekDesk"}
-          {streaming ? (
+          {pending ? (
             <Loader2 className="size-3.5 animate-spin" aria-hidden="true" />
           ) : null}
         </div>
-        <MessageContent content={message.content} />
+        {hasContent ? (
+          <MessageContent content={message.content} />
+        ) : (
+          <div className="flex items-center gap-2 text-sm text-teal-700">
+            <Loader2 className="size-4 animate-spin" aria-hidden="true" />
+            <span>正在建立响应...</span>
+          </div>
+        )}
       </div>
     </div>
   );

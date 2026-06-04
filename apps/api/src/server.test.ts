@@ -1,4 +1,4 @@
-import { afterEach, beforeEach, describe, expect, it } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { AddressInfo } from "node:net";
 import {
   dailyActivityEventResponseSchema,
@@ -31,6 +31,8 @@ describe("api server", () => {
   });
 
   afterEach(() => {
+    vi.unstubAllGlobals();
+
     for (const key of deepSeekEnvKeys) {
       const originalValue = originalDeepSeekEnv.get(key);
       if (originalValue === undefined) {
@@ -1234,6 +1236,8 @@ describe("api server", () => {
     );
     expect(response.body).toContain("Mock daily-work AI response");
     expect(response.body).toContain("summarize this repository");
+    expect(response.headers["x-seekdesk-chat-mode"]).toBe("daily_work");
+    expect(response.headers["x-seekdesk-chat-provider"]).toBe("mock");
 
     await app.close();
   });
@@ -1274,6 +1278,121 @@ describe("api server", () => {
     await app.close();
   });
 
+  it("keeps session and context fields on daily-work chat requests", async () => {
+    const app = await buildServer();
+    const response = await app.inject({
+      method: "POST",
+      url: "/api/chat",
+      payload: {
+        mode: "daily_work",
+        sessionId: "customer-follow-up-session",
+        prompt: "summarize the linked context",
+        context: {
+          workspaceId: "workspace-seekdesk",
+          contextItemIds: ["customer-email", "meeting-notes"],
+          artifactIds: ["email-draft-artifact"],
+          approvalRequestIds: ["read-customer-email-context"],
+          connectorIds: ["customer-email"],
+          extraSignal: {
+            safe: true
+          }
+        }
+      }
+    });
+
+    expect(response.statusCode).toBe(200);
+    expect(response.headers["x-seekdesk-chat-mode"]).toBe("daily_work");
+    expect(response.headers["x-seekdesk-chat-provider"]).toBe("mock");
+    expect(response.body).toContain("Mock daily-work AI response");
+    expect(response.body).toContain("summarize the linked context");
+
+    await app.close();
+  });
+
+  it("rejects invalid chat requests", async () => {
+    const app = await buildServer();
+    const response = await app.inject({
+      method: "POST",
+      url: "/api/chat",
+      payload: {
+        mode: "daily_work",
+        messages: []
+      }
+    });
+
+    expect(response.statusCode).toBe(400);
+    expect(response.json()).toEqual({
+      error: "Invalid chat request.",
+      issues: expect.arrayContaining([
+        expect.objectContaining({
+          path: "messages",
+          message: "A prompt or at least one chat message is required."
+        })
+      ])
+    });
+
+    await app.close();
+  });
+
+  it("uses DeepSeek streaming when an API key is configured", async () => {
+    process.env.DEEPSEEK_API_KEY = "sk-test-secret-value";
+    process.env.DEEPSEEK_BASE_URL = "https://api.deepseek.example";
+    process.env.DEEPSEEK_MODEL_FAST = "deepseek-v4-pro";
+
+    const fetchMock = vi.fn(async () =>
+      createDeepSeekStreamResponse([
+        `data: ${JSON.stringify({
+          choices: [{ delta: { content: "DeepSeek hello" } }]
+        })}\n\n`,
+        "data: [DONE]\n\n"
+      ])
+    );
+    vi.stubGlobal("fetch", fetchMock);
+
+    const app = await buildServer();
+    const response = await app.inject({
+      method: "POST",
+      url: "/api/chat",
+      payload: {
+        mode: "daily_work",
+        sessionId: "deepseek-session",
+        prompt: "draft a daily update",
+        context: {
+          workspaceId: "workspace-seekdesk",
+          contextItemIds: ["meeting-notes"]
+        }
+      }
+    });
+
+    expect(response.statusCode).toBe(200);
+    expect(response.headers["x-seekdesk-chat-provider"]).toBe("deepseek");
+    expect(response.body).toContain("DeepSeek hello");
+    expect(fetchMock).toHaveBeenCalledOnce();
+
+    const [, init] =
+      (fetchMock.mock.calls[0] as [RequestInfo | URL, RequestInit]) ?? [];
+    const body = JSON.parse(String(init?.body));
+
+    expect(body.model).toBe("deepseek-v4-pro");
+    expect(body.messages).toEqual([
+      expect.objectContaining({
+        role: "system",
+        content: expect.stringContaining("daily-work mode")
+      }),
+      expect.objectContaining({
+        role: "system",
+        content: expect.stringContaining("Session id: deepseek-session")
+      }),
+      {
+        role: "user",
+        content: "draft a daily update"
+      }
+    ]);
+    expect(body.messages[1].content).toContain("Context item ids: meeting-notes");
+
+    await app.close();
+  });
+
   it("accepts the reserved coding-agent mode without enabling tools", async () => {
     const app = await buildServer();
     const response = await app.inject({
@@ -1306,4 +1425,25 @@ function parseWebSocketMessage(data: unknown) {
   }
 
   throw new Error("Unsupported WebSocket message payload.");
+}
+
+function createDeepSeekStreamResponse(chunks: string[]) {
+  const encoder = new TextEncoder();
+
+  return new Response(
+    new ReadableStream<Uint8Array>({
+      start(controller) {
+        for (const chunk of chunks) {
+          controller.enqueue(encoder.encode(chunk));
+        }
+        controller.close();
+      }
+    }),
+    {
+      headers: {
+        "Content-Type": "text/event-stream"
+      },
+      status: 200
+    }
+  );
 }
