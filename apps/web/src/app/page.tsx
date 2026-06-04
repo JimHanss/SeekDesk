@@ -3,6 +3,7 @@
 import type { FormEvent, ReactNode } from "react";
 import { useMemo, useRef, useState } from "react";
 import {
+  Activity,
   AlertCircle,
   Bot,
   CalendarClock,
@@ -144,6 +145,23 @@ interface WorkflowActionItem {
   summary: string;
   nextStep: string;
   prompt: string;
+  icon: LucideIcon;
+}
+
+type ActivityEventType = "session" | "workflow" | "artifact" | "approval" | "connector";
+type ActivityEventStatus = "已恢复" | "已填入" | "待审批" | "已预演" | "待复核" | "可复用";
+
+interface ActivityEventItem {
+  id: string;
+  type: ActivityEventType;
+  time: string;
+  title: string;
+  status: ActivityEventStatus;
+  relatedObject: string;
+  relatedLabel: string;
+  summary: string;
+  safetyBoundary: string;
+  promptFocus: string;
   icon: LucideIcon;
 }
 
@@ -539,6 +557,99 @@ const workflowActions: WorkflowActionItem[] = [
   }
 ];
 
+const activityEvents: ActivityEventItem[] = [
+  {
+    id: "event-session-restored",
+    type: "session",
+    time: "今天 10:42",
+    title: "客户更新会话已恢复",
+    status: "已恢复",
+    relatedObject: "session",
+    relatedLabel: "客户更新邮件 + 周报草稿",
+    summary:
+      "从最近工作流摘要恢复 daily_work 会话，保留产物、审批记录和上下文计数，方便继续日常跟进。",
+    safetyBoundary:
+      "只使用前端示例快照填入输入框，不读取真实历史记录、文件系统或团队空间。",
+    promptFocus: "恢复会话后，请复述当前状态、待补上下文和下一步可执行动作。",
+    icon: MessageSquare
+  },
+  {
+    id: "event-template-filled",
+    type: "workflow",
+    time: "今天 10:39",
+    title: "会议纪要模板填入输入框",
+    status: "已填入",
+    relatedObject: "workflow",
+    relatedLabel: "整理会议纪要",
+    summary:
+      "把日常工作模板转换为可发送 prompt，用于从会议记录中提取决策、待办和风险。",
+    safetyBoundary:
+      "模板仅在聊天输入框中预填，发送前由用户确认，不读取真实笔记库或写入文档。",
+    promptFocus: "基于会议纪要模板，输出结构、字段复核点和缺失上下文清单。",
+    icon: Presentation
+  },
+  {
+    id: "event-approval-changed",
+    type: "approval",
+    time: "今天 10:36",
+    title: "邮箱外发审批保持待确认",
+    status: "待审批",
+    relatedObject: "approval",
+    relatedLabel: "客户更新邮件草稿",
+    summary:
+      "外发相关动作被归入审批台账，当前只允许生成草稿和风险检查点，不触发发送。",
+    safetyBoundary:
+      "没有真实邮箱授权，不会自动发送邮件；需要用户显式审批后才可进入后续产品流程。",
+    promptFocus: "请列出审批前需要确认的收件人、敏感信息和外发语气检查项。",
+    icon: ShieldCheck
+  },
+  {
+    id: "event-workflow-preview",
+    type: "workflow",
+    time: "今天 10:31",
+    title: "周报与任务计划预演已生成",
+    status: "已预演",
+    relatedObject: "workflow",
+    relatedLabel: "周报草稿和下周任务计划",
+    summary:
+      "工作流预演生成结构化周报、任务拆解和依赖检查表，仍停留在 daily_work 草稿阶段。",
+    safetyBoundary:
+      "不写入文档库、不同步团队空间，也不暴露 coding-agent 命令或仓库工具。",
+    promptFocus: "继续完善周报与任务计划，重点补齐风险、依赖和负责人字段。",
+    icon: Workflow
+  },
+  {
+    id: "event-artifact-review",
+    type: "artifact",
+    time: "今天 10:24",
+    title: "可复用会议纪要待复核",
+    status: "待复核",
+    relatedObject: "artifact",
+    relatedLabel: "可分享会议纪要",
+    summary:
+      "产物已具备复用线索，但负责人、开放问题和内部决策字段仍需要人工复核。",
+    safetyBoundary:
+      "当前只是页面内的示例产物状态，不会发布、共享或同步到真实文档空间。",
+    promptFocus: "请把会议纪要改成可复用版本，并列出必须人工复核的字段。",
+    icon: FileText
+  },
+  {
+    id: "event-connector-boundary",
+    type: "connector",
+    time: "今天 10:18",
+    title: "连接器边界已标记为可预览",
+    status: "可复用",
+    relatedObject: "connector",
+    relatedLabel: "SeekDesk Docs Preview",
+    summary:
+      "文档库入口只展示可预览字段、权限状态和风险说明，作为日常工作自动化的接入草案。",
+    safetyBoundary:
+      "未接真实 OAuth、文档库或内部知识库；这里只能生成接入方案和审批路径。",
+    promptFocus: "请为文档库连接器补一版最小权限、撤销路径和可预览字段说明。",
+    icon: Globe
+  }
+];
+
 const artifactFilters: ArtifactFilter[] = ["全部", "草稿", "可复用"];
 
 const artifacts: ArtifactItem[] = [
@@ -784,6 +895,9 @@ export default function Page() {
   const [selectedWorkflowActionId, setSelectedWorkflowActionId] = useState<
     string | null
   >(workflowActions[0]?.id ?? null);
+  const [selectedActivityEventId, setSelectedActivityEventId] = useState<
+    string | null
+  >(activityEvents[0]?.id ?? null);
   const [selectedArtifactId, setSelectedArtifactId] = useState<string | null>(
     artifacts[0]?.id ?? null
   );
@@ -841,6 +955,13 @@ export default function Page() {
 
     return selectedInFilter ?? filteredWorkflowActions[0] ?? workflowActions[0] ?? null;
   }, [filteredWorkflowActions, selectedWorkflowActionId]);
+  const selectedActivityEvent = useMemo(
+    () =>
+      activityEvents.find((event) => event.id === selectedActivityEventId) ??
+      activityEvents[0] ??
+      null,
+    [selectedActivityEventId]
+  );
   const filteredArtifacts = useMemo(
     () =>
       artifactFilter === "全部"
@@ -1000,6 +1121,11 @@ export default function Page() {
   function applyWorkflowActionPrompt(item: WorkflowActionItem) {
     setSelectedWorkflowActionId(item.id);
     applyPrompt(item.prompt);
+  }
+
+  function applyActivityEventPrompt(item: ActivityEventItem) {
+    setSelectedActivityEventId(item.id);
+    applyPrompt(buildActivityEventPrompt(item));
   }
 
   function switchModelRoute(nextMode: ModelRouteMode) {
@@ -1306,6 +1432,126 @@ export default function Page() {
                 <div className="mt-3 text-[11px] leading-5 text-teal-700">
                   更新时间：{activeModelSnapshot.updatedAt} / 用量更新时间：
                   {activeUsageSnapshot.updatedAt}
+                </div>
+              </div>
+
+              <div className="rounded-[8px] border border-teal-100 bg-white p-3">
+                <div className="flex flex-col gap-3 md:flex-row md:items-start md:justify-between">
+                  <div className="min-w-0">
+                    <div className="flex items-center gap-2 text-sm font-semibold text-teal-950">
+                      <Activity className="size-4 shrink-0 text-teal-700" aria-hidden="true" />
+                      <span className="min-w-0 break-words">实时活动流 / 状态事件</span>
+                    </div>
+                    <p className="mt-1 text-xs leading-5 text-teal-700">
+                      daily_work 的任务状态轨迹：记录会话恢复、模板填入、审批变化、工作流预演和产物复用状态。
+                    </p>
+                  </div>
+
+                  <span className="inline-flex shrink-0 items-center gap-1 rounded-[999px] bg-teal-50 px-2.5 py-1 text-[11px] font-medium text-teal-700">
+                    <Lock className="size-3.5" aria-hidden="true" />
+                    {activityEvents.length} 条前端示例事件
+                  </span>
+                </div>
+
+                <div className="mt-3 rounded-[8px] border border-orange-200 bg-orange-50 px-3 py-2 text-xs leading-5 text-orange-800">
+                  编码模式兼容提示：这些事件只描述日常工作自动化状态，不暴露 coding-agent 命令、仓库操作或脚本工具。
+                </div>
+
+                <div className="mt-3 grid gap-3 xl:grid-cols-[minmax(0,1.08fr)_minmax(0,0.92fr)]">
+                  <div className="space-y-2">
+                    {activityEvents.map((event) => {
+                      const Icon = event.icon;
+                      const isSelected = selectedActivityEvent?.id === event.id;
+
+                      return (
+                        <button
+                          key={event.id}
+                          type="button"
+                          onClick={() => setSelectedActivityEventId(event.id)}
+                          className={cn(
+                            "flex w-full cursor-pointer items-start gap-3 rounded-[8px] border px-3 py-3 text-left transition-colors duration-200 focus-visible:outline focus-visible:outline-2 focus-visible:outline-teal-600",
+                            isSelected
+                              ? "border-teal-400 bg-teal-50 shadow-sm"
+                              : "border-teal-100 bg-white hover:border-teal-300 hover:bg-teal-50"
+                          )}
+                        >
+                          <span className="mt-0.5 grid size-9 shrink-0 place-items-center rounded-[8px] bg-white text-teal-700 ring-1 ring-teal-100">
+                            <Icon className="size-4" aria-hidden="true" />
+                          </span>
+                          <span className="min-w-0 flex-1">
+                            <span className="flex flex-wrap items-start justify-between gap-2">
+                              <span className="min-w-0">
+                                <span className="block break-words text-sm font-medium text-teal-950">
+                                  {event.title}
+                                </span>
+                                <span className="mt-0.5 block break-words text-[11px] leading-4 text-teal-700">
+                                  {event.time} / {event.type} / {event.relatedObject}
+                                </span>
+                              </span>
+                              <ActivityEventStatusPill status={event.status} />
+                            </span>
+                            <span className="mt-2 block break-words text-xs leading-5 text-slate-700">
+                              {event.summary}
+                            </span>
+                            <span className="mt-2 block break-words text-[11px] leading-4 text-orange-700">
+                              安全边界：{event.safetyBoundary}
+                            </span>
+                          </span>
+                        </button>
+                      );
+                    })}
+                  </div>
+
+                  {selectedActivityEvent ? (
+                    <div className="rounded-[8px] border border-teal-100 bg-teal-50 p-3">
+                      <div className="flex items-start justify-between gap-3">
+                        <div className="min-w-0">
+                          <div className="text-[11px] font-medium text-teal-700">
+                            选中事件
+                          </div>
+                          <div className="mt-1 break-words text-sm font-semibold text-teal-950">
+                            {selectedActivityEvent.title}
+                          </div>
+                          <div className="mt-1 break-words text-xs leading-5 text-slate-700">
+                            {selectedActivityEvent.promptFocus}
+                          </div>
+                        </div>
+                        <ActivityEventStatusPill status={selectedActivityEvent.status} />
+                      </div>
+
+                      <div className="mt-3 grid gap-2">
+                        <ArtifactDetailRow
+                          label="事件类型"
+                          value={selectedActivityEvent.type}
+                        />
+                        <ArtifactDetailRow
+                          label="发生时间"
+                          value={selectedActivityEvent.time}
+                        />
+                        <ArtifactDetailRow
+                          label={`关联对象：${selectedActivityEvent.relatedObject}`}
+                          value={selectedActivityEvent.relatedLabel}
+                        />
+                      </div>
+
+                      <ArtifactDetailBlock
+                        icon={<ShieldCheck className="size-4" aria-hidden="true" />}
+                        title="安全边界"
+                      >
+                        {selectedActivityEvent.safetyBoundary}
+                      </ArtifactDetailBlock>
+
+                      <Button
+                        type="button"
+                        size="sm"
+                        className="mt-3 w-full bg-orange-500 hover:bg-orange-600"
+                        onClick={() => applyActivityEventPrompt(selectedActivityEvent)}
+                      >
+                        <Send className="size-4" aria-hidden="true" />
+                        将事件转为 Prompt
+                      </Button>
+                    </div>
+                  ) : null}
                 </div>
               </div>
 
@@ -2381,6 +2627,19 @@ function WorkflowActionStatusPill({
   );
 }
 
+function ActivityEventStatusPill({ status }: { status: ActivityEventStatus }) {
+  return (
+    <span
+      className={cn(
+        "shrink-0 whitespace-nowrap rounded-[999px] px-2 py-0.5 text-[11px] font-medium",
+        activityEventStatusClass(status)
+      )}
+    >
+      {status}
+    </span>
+  );
+}
+
 function ArtifactDetailBlock({
   icon,
   title,
@@ -2561,6 +2820,23 @@ function workflowActionStatusClass(status: WorkflowActionStatus) {
   }
 }
 
+function activityEventStatusClass(status: ActivityEventStatus) {
+  switch (status) {
+    case "已恢复":
+      return "bg-teal-100 text-teal-800";
+    case "已填入":
+      return "bg-sky-100 text-sky-800";
+    case "待审批":
+      return "bg-orange-100 text-orange-800";
+    case "已预演":
+      return "bg-emerald-100 text-emerald-800";
+    case "待复核":
+      return "bg-amber-100 text-amber-800";
+    case "可复用":
+      return "bg-emerald-100 text-emerald-800";
+  }
+}
+
 function artifactStateClass(state: ArtifactState) {
   switch (state) {
     case "计划中":
@@ -2660,5 +2936,21 @@ function buildSessionRestorePrompt(item: SessionHistoryItem) {
     `标签：${item.tags.join("、")}`,
     "",
     "请先复述当前可继续的工作状态，再建议下一步行动。"
+  ].join("\n");
+}
+
+function buildActivityEventPrompt(item: ActivityEventItem) {
+  return [
+    `请基于实时活动流事件「${item.title}」继续 daily_work。`,
+    "",
+    `事件类型：${item.type}`,
+    `发生时间：${item.time}`,
+    `当前状态：${item.status}`,
+    `关联对象：${item.relatedObject} / ${item.relatedLabel}`,
+    `事件摘要：${item.summary}`,
+    `安全边界：${item.safetyBoundary}`,
+    "",
+    "模式边界：保持 daily_work，不调用 coding-agent 工具，不访问真实连接器，不写入外部系统。",
+    `请输出：${item.promptFocus}`
   ].join("\n");
 }
