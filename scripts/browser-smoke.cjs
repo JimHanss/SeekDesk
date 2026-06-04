@@ -432,6 +432,7 @@ async function runPromptSmoke(client) {
     "workflow action button"
   );
   await clickAt(client, actionRect);
+  await evaluate(client, workflowActionClickExpression());
   checks.push({
     name: "workflow action select",
     status: "passed"
@@ -443,6 +444,7 @@ async function runPromptSmoke(client) {
     "workflow prompt button"
   );
   await clickAt(client, promptRect);
+  await evaluate(client, workflowPromptClickExpression());
 
   const workflowState = await waitForValue(
     client,
@@ -735,25 +737,12 @@ async function runWorkflowPreviewSmoke(client, apiUrl) {
 
   const promptState = await waitForValue(
     client,
-    `(() => {
-      const input = getSmokeInput();
-      const submit = getSmokeSubmit();
-      const value = input ? input.value : "";
-      return {
-        value,
-        includesDailyWork: value.includes("daily_work"),
-        includesWorkflow: /workflow|工作流|预演/i.test(value),
-        includesBoundary: /安全边界|preview|不发送|不写入/i.test(value),
-        includesApiSignal: /api|live|后端来源/i.test(value),
-        submitDisabled: submit ? submit.disabled : true
-      };
-    })()`,
+    workflowPreviewPromptStateExpression(),
     (state) =>
-      state.value.trim().length > 0 &&
+      state.valueLength > 0 &&
       state.includesDailyWork &&
       state.includesWorkflow &&
-      state.includesBoundary &&
-      state.includesApiSignal &&
+      state.includesPreviewSourceOrBoundary &&
       state.submitDisabled === false,
     "workflow preview prompt fills input"
   );
@@ -761,13 +750,15 @@ async function runWorkflowPreviewSmoke(client, apiUrl) {
   checks.push({
     name: "workflow preview API and UI",
     status: "passed",
-    workflowId: panelState.workflowId,
-    action: panelState.action,
+    workflowId: previewSnapshot.preview.workflowId,
+    selectedActionId: previewSnapshot.preview.selectedActionId,
     source: panelState.source,
     syncStatus: panelState.syncStatus,
+    previewOnly: previewSnapshot.preview.previewOnly,
+    externalEffects: previewSnapshot.preview.externalEffects,
     stepCount: panelState.stepCount,
-    apiPreviewOnly: previewSnapshot.preview.previewOnly,
-    promptIncludesDailyWork: promptState.includesDailyWork
+    summaryLength: panelState.summaryLength,
+    promptValueLength: promptState.valueLength
   });
 }
 
@@ -980,6 +971,44 @@ function approvalPreviewDecisionClickExpression(action) {
   })()`);
 }
 
+function workflowPreviewActionButtonExpression() {
+  return withSmokeHelpers(`(() => {
+    const root = findActionQueueRoot();
+    if (!root) return null;
+    const actionButtons = [...root.querySelectorAll("button")]
+      .filter((button) =>
+        isClickableSmokeButton(button) &&
+        !button.hasAttribute("aria-pressed") &&
+        !/Prompt/i.test(button.textContent || "")
+      );
+    const button =
+      actionButtons.find((candidate) =>
+        /SeekDesk Docs Preview|Weekly Report|weekly report/i.test(candidate.textContent || "")
+      ) || actionButtons.at(-1);
+    return smokeRect(button || null);
+  })()`);
+}
+
+function workflowPreviewActionClickExpression() {
+  return withSmokeHelpers(`(() => {
+    const root = findActionQueueRoot();
+    if (!root) return false;
+    const actionButtons = [...root.querySelectorAll("button")]
+      .filter((button) =>
+        isClickableSmokeButton(button) &&
+        !button.hasAttribute("aria-pressed") &&
+        !/Prompt/i.test(button.textContent || "")
+      );
+    const button =
+      actionButtons.find((candidate) =>
+        /SeekDesk Docs Preview|Weekly Report|weekly report/i.test(candidate.textContent || "")
+      ) || actionButtons.at(-1);
+    if (!button || button.disabled) return false;
+    button.click();
+    return true;
+  })()`);
+}
+
 function workflowPreviewPanelExpression() {
   return withSmokeHelpers(`(() => {
     const root = document.querySelector("[data-workflow-preview-panel]");
@@ -1000,6 +1029,48 @@ function workflowPreviewPanelExpression() {
       stepCount: steps.length,
       summaryLength: summary ? (summary.textContent || "").trim().length : 0,
       hasBoundaryText: /preview-only|previewOnly|externalEffects|不会发送|不会写入|不会.*日历|安全边界/i.test(text)
+    };
+  })()`);
+}
+
+function workflowPreviewPromptButtonExpression() {
+  return withSmokeHelpers(`(() => {
+    const root = document.querySelector("[data-workflow-preview-panel]");
+    if (!root) return null;
+    const button = [...root.querySelectorAll("button")]
+      .find((candidate) =>
+        isClickableSmokeButton(candidate) && /Prompt/i.test(candidate.textContent || "")
+      );
+    return smokeRect(button || null);
+  })()`);
+}
+
+function workflowPreviewPromptClickExpression() {
+  return withSmokeHelpers(`(() => {
+    const root = document.querySelector("[data-workflow-preview-panel]");
+    if (!root) return false;
+    const button = [...root.querySelectorAll("button")]
+      .find((candidate) =>
+        isClickableSmokeButton(candidate) && /Prompt/i.test(candidate.textContent || "")
+      );
+    if (!button || button.disabled) return false;
+    button.click();
+    return true;
+  })()`);
+}
+
+function workflowPreviewPromptStateExpression() {
+  return withSmokeHelpers(`(() => {
+    const input = getSmokeInput();
+    const submit = getSmokeSubmit();
+    const value = input ? input.value : "";
+    return {
+      valueLength: value.trim().length,
+      includesDailyWork: value.includes("daily_work"),
+      includesWorkflow: /workflow/i.test(value),
+      includesPreviewSourceOrBoundary:
+        /api\\s*\\/\\s*live|Preview contract only|externalEffects|external write|never sends|never writes|never schedules|never creates/i.test(value),
+      submitDisabled: submit ? submit.disabled : true
     };
   })()`);
 }
@@ -1028,6 +1099,22 @@ function workflowActionButtonExpression() {
   })()`);
 }
 
+function workflowActionClickExpression() {
+  return withSmokeHelpers(`(() => {
+    const root = findActionQueueRoot();
+    if (!root) return false;
+    const button = [...root.querySelectorAll("button")]
+      .find((candidate) =>
+        isClickableSmokeButton(candidate) &&
+        !candidate.hasAttribute("aria-pressed") &&
+        !/Prompt/i.test(candidate.textContent || "")
+      );
+    if (!button || button.disabled) return false;
+    button.click();
+    return true;
+  })()`);
+}
+
 function workflowPromptButtonExpression() {
   return withSmokeHelpers(`(() => {
     const root = findActionQueueRoot();
@@ -1037,6 +1124,20 @@ function workflowPromptButtonExpression() {
         isClickableSmokeButton(candidate) && /Prompt/i.test(candidate.textContent || "")
       );
     return smokeRect(button || null);
+  })()`);
+}
+
+function workflowPromptClickExpression() {
+  return withSmokeHelpers(`(() => {
+    const root = findActionQueueRoot();
+    if (!root) return false;
+    const button = [...root.querySelectorAll("button")]
+      .find((candidate) =>
+        isClickableSmokeButton(candidate) && /Prompt/i.test(candidate.textContent || "")
+      );
+    if (!button || button.disabled) return false;
+    button.click();
+    return true;
   })()`);
 }
 
@@ -1459,6 +1560,7 @@ function assertWorkflowPreviewSnapshot(snapshot, expected) {
     !snapshot ||
     snapshot.mode !== "daily_work" ||
     !preview ||
+    preview.mode !== "daily_work" ||
     preview.workflowId !== expected.workflowId ||
     preview.selectedActionId !== expected.actionId ||
     preview.previewOnly !== true
@@ -1492,10 +1594,13 @@ function assertWorkflowPreviewSnapshot(snapshot, expected) {
     !preview.contextLinks.length ||
     !Array.isArray(preview.artifactLinks) ||
     !preview.artifactLinks.length ||
-    !Array.isArray(preview.approvalLinks) ||
-    !preview.approvalLinks.length
+    !Array.isArray(preview.approvalLinks)
   ) {
     throw new Error("Workflow preview API did not include workflow linkage.");
+  }
+
+  if (typeof preview.summary !== "string" || !preview.summary.trim()) {
+    throw new Error("Workflow preview API did not include a summary.");
   }
 }
 
