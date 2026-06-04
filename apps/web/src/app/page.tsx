@@ -74,10 +74,80 @@ interface SyntaxToken {
 
 interface TemplateItem {
   id: string;
+  category: string;
   title: string;
   description: string;
   prompt: string;
+  artifactType: string;
+  tags: string[];
+  enabled: boolean;
   icon: LucideIcon;
+}
+
+type TemplatePanelSource = "fallback" | "api" | "degraded";
+type TemplatePanelSyncStatus = "syncing" | "live" | "degraded";
+type TemplatePreviewSource = "fallback" | "api" | "degraded";
+type TemplatePreviewSyncStatus = "idle" | "syncing" | "live" | "degraded";
+
+interface DailyWorkTemplateDto {
+  id?: string;
+  mode?: AppMode;
+  category?: string;
+  title?: string;
+  description?: string;
+  prompt?: string;
+  artifactType?: string;
+  tags?: string[];
+  enabled?: boolean;
+}
+
+interface DailyWorkTemplatesResponseDto {
+  mode?: AppMode;
+  templates?: DailyWorkTemplateDto[];
+}
+
+interface DailyWorkTemplateApplyPreviewDto {
+  id?: string;
+  mode?: AppMode;
+  templateId?: string;
+  templateTitle?: string;
+  category?: string;
+  artifactType?: string;
+  promptDraft?: string;
+  tags?: string[];
+  previewOnly?: boolean;
+  externalEffects?: string[];
+  safetyBoundary?: {
+    previewOnly?: boolean;
+    externalEffects?: string[];
+    statement?: string;
+  };
+  generatedAt?: string;
+}
+
+interface DailyWorkTemplateApplyPreviewResponseDto {
+  mode?: AppMode;
+  preview?: DailyWorkTemplateApplyPreviewDto;
+}
+
+interface TemplatePreviewPanelState {
+  templateId: string;
+  source: TemplatePreviewSource;
+  syncStatus: TemplatePreviewSyncStatus;
+  previewOnly: boolean;
+  externalEffects: string[];
+  safetyStatement: string;
+  promptDraft: string;
+  generatedAt: string;
+  notice: string;
+}
+
+interface TemplatePanelState {
+  items: TemplateItem[];
+  source: TemplatePanelSource;
+  syncStatus: TemplatePanelSyncStatus;
+  notice: string;
+  preview: TemplatePreviewPanelState;
 }
 
 type SessionHistoryStatus = "进行中" | "待审批" | "已完成" | "已归档";
@@ -731,53 +801,231 @@ const defaultApiBaseUrl =
 const templates: TemplateItem[] = [
   {
     id: "email-draft",
+    category: "writing",
     title: "邮件起草",
     description: "把要点整理成专业、清晰的邮件",
     prompt:
       "帮我起草一封简洁专业的邮件，说明下面的进展、关键决定和下一步行动。\n\n背景：\n- 项目：\n- 收件人：\n- 关键进展：\n- 需要对方行动：\n- 语气：清晰、友好、专业",
+    artifactType: "email_draft",
+    tags: ["email", "writing", "stakeholder"],
+    enabled: true,
     icon: Mail
   },
   {
     id: "meeting-summary",
+    category: "review",
     title: "会议纪要",
     description: "从记录中提取决策、待办和风险",
     prompt:
       "请把下面的会议记录整理成可分享的纪要，包含：概览、关键决策、待办事项、负责人、风险和开放问题。\n\n会议记录：\n",
+    artifactType: "meeting_summary",
+    tags: ["meeting", "summary", "actions"],
+    enabled: true,
     icon: Presentation
   },
   {
     id: "research-brief",
+    category: "research",
     title: "资料研究",
     description: "把调研素材压缩成一页简报",
     prompt:
       "请生成一份资料研究简报，包含：问题背景、已知信息、仍需验证的内容、可引用依据和建议下一步。\n\n研究主题：\n已收集资料：\n限制条件：\n",
+    artifactType: "research_note",
+    tags: ["research", "brief", "decision"],
+    enabled: true,
     icon: Search
   },
   {
     id: "weekly-report",
+    category: "review",
     title: "周报整理",
     description: "总结进展、风险和下周优先级",
     prompt:
       "请把下面的信息整理成一份周报，结构为：本周进展、主要成果、风险/阻塞、下周优先级。\n\n项目背景：\n本周完成：\n风险：\n下周计划：\n",
+    artifactType: "weekly_report",
+    tags: ["weekly", "status", "review"],
+    enabled: true,
     icon: CalendarClock
   },
   {
     id: "task-plan",
+    category: "planning",
     title: "任务计划",
     description: "把目标拆解成可执行步骤",
     prompt:
       "请为下面的目标制定任务计划，拆成阶段、列出接下来的 5 个可执行动作，并标注依赖、风险和验收标准。\n\n目标：\n截止时间：\n约束：\n",
+    artifactType: "task_list",
+    tags: ["planning", "tasks", "execution"],
+    enabled: true,
     icon: Target
   },
   {
     id: "knowledge-qa",
+    category: "knowledge",
     title: "知识问答",
     description: "基于上下文回答问题并指出缺口",
     prompt:
       "请仅基于我提供的上下文回答问题。如果上下文不足，请说明缺少什么，并只追问最少必要信息。\n\n问题：\n上下文：\n",
+    artifactType: "brief",
+    tags: ["knowledge", "qa", "context"],
+    enabled: true,
     icon: FileText
   }
 ];
+
+function createFallbackTemplatePanelState(): TemplatePanelState {
+  return {
+    items: templates,
+    source: "fallback",
+    syncStatus: "syncing",
+    notice:
+      "正在从 /api/daily/templates?mode=daily_work 同步模板库；连接完成前保留前端 fallback。",
+    preview: createLocalTemplatePreviewState(templates[0] ?? null)
+  };
+}
+
+function createLocalTemplatePreviewState(
+  template: TemplateItem | null,
+  syncStatus: TemplatePreviewSyncStatus = "idle",
+  notice = "尚未调用 template apply-preview；点击模板后会优先生成 preview-only 输入框草稿。"
+): TemplatePreviewPanelState {
+  return {
+    templateId: template?.id ?? "",
+    source: "fallback",
+    syncStatus,
+    previewOnly: true,
+    externalEffects: ["none"],
+    safetyStatement:
+      "Preview only: 当前模板操作只把草稿填入输入框，不发送邮件、不写入文档、不创建日历或任务，也不触发任何外部工具。",
+    promptDraft: template?.prompt ?? "",
+    generatedAt: "前端 fallback",
+    notice
+  };
+}
+
+function mapTemplatesResponse(payload: DailyWorkTemplatesResponseDto): TemplateItem[] {
+  if (payload.mode !== activeMode || !Array.isArray(payload.templates)) {
+    throw new Error("Templates response did not include daily_work templates.");
+  }
+
+  return payload.templates.map(mapTemplateDtoToItem);
+}
+
+function mapTemplateDtoToItem(
+  template: DailyWorkTemplateDto,
+  index: number
+): TemplateItem {
+  const artifactType = nonEmptyText(template.artifactType, "brief");
+  const category = nonEmptyText(template.category, "knowledge");
+  const tags = sanitizeTemplateTags(template.tags);
+  const title = nonEmptyText(template.title, `日常模板 ${index + 1}`);
+
+  return {
+    id: nonEmptyText(template.id, `daily-template-${index + 1}`),
+    category,
+    title,
+    description: nonEmptyText(
+      template.description,
+      "后端模板已同步，等待补充说明。"
+    ),
+    prompt: nonEmptyText(template.prompt, "请基于当前上下文继续完成这项日常工作。"),
+    artifactType,
+    tags,
+    enabled: template.enabled !== false,
+    icon: templateIcon({
+      category,
+      artifactType,
+      tags,
+      title
+    })
+  };
+}
+
+function mapTemplatePreviewResponse(
+  template: TemplateItem,
+  payload: DailyWorkTemplateApplyPreviewResponseDto
+): TemplatePreviewPanelState {
+  const preview = payload.preview;
+  const previewTemplateId = preview?.templateId ?? preview?.id;
+  const externalEffects =
+    preview?.externalEffects ??
+    preview?.safetyBoundary?.externalEffects ??
+    [];
+  const normalizedExternalEffects =
+    externalEffects.length > 0 ? externalEffects : ["none"];
+  const previewOnly =
+    preview?.previewOnly === true || preview?.safetyBoundary?.previewOnly === true;
+
+  if (
+    payload.mode !== activeMode ||
+    !preview ||
+    (previewTemplateId && previewTemplateId !== template.id) ||
+    previewOnly !== true ||
+    normalizedExternalEffects.some((effect) => effect !== "none")
+  ) {
+    throw new Error("Template apply-preview response did not match the selected template.");
+  }
+
+  return {
+    templateId: template.id,
+    source: "api",
+    syncStatus: "live",
+    previewOnly: true,
+    externalEffects: normalizedExternalEffects,
+    safetyStatement: nonEmptyText(
+      preview.safetyBoundary?.statement,
+      "Preview only: 后端声明模板预演不会产生外部效果。"
+    ),
+    promptDraft: nonEmptyText(preview.promptDraft, template.prompt),
+    generatedAt:
+      formatModelUsageTimestamp(preview.generatedAt) ??
+      nonEmptyText(preview.generatedAt, "刚刚同步"),
+    notice:
+      "已从 /api/daily/templates/:templateId/apply-preview 同步；响应声明 previewOnly=true 且 externalEffects=['none']。"
+  };
+}
+
+function sanitizeTemplateTags(values: string[] | undefined) {
+  return values?.filter((value) => value.trim().length > 0).slice(0, 4) ?? [];
+}
+
+function templateIcon({
+  artifactType,
+  category,
+  tags,
+  title
+}: {
+  artifactType: string;
+  category: string;
+  tags: string[];
+  title: string;
+}): LucideIcon {
+  const searchable = [artifactType, category, title, ...tags]
+    .join(" ")
+    .toLowerCase();
+
+  if (searchable.includes("email") || searchable.includes("mail") || searchable.includes("邮件")) {
+    return Mail;
+  }
+
+  if (searchable.includes("meeting") || searchable.includes("summary") || searchable.includes("会议")) {
+    return Presentation;
+  }
+
+  if (searchable.includes("research") || searchable.includes("brief") || searchable.includes("资料")) {
+    return Search;
+  }
+
+  if (searchable.includes("weekly") || searchable.includes("status") || searchable.includes("周报")) {
+    return CalendarClock;
+  }
+
+  if (searchable.includes("task") || searchable.includes("planning") || searchable.includes("计划")) {
+    return Target;
+  }
+
+  return FileText;
+}
 
 const sessionHistoryFilters: SessionHistoryFilter[] = [
   "全部",
@@ -2376,6 +2624,9 @@ export default function Page() {
   const [lastSubmittedPrompt, setLastSubmittedPrompt] = useState<string | null>(
     null
   );
+  const [templatePanel, setTemplatePanel] = useState<TemplatePanelState>(() =>
+    createFallbackTemplatePanelState()
+  );
   const [sessionHistoryFilter, setSessionHistoryFilter] =
     useState<SessionHistoryFilter>("全部");
   const [selectedSessionHistoryId, setSelectedSessionHistoryId] = useState<
@@ -2449,6 +2700,7 @@ export default function Page() {
     modelRouteMode === "fast"
       ? "快速模式示例：适合写客户更新、整理会议纪要、把笔记转成任务计划"
       : "深度模式示例：适合复杂资料归纳、风险复核和长上下文分析";
+  const templateItems = templatePanel.items;
   const filteredConnectors = useMemo(
     () =>
       connectorFilter === "全部"
@@ -2537,6 +2789,73 @@ export default function Page() {
 
     return selectedInFilter ?? filteredSessionHistory[0] ?? sessionHistoryPanelItems[0] ?? null;
   }, [filteredSessionHistory, selectedSessionHistoryId, sessionHistoryPanelItems]);
+
+  useEffect(() => {
+    let isDisposed = false;
+    const controller = new AbortController();
+
+    async function fetchTemplates() {
+      setTemplatePanel((current) => ({
+        ...current,
+        syncStatus: "syncing",
+        notice: "正在从 /api/daily/templates?mode=daily_work 同步模板库。"
+      }));
+
+      try {
+        const response = await fetch(
+          `${apiBaseUrl}/api/daily/templates?mode=${activeMode}`,
+          {
+            signal: controller.signal
+          }
+        );
+
+        if (!response.ok) {
+          throw new Error(`Templates request failed: ${response.status}`);
+        }
+
+        const items = mapTemplatesResponse(
+          (await response.json()) as DailyWorkTemplatesResponseDto
+        );
+
+        if (!isDisposed) {
+          setTemplatePanel((current) => {
+            const preview =
+              current.preview.templateId &&
+              items.some((item) => item.id === current.preview.templateId)
+                ? current.preview
+                : createLocalTemplatePreviewState(items[0] ?? null);
+
+            return {
+              items,
+              source: "api",
+              syncStatus: "live",
+              notice:
+                "已从 /api/daily/templates?mode=daily_work 同步模板、产物类型、标签和启用状态。",
+              preview
+            };
+          });
+        }
+      } catch {
+        if (controller.signal.aborted || isDisposed) {
+          return;
+        }
+
+        setTemplatePanel((current) => ({
+          ...current,
+          source: "degraded",
+          syncStatus: "degraded",
+          notice: "暂未从后端同步模板库，已保留本地 templates fallback。"
+        }));
+      }
+    }
+
+    void fetchTemplates();
+
+    return () => {
+      isDisposed = true;
+      controller.abort();
+    };
+  }, [apiBaseUrl]);
 
   useEffect(() => {
     if (!selectedConnector) {
@@ -3279,6 +3598,68 @@ export default function Page() {
     inputRef.current?.focus();
   }
 
+  async function applyTemplatePrompt(template: TemplateItem) {
+    if (!template.enabled) {
+      return;
+    }
+
+    const pendingPreview = createLocalTemplatePreviewState(
+      template,
+      "syncing",
+      "正在请求 /api/daily/templates/:templateId/apply-preview，成功后会把后端 promptDraft 填入输入框。"
+    );
+
+    setTemplatePanel((current) => ({
+      ...current,
+      preview: pendingPreview
+    }));
+
+    try {
+      const response = await fetch(
+        `${apiBaseUrl}/api/daily/templates/${template.id}/apply-preview`,
+        {
+          method: "POST",
+          headers: {
+            "Content-Type": "application/json"
+          },
+          body: JSON.stringify({
+            mode: activeMode
+          })
+        }
+      );
+
+      if (!response.ok) {
+        throw new Error(`Template apply-preview failed: ${response.status}`);
+      }
+
+      const preview = mapTemplatePreviewResponse(
+        template,
+        (await response.json()) as DailyWorkTemplateApplyPreviewResponseDto
+      );
+
+      applyPrompt(preview.promptDraft);
+      setTemplatePanel((current) => ({
+        ...current,
+        preview
+      }));
+    } catch {
+      const fallbackPreview: TemplatePreviewPanelState = {
+        ...createLocalTemplatePreviewState(
+          template,
+          "degraded",
+          "暂未从后端生成 template apply-preview，已回退到本地 preview-only 模板提示。"
+        ),
+        source: "degraded"
+      };
+
+      applyPrompt(fallbackPreview.promptDraft);
+      setTemplatePanel((current) => ({
+        ...current,
+        preview: fallbackPreview
+      }));
+    }
+  }
+
   function retryLastPrompt() {
     if (!lastSubmittedPrompt || isBusy) {
       return;
@@ -3528,35 +3909,147 @@ export default function Page() {
               icon={<Wand2 className="size-4" aria-hidden="true" />}
               title="模板库"
             />
-            <div className="space-y-3 px-3 pb-4 pt-3">
+            <div
+              className="space-y-3 px-3 pb-4 pt-3"
+              data-template-panel
+              data-template-source={templatePanel.source}
+              data-template-sync-status={templatePanel.syncStatus}
+              data-template-count={templateItems.length}
+              data-template-preview-source={templatePanel.preview.source}
+              data-template-preview-only={
+                templatePanel.preview.previewOnly ? "true" : "false"
+              }
+              data-template-preview-status={templatePanel.preview.syncStatus}
+              data-template-preview-external-effects={templatePanel.preview.externalEffects.join(
+                ","
+              )}
+            >
               <div className="rounded-[8px] border border-teal-100 bg-teal-50 px-3 py-3 text-sm text-teal-900">
-                <div className="font-medium text-teal-950">日常工作模式</div>
-                <div className="mt-1 text-xs leading-5 text-teal-700">
-                  选择模板会自动填入输入框，你可以继续补充上下文后再发送。
+                <div className="flex items-start justify-between gap-2">
+                  <div className="min-w-0">
+                    <div className="break-words font-medium text-teal-950">
+                      日常工作模式
+                    </div>
+                    <div className="mt-1 text-xs leading-5 text-teal-700">
+                      选择模板会先生成 preview-only 草稿，你可以继续补充上下文后再发送。
+                    </div>
+                  </div>
+                  <span className="shrink-0 rounded-[999px] bg-white px-2 py-0.5 text-[11px] font-medium text-teal-700">
+                    {templateItems.length}
+                  </span>
+                </div>
+
+                <div
+                  className="mt-3 rounded-[8px] border border-teal-100 bg-white px-2.5 py-2 text-xs leading-5 text-teal-700"
+                  data-template-panel-notice={templatePanel.notice}
+                >
+                  <div className="flex min-w-0 flex-wrap items-center gap-1.5">
+                    <span className="font-medium text-teal-950">
+                      {templatePanelSourceLabel(templatePanel.source)}
+                    </span>
+                    <span>/</span>
+                    <span>{templatePanelSyncStatusLabel(templatePanel.syncStatus)}</span>
+                  </div>
+                  <div className="mt-1 break-words">{templatePanel.notice}</div>
+                </div>
+
+                <div
+                  className="mt-2 rounded-[8px] border border-orange-100 bg-orange-50 px-2.5 py-2 text-xs leading-5 text-orange-800"
+                  data-template-preview-notice={templatePanel.preview.notice}
+                  data-template-preview-boundary={
+                    templatePanel.preview.safetyStatement
+                  }
+                >
+                  <div className="flex min-w-0 flex-wrap items-center gap-1.5">
+                    {templatePanel.preview.syncStatus === "syncing" ? (
+                      <Loader2
+                        className="size-3.5 shrink-0 animate-spin"
+                        aria-hidden="true"
+                      />
+                    ) : (
+                      <ShieldCheck
+                        className="size-3.5 shrink-0"
+                        aria-hidden="true"
+                      />
+                    )}
+                    <span className="font-medium">
+                      {templatePreviewSourceLabel(templatePanel.preview.source)}
+                    </span>
+                    <span>/</span>
+                    <span>
+                      {templatePreviewSyncStatusLabel(
+                        templatePanel.preview.syncStatus
+                      )}
+                    </span>
+                    <span>/ previewOnly=
+                      {templatePanel.preview.previewOnly ? "true" : "false"}
+                    </span>
+                  </div>
+                  <div className="mt-1 break-words">
+                    {templatePanel.preview.safetyStatement}
+                  </div>
                 </div>
               </div>
 
               <div className="space-y-2">
-                {templates.map((template) => {
+                {templateItems.map((template) => {
                   const Icon = template.icon;
 
                   return (
                     <button
                       key={template.id}
                       type="button"
-                      onClick={() => applyPrompt(template.prompt)}
-                      className="flex min-h-16 w-full items-start gap-3 rounded-[8px] border border-teal-100 bg-white px-3 py-3 text-left transition-colors duration-200 hover:border-teal-300 hover:bg-teal-50 focus-visible:outline focus-visible:outline-2 focus-visible:outline-teal-600"
+                      onClick={() => void applyTemplatePrompt(template)}
+                      disabled={!template.enabled}
+                      data-template-card={template.id}
+                      data-template-enabled={template.enabled ? "true" : "false"}
+                      className={cn(
+                        "flex min-h-16 w-full cursor-pointer items-start gap-3 rounded-[8px] border px-3 py-3 text-left transition-colors duration-200 focus-visible:outline focus-visible:outline-2 focus-visible:outline-teal-600 disabled:cursor-not-allowed disabled:opacity-60",
+                        template.enabled
+                          ? "border-teal-100 bg-white hover:border-teal-300 hover:bg-teal-50"
+                          : "border-slate-200 bg-slate-50"
+                      )}
                     >
                       <span className="grid size-9 shrink-0 place-items-center rounded-[8px] bg-teal-50 text-teal-700">
                         <Icon className="size-4" aria-hidden="true" />
                       </span>
-                      <span className="min-w-0">
-                        <span className="block font-medium text-teal-950">
-                          {template.title}
+                      <span className="min-w-0 flex-1">
+                        <span className="flex min-w-0 items-start justify-between gap-2">
+                          <span className="min-w-0">
+                            <span className="block truncate font-medium text-teal-950">
+                              {template.title}
+                            </span>
+                            <span className="mt-0.5 block truncate text-[11px] leading-4 text-teal-700">
+                              {templateCategoryLabel(template.category)} /{" "}
+                              {templateArtifactTypeLabel(template.artifactType)}
+                            </span>
+                          </span>
+                          <span
+                            className={cn(
+                              "shrink-0 rounded-[999px] px-1.5 py-0.5 text-[10px] font-medium",
+                              template.enabled
+                                ? "bg-emerald-100 text-emerald-800"
+                                : "bg-slate-100 text-slate-600"
+                            )}
+                          >
+                            {template.enabled ? "可用" : "停用"}
+                          </span>
                         </span>
-                        <span className="block text-xs leading-5 text-teal-700">
+                        <span className="mt-1 block max-h-10 overflow-hidden text-xs leading-5 text-teal-700">
                           {template.description}
                         </span>
+                        {template.tags.length > 0 ? (
+                          <span className="mt-2 flex min-w-0 flex-wrap gap-1">
+                            {template.tags.slice(0, 2).map((tag) => (
+                              <span
+                                key={`${template.id}-${tag}`}
+                                className="max-w-full truncate rounded-[999px] bg-teal-50 px-1.5 py-0.5 text-[10px] text-teal-700"
+                              >
+                                {tag}
+                              </span>
+                            ))}
+                          </span>
+                        ) : null}
                       </span>
                     </button>
                   );
@@ -6856,6 +7349,102 @@ function sessionRestorePreviewSyncStatusLabel(
       return "预演已同步";
     case "degraded":
       return "已回退";
+  }
+}
+
+function templatePanelSourceLabel(source: TemplatePanelSource) {
+  switch (source) {
+    case "fallback":
+      return "前端 fallback";
+    case "api":
+      return "Templates API";
+    case "degraded":
+      return "降级 fallback";
+  }
+}
+
+function templatePanelSyncStatusLabel(status: TemplatePanelSyncStatus) {
+  switch (status) {
+    case "syncing":
+      return "同步中";
+    case "live":
+      return "API 已同步";
+    case "degraded":
+      return "保留快照";
+  }
+}
+
+function templatePreviewSourceLabel(source: TemplatePreviewSource) {
+  switch (source) {
+    case "fallback":
+      return "本地预演";
+    case "api":
+      return "Template Preview API";
+    case "degraded":
+      return "降级预演";
+  }
+}
+
+function templatePreviewSyncStatusLabel(status: TemplatePreviewSyncStatus) {
+  switch (status) {
+    case "idle":
+      return "待触发";
+    case "syncing":
+      return "生成中";
+    case "live":
+      return "预演已同步";
+    case "degraded":
+      return "已回退";
+  }
+}
+
+function templateCategoryLabel(value: string) {
+  switch (value) {
+    case "triage":
+      return "分拣";
+    case "planning":
+      return "计划";
+    case "execution":
+      return "执行";
+    case "review":
+      return "复核";
+    case "handoff":
+      return "交接";
+    case "writing":
+      return "写作";
+    case "research":
+      return "研究";
+    case "knowledge":
+      return "知识";
+    default:
+      return value;
+  }
+}
+
+function templateArtifactTypeLabel(value: string) {
+  switch (value) {
+    case "email_draft":
+      return "邮件草稿";
+    case "meeting_summary":
+      return "会议纪要";
+    case "research_note":
+      return "研究笔记";
+    case "task_list":
+      return "任务清单";
+    case "weekly_report":
+      return "周报";
+    case "status_update":
+      return "状态更新";
+    case "handoff_note":
+      return "交接说明";
+    case "decision_log":
+      return "决策记录";
+    case "checklist":
+      return "检查清单";
+    case "brief":
+      return "简报";
+    default:
+      return value;
   }
 }
 
