@@ -45,6 +45,7 @@ async function main() {
   try {
     client = await openPage(browser.debugPort, smokePageUrl(apiServer.url));
     await runDailyEndpointsSmoke(apiServer.url);
+    await runSessionRestoreSmoke(client, apiServer.url);
     await runArtifactsSmoke(client, apiServer.url);
     await runActivityStreamSmoke(client, apiServer.url);
     await runModelUsageSmoke(client, apiServer.url);
@@ -546,6 +547,105 @@ async function runDailyEndpointsSmoke(apiUrl) {
   });
 }
 
+async function runSessionRestoreSmoke(client, apiUrl) {
+  const sessionsSnapshot = await fetchDailyEndpointSnapshot(
+    apiUrl,
+    "/api/daily/sessions?mode=daily_work"
+  );
+  const trackedSessions = assertSessionListSnapshot(sessionsSnapshot);
+
+  const sessionSnapshot = await fetchDailyEndpointSnapshot(
+    apiUrl,
+    "/api/daily/sessions/customer-follow-up-session?mode=daily_work"
+  );
+  const sessionDetail = assertSessionDetailSnapshot(sessionSnapshot);
+
+  const restoreSnapshot = await fetchJson(
+    apiUrl,
+    "/api/daily/sessions/customer-follow-up-session/restore-preview",
+    {
+      mode: "daily_work",
+      includeRecentMessages: true,
+      prompt: "Continue from the approval boundary."
+    }
+  );
+  const restorePreview = assertSessionRestorePreviewSnapshot(restoreSnapshot);
+
+  const panelState = await waitForValue(
+    client,
+    sessionHistoryPanelExpression(),
+    (state) =>
+      state.present &&
+      state.source === "api" &&
+      state.syncStatus === "live" &&
+      state.count >= 3 &&
+      state.hasCustomerSession &&
+      state.hasPlanningSession,
+    "session history API panel state"
+  );
+
+  const sessionCardRect = await waitForRect(
+    client,
+    sessionHistoryCardExpression("customer-follow-up-session"),
+    "customer follow-up session card"
+  );
+  await clickAt(client, sessionCardRect);
+  await evaluate(client, sessionHistoryCardClickExpression("customer-follow-up-session"));
+
+  const detailState = await waitForValue(
+    client,
+    sessionHistoryDetailExpression("customer-follow-up-session"),
+    (state) =>
+      state.present &&
+      state.detailId === "customer-follow-up-session" &&
+      state.textLength > 0 &&
+      state.hasArtifactLink &&
+      state.hasContextLink &&
+      state.hasApprovalLink,
+    "customer follow-up session detail"
+  );
+
+  const restoreButtonRect = await waitForRect(
+    client,
+    sessionRestoreButtonExpression("customer-follow-up-session"),
+    "customer follow-up restore button"
+  );
+  await clickAt(client, restoreButtonRect);
+  await evaluate(client, sessionRestoreButtonClickExpression("customer-follow-up-session"));
+
+  const promptState = await waitForValue(
+    client,
+    sessionRestorePromptStateExpression(),
+    (state) =>
+      state.valueLength > 0 &&
+      state.includesDailyWork &&
+      state.includesSessionId &&
+      state.includesBoundary &&
+      state.restoreSource === "api" &&
+      state.restoreSyncStatus === "live" &&
+      state.restorePreviewOnly === "true" &&
+      state.restoreExternalEffects.includes("none") &&
+      state.submitDisabled === false,
+    "session restore preview fills input"
+  );
+
+  checks.push({
+    name: "session restore API and UI",
+    status: "passed",
+    sessions: sessionsSnapshot.sessions.length,
+    trackedSessions: trackedSessions.map((session) => session.id),
+    sessionId: sessionDetail.id,
+    recentMessages: sessionDetail.recentMessages.length,
+    source: panelState.source,
+    syncStatus: panelState.syncStatus,
+    count: panelState.count,
+    selectedSession: detailState.detailId,
+    previewOnly: restorePreview.previewOnly,
+    externalEffects: restorePreview.externalEffects,
+    promptValueLength: promptState.valueLength
+  });
+}
+
 async function runArtifactsSmoke(client, apiUrl) {
   const artifactSnapshot = await fetchDailyEndpointSnapshot(
     apiUrl,
@@ -974,6 +1074,108 @@ function dataLayerStateExpression() {
       activityConnectionStatus: activityRoot ? activityRoot.getAttribute("data-activity-connection-status") || "" : "",
       modelUsageSource: modelUsageRoot ? modelUsageRoot.getAttribute("data-model-usage-source") || "" : "",
       modelUsageStatus: modelUsageRoot ? modelUsageRoot.getAttribute("data-model-usage-status") || "" : ""
+    };
+  })()`);
+}
+
+function sessionHistoryPanelExpression() {
+  return withSmokeHelpers(`(() => {
+    const root = document.querySelector("[data-session-history-panel]");
+    const cards = root ? [...root.querySelectorAll("[data-session-card]")] : [];
+    return {
+      present: Boolean(root),
+      source: root ? root.getAttribute("data-session-history-source") || "" : "",
+      syncStatus: root ? root.getAttribute("data-session-history-sync-status") || "" : "",
+      count: root ? Number(root.getAttribute("data-session-history-count") || cards.length) : 0,
+      restoreSource: root ? root.getAttribute("data-session-restore-source") || "" : "",
+      restoreSyncStatus: root ? root.getAttribute("data-session-restore-sync-status") || "" : "",
+      restorePreviewOnly: root ? root.getAttribute("data-session-restore-preview-only") || "" : "",
+      restoreExternalEffects: root ? root.getAttribute("data-session-restore-external-effects") || "" : "",
+      hasCustomerSession: cards.some((card) => card.getAttribute("data-session-card") === "customer-follow-up-session"),
+      hasPlanningSession: cards.some((card) => card.getAttribute("data-session-card") === "planning-refresh-session")
+    };
+  })()`);
+}
+
+function sessionHistoryCardExpression(sessionId) {
+  return withSmokeHelpers(`(() => {
+    const root = document.querySelector("[data-session-history-panel]");
+    if (!root) return null;
+    const button = root.querySelector(${JSON.stringify(`[data-session-card="${sessionId}"]`)});
+    return smokeRect(button && isClickableSmokeButton(button) ? button : null);
+  })()`);
+}
+
+function sessionHistoryCardClickExpression(sessionId) {
+  return withSmokeHelpers(`(() => {
+    const root = document.querySelector("[data-session-history-panel]");
+    if (!root) return false;
+    const button = root.querySelector(${JSON.stringify(`[data-session-card="${sessionId}"]`)});
+    if (!button || button.disabled) return false;
+    button.click();
+    return true;
+  })()`);
+}
+
+function sessionHistoryDetailExpression(sessionId) {
+  return withSmokeHelpers(`(() => {
+    const detail = document.querySelector(${JSON.stringify(`[data-session-detail="${sessionId}"]`)});
+    const text = detail ? detail.textContent || "" : "";
+    return {
+      present: Boolean(detail),
+      detailId: detail ? detail.getAttribute("data-session-detail") || "" : "",
+      textLength: text.trim().length,
+      hasArtifactLink: /email-draft-artifact|artifact/i.test(text),
+      hasContextLink: /customer-email|meeting-notes|context/i.test(text),
+      hasApprovalLink: /draft-external-reply|read-customer-email-context|approval/i.test(text)
+    };
+  })()`);
+}
+
+function sessionRestoreButtonExpression(sessionId) {
+  return withSmokeHelpers(`(() => {
+    const detail = document.querySelector(${JSON.stringify(`[data-session-detail="${sessionId}"]`)});
+    if (!detail) return null;
+    const buttons = [...detail.querySelectorAll("button")]
+      .filter((button) => isClickableSmokeButton(button));
+    const button =
+      buttons.find((candidate) => /restore|preview|input|resume/i.test(candidate.textContent || "")) ||
+      buttons.at(-1);
+    return smokeRect(button || null);
+  })()`);
+}
+
+function sessionRestoreButtonClickExpression(sessionId) {
+  return withSmokeHelpers(`(() => {
+    const detail = document.querySelector(${JSON.stringify(`[data-session-detail="${sessionId}"]`)});
+    if (!detail) return false;
+    const buttons = [...detail.querySelectorAll("button")]
+      .filter((button) => isClickableSmokeButton(button));
+    const button =
+      buttons.find((candidate) => /restore|preview|input|resume/i.test(candidate.textContent || "")) ||
+      buttons.at(-1);
+    if (!button || button.disabled) return false;
+    button.click();
+    return true;
+  })()`);
+}
+
+function sessionRestorePromptStateExpression() {
+  return withSmokeHelpers(`(() => {
+    const input = getSmokeInput();
+    const submit = getSmokeSubmit();
+    const root = document.querySelector("[data-session-history-panel]");
+    const value = input ? input.value : "";
+    return {
+      valueLength: value.trim().length,
+      includesDailyWork: value.includes("daily_work"),
+      includesSessionId: value.includes("customer-follow-up-session"),
+      includesBoundary: /externalEffects|no external effects/i.test(value),
+      restoreSource: root ? root.getAttribute("data-session-restore-source") || "" : "",
+      restoreSyncStatus: root ? root.getAttribute("data-session-restore-sync-status") || "" : "",
+      restorePreviewOnly: root ? root.getAttribute("data-session-restore-preview-only") || "" : "",
+      restoreExternalEffects: root ? root.getAttribute("data-session-restore-external-effects") || "" : "",
+      submitDisabled: submit ? submit.disabled : true
     };
   })()`);
 }
@@ -1740,6 +1942,140 @@ function assertDailyEndpointSnapshot(snapshot, collectionKey, path) {
   if (!snapshot[collectionKey].length) {
     throw new Error(`${path} returned an empty ${collectionKey} array.`);
   }
+}
+
+function assertSessionListSnapshot(snapshot) {
+  if (!snapshot || snapshot.mode !== "daily_work" || !Array.isArray(snapshot.sessions)) {
+    throw new Error("Sessions API did not return a daily_work sessions array.");
+  }
+
+  if (snapshot.sessions.length < 3) {
+    throw new Error(
+      `Sessions API returned ${snapshot.sessions.length} session(s), expected at least 3.`
+    );
+  }
+
+  const expectedIds = ["customer-follow-up-session", "planning-refresh-session"];
+  const sessionsById = new Map(
+    snapshot.sessions
+      .filter((session) => session && typeof session.id === "string")
+      .map((session) => [session.id, session])
+  );
+  const missingIds = expectedIds.filter((id) => !sessionsById.has(id));
+
+  if (missingIds.length) {
+    throw new Error(`Sessions API missed expected session(s): ${missingIds.join(", ")}.`);
+  }
+
+  const trackedSessions = expectedIds.map((id) => sessionsById.get(id));
+
+  for (const session of trackedSessions) {
+    if (
+      !session ||
+      session.appMode !== "daily_work" ||
+      typeof session.title !== "string" ||
+      typeof session.status !== "string" ||
+      !Array.isArray(session.artifactIds) ||
+      !Array.isArray(session.contextItemIds) ||
+      !Array.isArray(session.approvalRequestIds)
+    ) {
+      throw new Error("Sessions API returned an invalid tracked session payload.");
+    }
+  }
+
+  return trackedSessions;
+}
+
+function assertSessionDetailSnapshot(snapshot) {
+  const session = snapshot && snapshot.session;
+
+  if (
+    !snapshot ||
+    snapshot.mode !== "daily_work" ||
+    !session ||
+    session.appMode !== "daily_work" ||
+    session.id !== "customer-follow-up-session"
+  ) {
+    throw new Error("Session detail API did not return the expected customer session.");
+  }
+
+  if (!Array.isArray(session.recentMessages) || !session.recentMessages.length) {
+    throw new Error("Session detail API did not include recentMessages.");
+  }
+
+  if (!Array.isArray(session.artifactIds) || !session.artifactIds.includes("email-draft-artifact")) {
+    throw new Error("Session detail API did not include artifact linkage.");
+  }
+
+  if (
+    !Array.isArray(session.contextItemIds) ||
+    !session.contextItemIds.includes("customer-email") ||
+    !session.contextItemIds.includes("meeting-notes")
+  ) {
+    throw new Error("Session detail API did not include context linkage.");
+  }
+
+  if (
+    !Array.isArray(session.approvalRequestIds) ||
+    !session.approvalRequestIds.includes("draft-external-reply")
+  ) {
+    throw new Error("Session detail API did not include approval linkage.");
+  }
+
+  return session;
+}
+
+function assertSessionRestorePreviewSnapshot(snapshot) {
+  const preview = snapshot && snapshot.preview;
+
+  if (
+    !snapshot ||
+    snapshot.mode !== "daily_work" ||
+    !preview ||
+    preview.mode !== "daily_work" ||
+    preview.sessionId !== "customer-follow-up-session" ||
+    preview.previewOnly !== true
+  ) {
+    throw new Error("Session restore preview API did not return the expected preview payload.");
+  }
+
+  if (
+    !Array.isArray(preview.externalEffects) ||
+    preview.externalEffects.length !== 1 ||
+    preview.externalEffects[0] !== "none" ||
+    !preview.safetyBoundary ||
+    !Array.isArray(preview.safetyBoundary.externalEffects) ||
+    !preview.safetyBoundary.externalEffects.includes("none")
+  ) {
+    throw new Error("Session restore preview API did not preserve the no-effect boundary.");
+  }
+
+  if (
+    !Array.isArray(preview.recentMessagesPreview) ||
+    !preview.recentMessagesPreview.length
+  ) {
+    throw new Error("Session restore preview API did not include recentMessagesPreview.");
+  }
+
+  const restorePrompt = typeof preview.restorePrompt === "string" ? preview.restorePrompt : "";
+  const requiredPromptTokens = [
+    "daily_work",
+    "customer-follow-up-session",
+    "email-draft-artifact",
+    "customer-email",
+    "draft-external-reply",
+    "no external effects",
+    "Continue from the approval boundary."
+  ];
+  const missingTokens = requiredPromptTokens.filter((token) => !restorePrompt.includes(token));
+
+  if (missingTokens.length) {
+    throw new Error(
+      `Session restore prompt missed expected token(s): ${missingTokens.join(", ")}.`
+    );
+  }
+
+  return preview;
 }
 
 function assertArtifactsSnapshot(snapshot) {
