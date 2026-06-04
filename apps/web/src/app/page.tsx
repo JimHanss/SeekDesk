@@ -259,6 +259,14 @@ type ApprovalStatus = "waiting" | "allowed_once" | "denied" | "blocked";
 type ApprovalRisk = "低" | "中" | "高" | "极高";
 type ModelRouteMode = "fast" | "pro";
 type ThinkingMode = "enabled" | "disabled";
+type ModelUsageBudgetState =
+  | "disabled"
+  | "tracking_only"
+  | "within_budget"
+  | "approaching_limit"
+  | "over_budget";
+type ModelUsagePanelSource = "fallback" | "api" | "degraded";
+type ModelUsageSyncStatus = "syncing" | "live" | "degraded";
 
 interface ApprovalRequestItem {
   id: string;
@@ -275,11 +283,15 @@ interface ModelSnapshotItem {
   id: ModelRouteMode;
   currentMode: AppMode;
   provider: string;
+  baseUrl: string;
   fastModel: string;
   proModel: string;
+  selectedRoute: ModelRouteMode;
   selectedModel: string;
   routingStrategy: string;
   thinkingMode: ThinkingMode;
+  streamUsageEnabled: boolean;
+  configured: boolean;
   updatedAt: string;
   notes: string[];
 }
@@ -289,10 +301,59 @@ interface UsageSnapshotItem {
   usageWindow: string;
   inputTokens: number;
   outputTokens: number;
+  totalTokens: number;
   estimatedCost: string;
   budgetState: string;
+  budgetLevel: ModelUsageBudgetState;
   updatedAt: string;
   notes: string[];
+}
+
+interface DailyModelConfigSnapshotDto {
+  mode?: AppMode;
+  provider?: string;
+  baseUrl?: string;
+  fastModel?: string;
+  proModel?: string;
+  selectedRoute?: ModelRouteMode;
+  selectedModel?: string;
+  thinkingMode?: ThinkingMode;
+  streamUsageEnabled?: boolean;
+  configured?: boolean;
+  notes?: string[];
+}
+
+interface DailyModelUsageWindowDto {
+  id?: string;
+  label?: string;
+  startedAt?: string;
+  endedAt?: string;
+}
+
+interface DailyModelUsageSnapshotDto {
+  window?: DailyModelUsageWindowDto;
+  promptTokens?: number;
+  completionTokens?: number;
+  totalTokens?: number;
+  estimatedCostUsd?: number;
+  currency?: string;
+  budgetState?: ModelUsageBudgetState;
+  updatedAt?: string;
+  records?: unknown[];
+}
+
+interface DailyModelUsageResponseDto {
+  mode?: AppMode;
+  config?: DailyModelConfigSnapshotDto;
+  usage?: DailyModelUsageSnapshotDto;
+}
+
+interface ModelUsagePanelState {
+  modelSnapshots: Record<ModelRouteMode, ModelSnapshotItem>;
+  usageSnapshots: Record<ModelRouteMode, UsageSnapshotItem>;
+  source: ModelUsagePanelSource;
+  syncStatus: ModelUsageSyncStatus;
+  notice: string;
 }
 
 const activeMode: AppMode = "daily_work";
@@ -908,11 +969,15 @@ const modelSnapshots: Record<ModelRouteMode, ModelSnapshotItem> = {
     id: "fast",
     currentMode: "daily_work",
     provider: "DeepSeek",
+    baseUrl: "https://api.deepseek.com",
     fastModel: "deepseek-v4-flash",
     proModel: "deepseek-v4-pro",
+    selectedRoute: "fast",
     selectedModel: "deepseek-v4-flash",
     routingStrategy: "快速：用于邮件草稿、会议压缩、短上下文整理等日常响应。",
     thinkingMode: "disabled",
+    streamUsageEnabled: true,
+    configured: false,
     updatedAt: "示例：今天 10:40",
     notes: [
       "本地示例快照，未连接真实 model selector。",
@@ -923,11 +988,15 @@ const modelSnapshots: Record<ModelRouteMode, ModelSnapshotItem> = {
     id: "pro",
     currentMode: "daily_work",
     provider: "DeepSeek",
+    baseUrl: "https://api.deepseek.com",
     fastModel: "deepseek-v4-flash",
     proModel: "deepseek-v4-pro",
+    selectedRoute: "fast",
     selectedModel: "deepseek-v4-pro",
     routingStrategy: "深度：用于复杂资料归纳、风险复核、长上下文分析等高质量输出。",
     thinkingMode: "enabled",
+    streamUsageEnabled: true,
+    configured: false,
     updatedAt: "示例：今天 10:40",
     notes: [
       "本地示例快照，未连接真实 model selector。",
@@ -942,8 +1011,10 @@ const usageSnapshots: Record<ModelRouteMode, UsageSnapshotItem> = {
     usageWindow: "示例：当前会话预估",
     inputTokens: 18420,
     outputTokens: 6110,
+    totalTokens: 24530,
     estimatedCost: "估算 $0.04",
     budgetState: "示例预算正常，未接真实余额",
+    budgetLevel: "tracking_only",
     updatedAt: "示例：今天 10:40",
     notes: [
       "usage 字段示例包含 prompt、completion、total tokens。",
@@ -955,8 +1026,10 @@ const usageSnapshots: Record<ModelRouteMode, UsageSnapshotItem> = {
     usageWindow: "示例：当前会话预估",
     inputTokens: 23880,
     outputTokens: 9280,
+    totalTokens: 33160,
     estimatedCost: "估算 $0.18",
     budgetState: "示例预算关注，未接真实余额",
+    budgetLevel: "tracking_only",
     updatedAt: "示例：今天 10:40",
     notes: [
       "深度模式示例会展示更高 token 与成本估算。",
@@ -964,6 +1037,114 @@ const usageSnapshots: Record<ModelRouteMode, UsageSnapshotItem> = {
     ]
   }
 };
+
+function createFallbackModelUsagePanelState(): ModelUsagePanelState {
+  return {
+    modelSnapshots,
+    usageSnapshots,
+    source: "fallback",
+    syncStatus: "syncing",
+    notice:
+      "正在连接后端模型与用量接口；连接完成前保留前端示例快照，保证页面可用。"
+  };
+}
+
+function mapDailyModelUsageResponse(
+  payload: DailyModelUsageResponseDto
+): ModelUsagePanelState {
+  if (payload.mode && payload.mode !== activeMode) {
+    throw new Error(`Unsupported model usage mode: ${payload.mode}`);
+  }
+
+  const config = payload.config;
+  const usage = payload.usage;
+  const selectedRoute = normalizeModelRoute(config?.selectedRoute);
+  const updatedAt = formatModelUsageUpdatedAt(usage?.updatedAt);
+  const fastModel = nonEmptyText(config?.fastModel, modelSnapshots.fast.fastModel);
+  const proModel = nonEmptyText(config?.proModel, modelSnapshots.pro.proModel);
+  const provider = formatProviderLabel(config?.provider);
+  const baseUrl = nonEmptyText(config?.baseUrl, modelSnapshots.fast.baseUrl);
+  const thinkingMode = normalizeThinkingMode(config?.thinkingMode);
+  const streamUsageEnabled = config?.streamUsageEnabled ?? false;
+  const configured = config?.configured ?? false;
+  const inputTokens = nonNegativeNumber(usage?.promptTokens);
+  const outputTokens = nonNegativeNumber(usage?.completionTokens);
+  const totalTokens =
+    nonNegativeNumber(usage?.totalTokens) || inputTokens + outputTokens;
+  const estimatedCost = formatEstimatedCost(
+    nonNegativeNumber(usage?.estimatedCostUsd),
+    usage?.currency
+  );
+  const budgetLevel = normalizeBudgetState(usage?.budgetState);
+  const usageWindow = formatUsageWindow(usage?.window);
+  const routeNote =
+    selectedRoute === "fast"
+      ? "后端当前 selectedRoute 为 fast；深度 tab 仅展示同一 daily_work 配置边界。"
+      : "后端当前 selectedRoute 为 pro；快速 tab 仅展示同一 daily_work 配置边界。";
+  const configNotes = [
+    ...sanitizeNotes(config?.notes),
+    routeNote,
+    streamUsageEnabled
+      ? "stream_options.include_usage 已开启，流式响应可返回 usage 块。"
+      : "stream usage 未开启，流式响应可能不返回 usage 块。"
+  ];
+  const usageNotes = [
+    "后端返回的是 daily_work rolling window 聚合用量，fast/pro 切换不代表独立账单。",
+    configured
+      ? "DeepSeek API Key 已在后端配置；前端不会展示或接触密钥。"
+      : "后端未配置 DeepSeek API Key；当前 usage 仍是 mock/tracking 快照。"
+  ];
+  const nextModelSnapshots = (["fast", "pro"] as const).reduce(
+    (snapshots, route) => {
+      snapshots[route] = {
+        ...modelSnapshots[route],
+        currentMode: activeMode,
+        provider,
+        baseUrl,
+        fastModel,
+        proModel,
+        selectedRoute,
+        selectedModel: route === "pro" ? proModel : fastModel,
+        thinkingMode,
+        streamUsageEnabled,
+        configured,
+        updatedAt,
+        notes: configNotes
+      };
+
+      return snapshots;
+    },
+    {} as Record<ModelRouteMode, ModelSnapshotItem>
+  );
+  const nextUsageSnapshots = (["fast", "pro"] as const).reduce(
+    (snapshots, route) => {
+      snapshots[route] = {
+        ...usageSnapshots[route],
+        usageWindow,
+        inputTokens,
+        outputTokens,
+        totalTokens,
+        estimatedCost,
+        budgetState: budgetStateLabel(budgetLevel),
+        budgetLevel,
+        updatedAt,
+        notes: usageNotes
+      };
+
+      return snapshots;
+    },
+    {} as Record<ModelRouteMode, UsageSnapshotItem>
+  );
+
+  return {
+    modelSnapshots: nextModelSnapshots,
+    usageSnapshots: nextUsageSnapshots,
+    source: "api",
+    syncStatus: "live",
+    notice:
+      "已从 /api/daily/model-usage?mode=daily_work 同步 DeepSeek 配置与用量，coding_agent 仅保留为边界说明。"
+  };
+}
 
 export default function Page() {
   const [messages, setMessages] = useState<ChatMessage[]>(initialMessages);
@@ -1004,6 +1185,9 @@ export default function Page() {
   );
   const [artifactFilter, setArtifactFilter] = useState<ArtifactFilter>("全部");
   const [modelRouteMode, setModelRouteMode] = useState<ModelRouteMode>("fast");
+  const [modelUsagePanel, setModelUsagePanel] = useState<ModelUsagePanelState>(
+    () => createFallbackModelUsagePanelState()
+  );
   const [approvalRequests, setApprovalRequests] = useState<ApprovalRequestItem[]>(
     initialApprovalRequests
   );
@@ -1016,11 +1200,10 @@ export default function Page() {
     () => `${apiBaseUrl}/api/chat`,
     [apiBaseUrl]
   );
-  const activeModelSnapshot = modelSnapshots[modelRouteMode];
-  const activeUsageSnapshot = usageSnapshots[modelRouteMode];
-  const usageTotalTokens =
-    activeUsageSnapshot.inputTokens + activeUsageSnapshot.outputTokens;
-  const usageBudgetPercent = modelRouteMode === "fast" ? 36 : 68;
+  const activeModelSnapshot = modelUsagePanel.modelSnapshots[modelRouteMode];
+  const activeUsageSnapshot = modelUsagePanel.usageSnapshots[modelRouteMode];
+  const usageTotalTokens = activeUsageSnapshot.totalTokens;
+  const usageBudgetPercent = budgetStatePercent(activeUsageSnapshot.budgetLevel);
   const modelInputPlaceholder =
     modelRouteMode === "fast"
       ? "快速模式示例：适合写客户更新、整理会议纪要、把笔记转成任务计划"
@@ -1092,6 +1275,59 @@ export default function Page() {
 
     return selectedInFilter ?? filteredSessionHistory[0] ?? sessionHistoryItems[0] ?? null;
   }, [filteredSessionHistory, selectedSessionHistoryId]);
+
+  useEffect(() => {
+    let isDisposed = false;
+    const controller = new AbortController();
+
+    async function fetchModelUsage() {
+      setModelUsagePanel((current) => ({
+        ...current,
+        syncStatus: "syncing",
+        notice: "正在从 /api/daily/model-usage?mode=daily_work 同步 DeepSeek 模型与用量。"
+      }));
+
+      try {
+        const response = await fetch(
+          `${apiBaseUrl}/api/daily/model-usage?mode=${activeMode}`,
+          {
+            signal: controller.signal
+          }
+        );
+
+        if (!response.ok) {
+          throw new Error(`Model usage request failed: ${response.status}`);
+        }
+
+        const payload = (await response.json()) as DailyModelUsageResponseDto;
+
+        if (isDisposed) {
+          return;
+        }
+
+        setModelUsagePanel(mapDailyModelUsageResponse(payload));
+      } catch {
+        if (controller.signal.aborted || isDisposed) {
+          return;
+        }
+
+        setModelUsagePanel((current) => ({
+          ...current,
+          source: "degraded",
+          syncStatus: "degraded",
+          notice:
+            "暂未取到后端模型与用量，已降级保留前端示例快照；页面可继续用于 daily_work。"
+        }));
+      }
+    }
+
+    void fetchModelUsage();
+
+    return () => {
+      isDisposed = true;
+      controller.abort();
+    };
+  }, [apiBaseUrl]);
 
   useEffect(() => {
     let isDisposed = false;
@@ -1341,7 +1577,12 @@ export default function Page() {
 
   function switchModelRoute(nextMode: ModelRouteMode) {
     setModelRouteMode(nextMode);
-    applyPrompt(buildModelSwitchPrompt(modelSnapshots[nextMode], usageSnapshots[nextMode]));
+    applyPrompt(
+      buildModelSwitchPrompt(
+        modelUsagePanel.modelSnapshots[nextMode],
+        modelUsagePanel.usageSnapshots[nextMode]
+      )
+    );
   }
 
   function updateApprovalStatus(
@@ -1481,7 +1722,11 @@ export default function Page() {
                 />
               </div>
 
-              <div className="rounded-[8px] border border-teal-100 bg-teal-50 p-3">
+              <div
+                className="rounded-[8px] border border-teal-100 bg-teal-50 p-3"
+                data-model-usage-source={modelUsagePanel.source}
+                data-model-usage-status={modelUsagePanel.syncStatus}
+              >
                 <div className="flex flex-col gap-3 md:flex-row md:items-start md:justify-between">
                   <div className="min-w-0">
                     <div className="flex items-center gap-2 text-sm font-semibold text-teal-950">
@@ -1489,9 +1734,23 @@ export default function Page() {
                       <span className="min-w-0 break-words">模型与用量</span>
                     </div>
                     <p className="mt-1 text-xs leading-5 text-teal-700">
-                      DeepSeek 日常工作模式快照，仅做前端估算 / 示例 / 未接真实余额展示。
+                      DeepSeek 日常工作模式快照，启动后同步后端 daily_work 模型配置与 usage 统计。
                     </p>
                   </div>
+
+                  <span
+                    className={cn(
+                      "inline-flex shrink-0 items-center gap-1 rounded-[999px] px-2.5 py-1 text-[11px] font-medium",
+                      modelUsagePanel.syncStatus === "live"
+                        ? "bg-emerald-100 text-emerald-800"
+                        : modelUsagePanel.syncStatus === "syncing"
+                          ? "bg-sky-100 text-sky-800"
+                          : "bg-orange-100 text-orange-800"
+                    )}
+                  >
+                    <Activity className="size-3.5" aria-hidden="true" />
+                    {modelUsageSyncStatusLabel(modelUsagePanel.syncStatus)}
+                  </span>
 
                   <div
                     className="inline-flex w-full rounded-[8px] border border-teal-200 bg-white p-1 md:w-auto"
@@ -1500,7 +1759,7 @@ export default function Page() {
                   >
                     {(["fast", "pro"] as const).map((mode) => {
                       const isActive = modelRouteMode === mode;
-                      const snapshot = modelSnapshots[mode];
+                      const snapshot = modelUsagePanel.modelSnapshots[mode];
 
                       return (
                         <button
@@ -1548,6 +1807,10 @@ export default function Page() {
                         value={activeModelSnapshot.provider}
                       />
                       <SnapshotRow
+                        label="Base URL"
+                        value={activeModelSnapshot.baseUrl}
+                      />
+                      <SnapshotRow
                         label="快速模型"
                         value={activeModelSnapshot.fastModel}
                       />
@@ -1560,12 +1823,24 @@ export default function Page() {
                         value={activeModelSnapshot.selectedModel}
                       />
                       <SnapshotRow
+                        label="实况路由"
+                        value={modelRouteLabel(activeModelSnapshot.selectedRoute)}
+                      />
+                      <SnapshotRow
                         label="Thinking"
                         value={
                           activeModelSnapshot.thinkingMode === "enabled"
-                            ? "enabled / 示例开启"
-                            : "disabled / 示例关闭"
+                            ? "enabled / 后端配置"
+                            : "disabled / 后端配置"
                         }
+                      />
+                      <SnapshotRow
+                        label="Stream Usage"
+                        value={activeModelSnapshot.streamUsageEnabled ? "enabled" : "disabled"}
+                      />
+                      <SnapshotRow
+                        label="API Key"
+                        value={activeModelSnapshot.configured ? "已配置 / 不展示密钥" : "未配置 / mock usage"}
                       />
                     </div>
                     <p className="mt-3 rounded-[8px] border border-teal-100 bg-teal-50 px-3 py-2 text-xs leading-5 text-teal-700">
@@ -1610,7 +1885,7 @@ export default function Page() {
 
                     <div className="mt-3">
                       <div className="mb-1 flex items-center justify-between gap-2 text-[11px] font-medium text-teal-700">
-                        <span>示例预算占用</span>
+                        <span>{budgetStateLabel(activeUsageSnapshot.budgetLevel)}</span>
                         <span>{usageBudgetPercent}%</span>
                       </div>
                       <div className="h-2 overflow-hidden rounded-[999px] bg-teal-100">
@@ -1621,6 +1896,21 @@ export default function Page() {
                       </div>
                     </div>
                   </div>
+                </div>
+
+                <div
+                  className={cn(
+                    "mt-3 rounded-[8px] border px-3 py-2 text-xs leading-5",
+                    modelUsagePanel.syncStatus === "degraded"
+                      ? "border-orange-200 bg-orange-50 text-orange-800"
+                      : "border-teal-100 bg-white text-teal-800"
+                  )}
+                >
+                  {modelUsagePanel.notice}
+                </div>
+
+                <div className="mt-3 rounded-[8px] border border-slate-200 bg-white px-3 py-2 text-xs leading-5 text-slate-700">
+                  边界：当前面板只消费 daily_work；coding_agent 的模型用量路径保留为兼容说明，不在此处切换或暴露编码工具状态。
                 </div>
 
                 <div className="mt-3 grid gap-2 md:grid-cols-2">
@@ -3817,6 +4107,124 @@ function modelRouteLabel(mode: ModelRouteMode) {
   return mode === "fast" ? "快速" : "深度";
 }
 
+function modelUsageSyncStatusLabel(status: ModelUsageSyncStatus) {
+  switch (status) {
+    case "syncing":
+      return "同步中";
+    case "live":
+      return "API 实况";
+    case "degraded":
+      return "降级快照";
+  }
+}
+
+function normalizeModelRoute(value: ModelRouteMode | undefined): ModelRouteMode {
+  return value === "pro" ? "pro" : "fast";
+}
+
+function normalizeThinkingMode(value: ThinkingMode | undefined): ThinkingMode {
+  return value === "enabled" ? "enabled" : "disabled";
+}
+
+function normalizeBudgetState(
+  value: ModelUsageBudgetState | undefined
+): ModelUsageBudgetState {
+  return value ?? "tracking_only";
+}
+
+function budgetStateLabel(state: ModelUsageBudgetState) {
+  switch (state) {
+    case "disabled":
+      return "用量关闭";
+    case "tracking_only":
+      return "仅追踪 / 示例";
+    case "within_budget":
+      return "预算正常";
+    case "approaching_limit":
+      return "接近阈值";
+    case "over_budget":
+      return "超出预算";
+  }
+}
+
+function budgetStatePercent(state: ModelUsageBudgetState) {
+  switch (state) {
+    case "disabled":
+      return 0;
+    case "tracking_only":
+      return 32;
+    case "within_budget":
+      return 48;
+    case "approaching_limit":
+      return 78;
+    case "over_budget":
+      return 100;
+  }
+}
+
+function nonEmptyText(value: string | undefined, fallback: string) {
+  const trimmed = value?.trim();
+  return trimmed ? trimmed : fallback;
+}
+
+function nonNegativeNumber(value: number | undefined) {
+  return typeof value === "number" && Number.isFinite(value) && value > 0
+    ? value
+    : 0;
+}
+
+function sanitizeNotes(notes: string[] | undefined) {
+  return notes?.filter((note) => note.trim().length > 0) ?? [];
+}
+
+function formatProviderLabel(provider: string | undefined) {
+  return provider?.toLowerCase() === "deepseek" ? "DeepSeek" : nonEmptyText(provider, "DeepSeek");
+}
+
+function formatEstimatedCost(value: number, currency: string | undefined) {
+  const currencyLabel = currency === "USD" || !currency ? "$" : `${currency} `;
+  return `估算 ${currencyLabel}${value.toFixed(4)}`;
+}
+
+function formatUsageWindow(window: DailyModelUsageWindowDto | undefined) {
+  if (!window) {
+    return "daily_work rolling window";
+  }
+
+  const label = nonEmptyText(window.label, "daily_work rolling window");
+  const startedAt = formatModelUsageTimestamp(window.startedAt);
+  const endedAt = formatModelUsageTimestamp(window.endedAt);
+
+  if (!startedAt || !endedAt) {
+    return label;
+  }
+
+  return `${label} / ${startedAt} - ${endedAt}`;
+}
+
+function formatModelUsageUpdatedAt(value: string | undefined) {
+  return formatModelUsageTimestamp(value) ?? "刚刚同步";
+}
+
+function formatModelUsageTimestamp(value: string | undefined) {
+  if (!value) {
+    return undefined;
+  }
+
+  const date = new Date(value);
+
+  if (Number.isNaN(date.getTime())) {
+    return value;
+  }
+
+  return new Intl.DateTimeFormat("zh-CN", {
+    month: "2-digit",
+    day: "2-digit",
+    hour: "2-digit",
+    minute: "2-digit"
+  }).format(date);
+}
+
 function formatTokenCount(value: number) {
   return new Intl.NumberFormat("en-US").format(value);
 }
@@ -3828,13 +4236,19 @@ function buildModelSwitchPrompt(
   return [
     `请按“${modelRouteLabel(modelSnapshot.id)}”示例模式继续这个 daily_work 会话。`,
     "",
-    `模型快照：Provider ${modelSnapshot.provider}，当前展示模型 ${modelSnapshot.selectedModel}，thinking ${modelSnapshot.thinkingMode}。`,
+    `模型快照：Provider ${modelSnapshot.provider}，当前展示模型 ${modelSnapshot.selectedModel}，后端路由 ${modelRouteLabel(
+      modelSnapshot.selectedRoute
+    )}，thinking ${modelSnapshot.thinkingMode}，stream usage ${
+      modelSnapshot.streamUsageEnabled ? "enabled" : "disabled"
+    }。`,
     `用量快照：${usageSnapshot.usageWindow}，输入 ${formatTokenCount(
       usageSnapshot.inputTokens
     )} tokens，输出 ${formatTokenCount(
       usageSnapshot.outputTokens
-    )} tokens，${usageSnapshot.estimatedCost}。`,
-    "说明：这是前端估算 / 示例 / 未接真实余额，不要作为真实计费或预算依据。"
+    )} tokens，合计 ${formatTokenCount(usageSnapshot.totalTokens)} tokens，${
+      usageSnapshot.estimatedCost
+    }。`,
+    "说明：当前页面固定消费 daily_work；coding_agent 仅作为兼容边界，不在这里切换。"
   ].join("\n");
 }
 
