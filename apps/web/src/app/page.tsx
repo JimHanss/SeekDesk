@@ -360,6 +360,62 @@ interface DailyModelUsageResponseDto {
   usage?: DailyModelUsageSnapshotDto;
 }
 
+type ConnectorPreviewPanelSource = "local" | "api" | "degraded";
+type ConnectorPreviewPanelSyncStatus = "idle" | "syncing" | "live" | "degraded";
+
+interface ConnectorActionPreviewStepDto {
+  title?: string;
+  description?: string;
+  externalEffect?: string;
+}
+
+interface ConnectorActionPreviewDto {
+  connectorId?: string;
+  action?: string;
+  previewOnly?: boolean;
+  relatedContextItemIds?: string[];
+  requiredApprovalRequestIds?: string[];
+  summary?: string;
+  steps?: ConnectorActionPreviewStepDto[];
+  safetyBoundary?: {
+    externalEffects?: string[];
+    statement?: string;
+  };
+}
+
+interface ConnectorActionPreviewResponseDto {
+  mode?: AppMode;
+  preview?: ConnectorActionPreviewDto;
+}
+
+interface DailyApprovalDecisionResponseDto {
+  mode?: AppMode;
+  request?: {
+    id?: string;
+    status?: string;
+    decision?: string;
+  };
+  audit?: {
+    previewOnly?: boolean;
+    externalEffects?: string[];
+    statement?: string;
+  };
+}
+
+interface ConnectorPreviewPanelState {
+  connectorId: string;
+  action: string;
+  source: ConnectorPreviewPanelSource;
+  syncStatus: ConnectorPreviewPanelSyncStatus;
+  previewOnly: boolean;
+  summary: string;
+  relatedContextItemIds: string[];
+  requiredApprovalRequestIds: string[];
+  steps: string[];
+  safetyStatement: string;
+  notice: string;
+}
+
 interface ModelUsagePanelState {
   modelSnapshots: Record<ModelRouteMode, ModelSnapshotItem>;
   usageSnapshots: Record<ModelRouteMode, UsageSnapshotItem>;
@@ -1149,6 +1205,83 @@ function createFallbackPersistencePanelState(): PersistencePanelState {
   };
 }
 
+function createLocalConnectorPreviewState(
+  connector: ConnectorItem
+): ConnectorPreviewPanelState {
+  return {
+    connectorId: connector.apiConnectorId,
+    action: connector.apiAction,
+    source: "local",
+    syncStatus: "idle",
+    previewOnly: true,
+    summary: `本地预览：${connector.name} 只展示目录、权限和审批路径，不触发真实连接器。`,
+    relatedContextItemIds: connector.relatedContextIds,
+    requiredApprovalRequestIds: connector.requiredApprovalIds,
+    steps: [
+      `确认 ${connector.name} 的最小授权范围。`,
+      "生成用户可见的预览说明与审批检查点。",
+      "等待用户明确批准后再进入下一步规划。"
+    ],
+    safetyStatement:
+      "Preview only: 当前界面不会登录、读取、写入、发送或创建任何外部记录。",
+    notice: "当前展示本地 preview-only fallback；后端可用时会自动同步 API 预览。"
+  };
+}
+
+function mapConnectorPreviewResponse(
+  connector: ConnectorItem,
+  payload: ConnectorActionPreviewResponseDto
+): ConnectorPreviewPanelState {
+  const preview = payload.preview;
+
+  if (
+    payload.mode !== activeMode ||
+    preview?.connectorId !== connector.apiConnectorId ||
+    preview.action !== connector.apiAction ||
+    preview.previewOnly !== true
+  ) {
+    throw new Error("Connector preview response did not match the selected connector.");
+  }
+
+  const steps =
+    preview.steps
+      ?.map((step) =>
+        [step.title, step.description].filter(Boolean).join(": ")
+      )
+      .filter((step) => step.trim().length > 0) ?? [];
+
+  return {
+    connectorId: connector.apiConnectorId,
+    action: connector.apiAction,
+    source: "api",
+    syncStatus: "live",
+    previewOnly: true,
+    summary: nonEmptyText(
+      preview.summary,
+      `已从后端同步 ${connector.name} 的 preview-only 动作计划。`
+    ),
+    relatedContextItemIds:
+      preview.relatedContextItemIds && preview.relatedContextItemIds.length > 0
+        ? preview.relatedContextItemIds
+        : connector.relatedContextIds,
+    requiredApprovalRequestIds:
+      preview.requiredApprovalRequestIds &&
+      preview.requiredApprovalRequestIds.length > 0
+        ? preview.requiredApprovalRequestIds
+        : connector.requiredApprovalIds,
+    steps:
+      steps.length > 0
+        ? steps
+        : createLocalConnectorPreviewState(connector).steps,
+    safetyStatement: nonEmptyText(
+      preview.safetyBoundary?.statement,
+      createLocalConnectorPreviewState(connector).safetyStatement
+    ),
+    notice:
+      "已从 /api/daily/connectors/:connectorId/preview 同步；响应声明 previewOnly=true 且 externalEffects=['none']。"
+  };
+}
+
 function mapHealthPersistenceResponse(payload: unknown): PersistencePanelState {
   const snapshot = extractHealthPersistenceSnapshot(payload);
   const currentLayer = normalizePersistenceLayer(
@@ -1372,6 +1505,10 @@ export default function Page() {
   );
   const [persistencePanel, setPersistencePanel] =
     useState<PersistencePanelState>(() => createFallbackPersistencePanelState());
+  const [connectorPreviewPanel, setConnectorPreviewPanel] =
+    useState<ConnectorPreviewPanelState>(() =>
+      createLocalConnectorPreviewState(connectorItems[0]!)
+    );
   const [approvalRequests, setApprovalRequests] = useState<ApprovalRequestItem[]>(
     initialApprovalRequests
   );
@@ -1477,6 +1614,75 @@ export default function Page() {
 
     return selectedInFilter ?? filteredSessionHistory[0] ?? sessionHistoryItems[0] ?? null;
   }, [filteredSessionHistory, selectedSessionHistoryId]);
+
+  useEffect(() => {
+    if (!selectedConnector) {
+      return;
+    }
+
+    const connector = selectedConnector;
+    let isDisposed = false;
+    const controller = new AbortController();
+    const fallbackState = createLocalConnectorPreviewState(connector);
+
+    setConnectorPreviewPanel({
+      ...fallbackState,
+      syncStatus: "syncing",
+      notice: `正在从 /api/daily/connectors/${connector.apiConnectorId}/preview 同步预览。`
+    });
+
+    async function fetchConnectorPreview() {
+      try {
+        const response = await fetch(
+          `${apiBaseUrl}/api/daily/connectors/${connector.apiConnectorId}/preview`,
+          {
+            method: "POST",
+            headers: {
+              "Content-Type": "application/json"
+            },
+            body: JSON.stringify({
+              mode: activeMode,
+              action: connector.apiAction,
+              contextItemIds: connector.relatedContextIds,
+              prompt: `Preview ${connector.name} for daily_work.`
+            }),
+            signal: controller.signal
+          }
+        );
+
+        if (!response.ok) {
+          throw new Error(`Connector preview request failed: ${response.status}`);
+        }
+
+        const payload = (await response.json()) as ConnectorActionPreviewResponseDto;
+
+        if (!isDisposed) {
+          setConnectorPreviewPanel(
+            mapConnectorPreviewResponse(connector, payload)
+          );
+        }
+      } catch {
+        if (controller.signal.aborted || isDisposed) {
+          return;
+        }
+
+        setConnectorPreviewPanel({
+          ...fallbackState,
+          source: "degraded",
+          syncStatus: "degraded",
+          notice:
+            "暂未从后端同步连接器预览，已保留本地 preview-only fallback。"
+        });
+      }
+    }
+
+    void fetchConnectorPreview();
+
+    return () => {
+      isDisposed = true;
+      controller.abort();
+    };
+  }, [apiBaseUrl, selectedConnector]);
 
   useEffect(() => {
     let isDisposed = false;
@@ -1880,7 +2086,7 @@ export default function Page() {
     );
   }
 
-  function updateConnectorPreviewDecision(
+  async function updateConnectorPreviewDecision(
     connector: ConnectorItem,
     nextStatus: Exclude<ApprovalStatus, "waiting">
   ) {
@@ -1888,13 +2094,90 @@ export default function Page() {
       return;
     }
 
-    setApprovalRequests((current) =>
-      current.map((item) =>
-        connector.requiredApprovalIds.includes(item.id)
-          ? { ...item, status: nextStatus }
-          : item
-      )
+    const applyLocalStatus = () => {
+      setApprovalRequests((current) =>
+        current.map((item) =>
+          connector.requiredApprovalIds.includes(item.id)
+            ? { ...item, status: nextStatus }
+            : item
+        )
+      );
+    };
+
+    applyLocalStatus();
+    setConnectorPreviewPanel((current) =>
+      current.connectorId === connector.apiConnectorId
+        ? {
+            ...current,
+            syncStatus: "syncing",
+            notice: "正在向审批 decision API 写入 preview-only 决策。"
+          }
+        : current
     );
+
+    try {
+      const decision = nextStatus === "denied" ? "deny" : "approved";
+      const responses = await Promise.all(
+        connector.requiredApprovalIds.map(async (approvalId) => {
+          const response = await fetch(
+            `${apiBaseUrl}/api/daily/approvals/${approvalId}/decision`,
+            {
+              method: "POST",
+              headers: {
+                "Content-Type": "application/json"
+              },
+              body: JSON.stringify({
+                mode: activeMode,
+                decision,
+                reason: `Preview decision from ${connector.name}.`
+              })
+            }
+          );
+
+          if (!response.ok) {
+            throw new Error(`Approval decision failed: ${response.status}`);
+          }
+
+          return (await response.json()) as DailyApprovalDecisionResponseDto;
+        })
+      );
+
+      setApprovalRequests((current) =>
+        current.map((item) => {
+          const response = responses.find(
+            (entry) => entry.request?.id === item.id
+          );
+
+          return response
+            ? { ...item, status: mapApprovalDecisionStatus(response) }
+            : item;
+        })
+      );
+      setConnectorPreviewPanel((current) =>
+        current.connectorId === connector.apiConnectorId
+          ? {
+              ...current,
+              source: "api",
+              syncStatus: "live",
+              notice:
+                "已从 /api/daily/approvals/:approvalRequestId/decision 返回 preview-only 审批结果。"
+            }
+          : current
+      );
+    } catch {
+      applyLocalStatus();
+      setConnectorPreviewPanel((current) =>
+        current.connectorId === connector.apiConnectorId
+          ? {
+              ...current,
+              source: "degraded",
+              syncStatus: "degraded",
+              notice:
+                "审批 decision API 暂不可用；已保留本地 preview-only 决策状态。"
+            }
+          : current
+      );
+    }
   }
 
   return (
@@ -3043,10 +3326,16 @@ export default function Page() {
                     <div
                       className="mt-3 rounded-[8px] border border-cyan-200 bg-cyan-50 px-3 py-3"
                       data-approval-preview-panel
-                      data-api-connector-id={selectedConnector.apiConnectorId}
-                      data-connector-action-preview={selectedConnector.apiAction}
+                      data-api-connector-id={connectorPreviewPanel.connectorId}
+                      data-connector-action-preview={connectorPreviewPanel.action}
+                      data-connector-preview-source={connectorPreviewPanel.source}
+                      data-connector-preview-sync-status={
+                        connectorPreviewPanel.syncStatus
+                      }
                       data-connector-preview-status={selectedConnectorPreviewStatus}
-                      data-connector-preview-only="true"
+                      data-connector-preview-only={String(
+                        connectorPreviewPanel.previewOnly
+                      )}
                     >
                       <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
                         <div className="min-w-0">
@@ -3061,8 +3350,12 @@ export default function Page() {
                           </div>
                           <p className="mt-1 text-xs leading-5 text-cyan-800">
                             POST /api/daily/connectors/
-                            {selectedConnector.apiConnectorId}/preview ·{" "}
-                            {selectedConnector.apiAction}
+                            {connectorPreviewPanel.connectorId}/preview ·{" "}
+                            {connectorPreviewPanel.action}
+                          </p>
+                          <p className="mt-1 text-[11px] leading-4 text-cyan-700">
+                            Source: {connectorPreviewPanel.source} · Status:{" "}
+                            {connectorPreviewPanel.syncStatus}
                           </p>
                         </div>
                         <StatusPill status={selectedConnectorPreviewStatus} />
@@ -3072,19 +3365,42 @@ export default function Page() {
                         <StatusRow
                           label="关联上下文"
                           value={
-                            selectedConnector.relatedContextIds.length > 0
-                              ? selectedConnector.relatedContextIds.join("、")
+                            connectorPreviewPanel.relatedContextItemIds.length > 0
+                              ? connectorPreviewPanel.relatedContextItemIds.join("、")
                               : "无需上下文"
                           }
                         />
                         <StatusRow
                           label="审批请求"
                           value={
-                            selectedConnector.requiredApprovalIds.length > 0
-                              ? selectedConnector.requiredApprovalIds.join("、")
+                            connectorPreviewPanel.requiredApprovalRequestIds.length > 0
+                              ? connectorPreviewPanel.requiredApprovalRequestIds.join("、")
                               : "无需审批"
                           }
                         />
+                      </div>
+
+                      <div
+                        className="mt-3 rounded-[8px] border border-cyan-100 bg-white px-3 py-2 text-xs leading-5 text-cyan-900"
+                        data-connector-preview-summary
+                      >
+                        {connectorPreviewPanel.summary}
+                      </div>
+
+                      <div className="mt-3 space-y-1">
+                        {connectorPreviewPanel.steps.map((step) => (
+                          <div
+                            key={`${connectorPreviewPanel.connectorId}-${step}`}
+                            className="flex items-start gap-2 rounded-[8px] border border-cyan-100 bg-white px-2.5 py-2 text-xs leading-5 text-slate-700"
+                            data-connector-preview-step
+                          >
+                            <CheckCircle2
+                              className="mt-0.5 size-3.5 shrink-0 text-cyan-700"
+                              aria-hidden="true"
+                            />
+                            <span className="min-w-0 break-words">{step}</span>
+                          </div>
+                        ))}
                       </div>
 
                       {selectedConnectorApprovalRequests.length > 0 ? (
@@ -3110,8 +3426,11 @@ export default function Page() {
                       )}
 
                       <div className="mt-3 rounded-[8px] border border-cyan-100 bg-white px-3 py-2 text-xs leading-5 text-slate-700">
-                        这个面板只展示将要调用的 mock API、风险边界和审批状态；
-                        它不会登录、读取、写入、发送或创建任何外部记录。
+                        {connectorPreviewPanel.safetyStatement}
+                      </div>
+
+                      <div className="mt-3 rounded-[8px] border border-cyan-100 bg-white px-3 py-2 text-xs leading-5 text-cyan-800">
+                        {connectorPreviewPanel.notice}
                       </div>
 
                       <div className="mt-3 grid gap-2 sm:grid-cols-2">
@@ -3123,12 +3442,12 @@ export default function Page() {
                           data-approval-decision-action="allow_once"
                           data-approval-decision-target={selectedConnector.id}
                           className="h-8 rounded-[8px] border-cyan-200 bg-white text-cyan-800 hover:bg-cyan-50"
-                          onClick={() =>
-                            updateConnectorPreviewDecision(
+                          onClick={() => {
+                            void updateConnectorPreviewDecision(
                               selectedConnector,
                               "allowed_once"
-                            )
-                          }
+                            );
+                          }}
                         >
                           <CheckCircle2 className="size-4" aria-hidden="true" />
                           批准预览
@@ -3141,12 +3460,12 @@ export default function Page() {
                           data-approval-decision-action="deny"
                           data-approval-decision-target={selectedConnector.id}
                           className="h-8 rounded-[8px] border-slate-200 bg-white text-slate-700 hover:bg-slate-50"
-                          onClick={() =>
-                            updateConnectorPreviewDecision(
+                          onClick={() => {
+                            void updateConnectorPreviewDecision(
                               selectedConnector,
                               "denied"
-                            )
-                          }
+                            );
+                          }}
                         >
                           <Square className="size-4" aria-hidden="true" />
                           拒绝预览
@@ -4902,6 +5221,20 @@ function connectorPreviewApprovalStatus(
     )
   ) {
     return "allowed_once";
+  }
+
+  return "waiting";
+}
+
+function mapApprovalDecisionStatus(
+  payload: DailyApprovalDecisionResponseDto
+): ApprovalStatus {
+  if (payload.request?.status === "approved") {
+    return "allowed_once";
+  }
+
+  if (payload.request?.status === "denied") {
+    return "denied";
   }
 
   return "waiting";

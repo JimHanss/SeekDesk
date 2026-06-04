@@ -626,6 +626,8 @@ async function runApprovalPreviewSmoke(client, apiUrl) {
     (state) =>
       state.present &&
       state.previewOnly === "true" &&
+      state.source === "api" &&
+      state.syncStatus === "live" &&
       state.apiConnectorId &&
       state.action &&
       state.status &&
@@ -640,6 +642,7 @@ async function runApprovalPreviewSmoke(client, apiUrl) {
     "approval preview deny button"
   );
   await clickAt(client, denyRect);
+  await evaluate(client, approvalPreviewDecisionClickExpression("deny"));
 
   const deniedState = await waitForValue(
     client,
@@ -654,6 +657,7 @@ async function runApprovalPreviewSmoke(client, apiUrl) {
     "approval preview allow button"
   );
   await clickAt(client, allowRect);
+  await evaluate(client, approvalPreviewDecisionClickExpression("allow_once"));
 
   const allowedState = await waitForValue(
     client,
@@ -669,6 +673,8 @@ async function runApprovalPreviewSmoke(client, apiUrl) {
     status: "passed",
     apiConnectorId: panelState.apiConnectorId,
     action: panelState.action,
+    source: panelState.source,
+    syncStatus: panelState.syncStatus,
     initialStatus: panelState.status,
     deniedStatus: deniedState.status,
     allowedStatus: allowedState.status,
@@ -851,6 +857,8 @@ function approvalPreviewPanelExpression() {
       present: Boolean(root),
       apiConnectorId: root ? root.getAttribute("data-api-connector-id") || "" : "",
       action: root ? root.getAttribute("data-connector-action-preview") || "" : "",
+      source: root ? root.getAttribute("data-connector-preview-source") || "" : "",
+      syncStatus: root ? root.getAttribute("data-connector-preview-sync-status") || "" : "",
       status: root ? root.getAttribute("data-connector-preview-status") || "" : "",
       previewOnly: root ? root.getAttribute("data-connector-preview-only") || "" : "",
       requestCount: requestStatuses.length,
@@ -868,6 +876,19 @@ function approvalPreviewDecisionButtonExpression(action) {
       ${JSON.stringify(`[data-approval-decision-action="${action}"]`)}
     );
     return smokeRect(button && isClickableSmokeButton(button) ? button : null);
+  })()`);
+}
+
+function approvalPreviewDecisionClickExpression(action) {
+  return withSmokeHelpers(`(() => {
+    const root = document.querySelector("[data-approval-preview-panel]");
+    if (!root) return false;
+    const button = root.querySelector(
+      ${JSON.stringify(`[data-approval-decision-action="${action}"]`)}
+    );
+    if (!button || button.disabled) return false;
+    button.click();
+    return true;
   })()`);
 }
 
