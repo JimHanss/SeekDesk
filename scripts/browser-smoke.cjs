@@ -40,6 +40,7 @@ async function main() {
   try {
     client = await openPage(browser.debugPort, smokeUrl);
     await runPromptSmoke(client);
+    await runOptionalCodeBlockSmoke(client);
 
     const payload = {
       status: "passed",
@@ -373,6 +374,83 @@ async function runPromptSmoke(client) {
   });
 }
 
+async function runOptionalCodeBlockSmoke(client) {
+  const initialInspection = await inspectCodeBlockDom(client);
+  if (initialInspection.hasBlocks) {
+    assertCodeBlockDom(initialInspection, "existing code block highlighting DOM");
+    return;
+  }
+
+  const endpoint = await getChatEndpoint(client);
+  if (!endpoint) {
+    checks.push({
+      name: "code block highlighting DOM",
+      status: "skipped",
+      reason: "chat endpoint was not visible on the page"
+    });
+    return;
+  }
+
+  const healthUrl = new URL("/health", endpoint).toString();
+  if (!(await isReachable(healthUrl))) {
+    checks.push({
+      name: "code block highlighting DOM",
+      status: "skipped",
+      reason: `chat API was not reachable at ${healthUrl}`
+    });
+    return;
+  }
+
+  const probe = await fetchCodeFenceProbe(endpoint);
+  if (!probe.ok) {
+    checks.push({
+      name: "code block highlighting DOM",
+      status: "skipped",
+      reason: probe.reason
+    });
+    return;
+  }
+
+  const prompt = "Please return TypeScript code for a daily_work code block smoke.";
+  const submitRect = await waitForRect(
+    client,
+    setSmokeInputExpression(prompt),
+    "code block smoke prompt"
+  );
+  await clickAt(client, submitRect);
+
+  let streamedState;
+  try {
+    streamedState = await waitForValue(
+      client,
+      codeBlockOrFenceExpression(),
+      (state) => state.inspection.hasBlocks || (state.hasFence && state.submitDisabled === false),
+      "code block smoke response",
+      Math.min(timeoutMs, 8000)
+    );
+  } catch (error) {
+    checks.push({
+      name: "code block highlighting DOM",
+      status: "skipped",
+      reason: `fenced code probe passed, but the browser response did not finish: ${
+        error instanceof Error ? error.message : String(error)
+      }`
+    });
+    return;
+  }
+
+  if (streamedState.inspection.hasBlocks) {
+    assertCodeBlockDom(streamedState.inspection, "streamed code block highlighting DOM");
+    return;
+  }
+
+  checks.push({
+    name: "code block highlighting DOM",
+    status: "skipped",
+    reason: "fenced code streamed, but highlighted code block DOM is not implemented yet"
+  });
+}
+
 function templateButtonExpression() {
   return withSmokeHelpers(`(() => {
     const aside = document.querySelector("aside");
@@ -406,6 +484,38 @@ function workflowPromptButtonExpression() {
         isClickableSmokeButton(candidate) && /Prompt/i.test(candidate.textContent || "")
       );
     return smokeRect(button || null);
+  })()`);
+}
+
+function setSmokeInputExpression(value) {
+  return withSmokeHelpers(`(() => {
+    const input = getSmokeInput();
+    const submit = getSmokeSubmit();
+    if (!input || !submit) return null;
+
+    const value = ${JSON.stringify(value)};
+    const prototype = input instanceof HTMLTextAreaElement
+      ? HTMLTextAreaElement.prototype
+      : HTMLInputElement.prototype;
+    const setter = Object.getOwnPropertyDescriptor(prototype, "value").set;
+    setter.call(input, value);
+    input.dispatchEvent(new Event("input", { bubbles: true }));
+    input.dispatchEvent(new Event("change", { bubbles: true }));
+
+    return smokeRect(submit.disabled ? null : submit);
+  })()`);
+}
+
+function codeBlockOrFenceExpression() {
+  return withSmokeHelpers(`(() => {
+    const inspection = inspectCodeBlockDom();
+    const bodyText = document.body.textContent || "";
+    const submit = getSmokeSubmit();
+    return {
+      inspection,
+      hasFence: bodyText.includes("\`\`\`ts") || bodyText.includes("DailyWorkSignal"),
+      submitDisabled: submit ? submit.disabled : true
+    };
   })()`);
 }
 
@@ -447,8 +557,114 @@ function withSmokeHelpers(expression) {
         .sort((left, right) => left.area - right.area);
       return candidates[0] ? candidates[0].element : null;
     };
+    window.inspectCodeBlockDom = function inspectCodeBlockDom() {
+      const blocks = [...document.querySelectorAll("[data-code-block]")];
+      return {
+        hasBlocks: blocks.length > 0,
+        count: blocks.length,
+        blocks: blocks.slice(0, 3).map((block) => {
+          const label = block.querySelector("[data-code-language], [data-language]");
+          const tokenSpans = [...block.querySelectorAll("span")]
+            .filter((span) =>
+              /token|keyword|string|comment|function|punctuation|property|number|operator|class-name/i.test(String(span.className || "")) ||
+              span.hasAttribute("data-token")
+            );
+          return {
+            language:
+              block.getAttribute("data-language") ||
+              block.getAttribute("data-code-language") ||
+              block.getAttribute("data-code-block") ||
+              (label ? label.textContent.trim() : ""),
+            text: block.textContent || "",
+            hasPanel: true,
+            tokenCount: tokenSpans.length
+          };
+        })
+      };
+    };
     return ${expression};
   })()`;
+}
+
+async function inspectCodeBlockDom(client) {
+  return evaluate(client, withSmokeHelpers("inspectCodeBlockDom()"));
+}
+
+async function getChatEndpoint(client) {
+  return evaluate(
+    client,
+    `(() => {
+      const match = (document.body.textContent || "").match(/Endpoint:\\s*(https?:\\/\\/\\S+?\\/api\\/chat)/);
+      return match ? match[1] : null;
+    })()`
+  );
+}
+
+async function fetchCodeFenceProbe(endpoint) {
+  try {
+    const response = await fetch(endpoint, {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json"
+      },
+      body: JSON.stringify({
+        mode: "daily_work",
+        messages: [
+          {
+            role: "user",
+            content: "Please return TypeScript code for a daily_work code block smoke."
+          }
+        ]
+      }),
+      signal: AbortSignal.timeout(3000)
+    });
+
+    if (!response.ok) {
+      return {
+        ok: false,
+        reason: `chat API probe returned HTTP ${response.status}`
+      };
+    }
+
+    const body = await response.text();
+    return body.includes("```")
+      ? { ok: true }
+      : {
+          ok: false,
+          reason: "chat API probe did not return a fenced code block"
+        };
+  } catch (error) {
+    return {
+      ok: false,
+      reason: `chat API probe failed: ${error instanceof Error ? error.message : String(error)}`
+    };
+  }
+}
+
+function assertCodeBlockDom(inspection, label) {
+  const firstBlock = inspection.blocks[0] || {};
+  const languageSignal = `${firstBlock.language || ""} ${firstBlock.text || ""}`.toLowerCase();
+  const hasLanguageLabel = /\b(ts|tsx|typescript|json|javascript|js)\b/.test(languageSignal);
+
+  if (!inspection.hasBlocks || !firstBlock.hasPanel) {
+    throw new Error(`${label} was missing a data-code-block panel.`);
+  }
+
+  if (!hasLanguageLabel) {
+    throw new Error(`${label} was missing a stable language label.`);
+  }
+
+  if (!firstBlock.tokenCount) {
+    throw new Error(`${label} was missing syntax token spans or classes.`);
+  }
+
+  checks.push({
+    name: "code block highlighting DOM",
+    status: "passed",
+    blocks: inspection.count,
+    language: firstBlock.language,
+    tokenCount: firstBlock.tokenCount
+  });
 }
 
 async function waitForRect(client, expression, label) {
@@ -469,10 +685,10 @@ async function waitForRuntime(client, expression, label) {
   return waitForValue(client, expression, Boolean, label);
 }
 
-async function waitForValue(client, expression, predicate, label) {
+async function waitForValue(client, expression, predicate, label, waitTimeoutMs = timeoutMs) {
   const startedAt = Date.now();
   let lastValue;
-  while (Date.now() - startedAt < timeoutMs) {
+  while (Date.now() - startedAt < waitTimeoutMs) {
     lastValue = await evaluate(client, expression);
     if (predicate(lastValue)) {
       return lastValue;
