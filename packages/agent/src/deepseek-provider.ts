@@ -103,7 +103,15 @@ function parseSseLine(line: string): ModelStreamChunk | null {
     return null;
   }
 
-  const parsed = JSON.parse(data) as DeepSeekStreamChunk;
+  let parsed: DeepSeekStreamChunk;
+  try {
+    parsed = JSON.parse(data) as DeepSeekStreamChunk;
+  } catch (error) {
+    const message = error instanceof Error ? error.message : "Unknown JSON error";
+    throw new Error(
+      `DeepSeek stream parse failed: ${message}; data=${data.slice(0, 160)}`
+    );
+  }
   const delta = parsed.choices?.[0]?.delta;
   const text = delta?.content ?? delta?.reasoning_content ?? "";
 
