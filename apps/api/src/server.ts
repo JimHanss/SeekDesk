@@ -8,18 +8,27 @@ import {
 import {
   appModeSchema,
   chatRequestSchema,
+  connectorActionPreviewRequestSchema,
   createDailyActivityEventResponse,
   createDailyActivityEventsResponse,
   createDailyActivitySnapshotMessage,
   createDailyModelUsageResponse,
+  dailyApprovalDecisionRequestSchema,
   type AppMode,
+  type ApprovalDecision,
+  type ApprovalDecisionInput,
   type ChatProvider,
   type ChatRequest,
+  type ConnectorAction,
+  type ConnectorActionPreviewResponse,
   type DailyApprovalRequestsResponse,
+  type DailyApprovalDecisionResponse,
+  type DailyApprovalRequest,
   type DailyWorkArtifactResponse,
   type DailyWorkArtifactsResponse,
   type DailyActivityEventResponse,
   type DailyActivityEventsResponse,
+  type DailyWorkConnector,
   type DailyWorkConnectorResponse,
   type DailyWorkConnectorsResponse,
   type DailyModelUsageResponse,
@@ -66,6 +75,10 @@ export async function buildServer(options?: {
   app.options("/api/daily/approvals", async (_request, reply) =>
     reply.code(204).send()
   );
+  app.options(
+    "/api/daily/approvals/:approvalRequestId/decision",
+    async (_request, reply) => reply.code(204).send()
+  );
   app.options("/api/daily/templates", async (_request, reply) =>
     reply.code(204).send()
   );
@@ -95,6 +108,10 @@ export async function buildServer(options?: {
   );
   app.options("/api/daily/connectors/:connectorId", async (_request, reply) =>
     reply.code(204).send()
+  );
+  app.options(
+    "/api/daily/connectors/:connectorId/preview",
+    async (_request, reply) => reply.code(204).send()
   );
   app.options("/api/daily/workflows", async (_request, reply) =>
     reply.code(204).send()
@@ -130,6 +147,58 @@ export async function buildServer(options?: {
         mode,
         requests: await filterDailyWorkApprovalRequests(dailyWorkRepository, mode)
       };
+    }
+  );
+
+  app.post<{
+    Params: { approvalRequestId: string };
+    Body: unknown;
+  }>(
+    "/api/daily/approvals/:approvalRequestId/decision",
+    async (
+      request,
+      reply
+    ): Promise<DailyApprovalDecisionResponse | void> => {
+      const parsed = dailyApprovalDecisionRequestSchema.safeParse(request.body);
+      if (!parsed.success) {
+        reply
+          .code(400)
+          .send(
+            createValidationError(
+              "Invalid approval decision.",
+              parsed.error.issues
+            )
+          );
+        return;
+      }
+
+      const mode = normalizeAppMode(parsed.data.mode);
+      if (mode !== "daily_work") {
+        reply.code(400).send({
+          mode,
+          error: "Approval decisions are only available in daily_work mode."
+        });
+        return;
+      }
+
+      const approvalRequest = (
+        await filterDailyWorkApprovalRequests(dailyWorkRepository, mode)
+      ).find((item) => item.id === request.params.approvalRequestId);
+
+      if (!approvalRequest) {
+        reply.code(404).send({
+          mode,
+          error: "Daily-work approval request not found."
+        });
+        return;
+      }
+
+      return createApprovalDecisionResponse({
+        mode,
+        approvalRequest,
+        decisionInput: parsed.data.decision,
+        ...(parsed.data.reason ? { reason: parsed.data.reason } : {})
+      });
     }
   );
 
@@ -316,6 +385,71 @@ export async function buildServer(options?: {
     }
   );
 
+  app.post<{
+    Params: { connectorId: string };
+    Body: unknown;
+  }>(
+    "/api/daily/connectors/:connectorId/preview",
+    async (
+      request,
+      reply
+    ): Promise<ConnectorActionPreviewResponse | void> => {
+      const parsed = connectorActionPreviewRequestSchema.safeParse(request.body);
+      if (!parsed.success) {
+        reply
+          .code(400)
+          .send(
+            createValidationError(
+              "Invalid connector action preview request.",
+              parsed.error.issues
+            )
+          );
+        return;
+      }
+
+      const mode = normalizeAppMode(parsed.data.mode);
+      if (mode !== "daily_work") {
+        reply.code(400).send({
+          mode,
+          error: "Connector action previews are only available in daily_work mode."
+        });
+        return;
+      }
+
+      const connector = await filterDailyWorkConnector(
+        dailyWorkRepository,
+        mode,
+        request.params.connectorId
+      );
+
+      if (!connector) {
+        reply.code(404).send({
+          mode,
+          error: "Daily-work connector not found."
+        });
+        return;
+      }
+
+      if (!connector.availableActions.includes(parsed.data.action)) {
+        reply.code(400).send({
+          mode,
+          connectorId: connector.id,
+          action: parsed.data.action,
+          error: "Connector action is not available for this connector."
+        });
+        return;
+      }
+
+      return createConnectorActionPreviewResponse({
+        mode,
+        connector,
+        action: parsed.data.action,
+        contextItemIds: parsed.data.contextItemIds,
+        ...(parsed.data.prompt ? { prompt: parsed.data.prompt } : {})
+      });
+    }
+  );
+
   app.get<{ Querystring: { mode?: string } }>(
     "/api/daily/workflows",
     async (request): Promise<DailyWorkflowsResponse> => {
@@ -431,6 +565,245 @@ function normalizeAppMode(mode: unknown): AppMode {
   const parsed = appModeSchema.safeParse(mode);
   return parsed.success ? parsed.data : "daily_work";
 }
+
+function createValidationError(
+  error: string,
+  issues: Array<{ path: PropertyKey[]; message: string }>
+) {
+  return {
+    error,
+    issues: issues.map((issue) => ({
+      path: issue.path.map(String).join("."),
+      message: issue.message
+    }))
+  };
+}
+
+function createConnectorActionPreviewResponse(input: {
+  mode: AppMode;
+  connector: DailyWorkConnector;
+  action: ConnectorAction;
+  contextItemIds: string[];
+  prompt?: string;
+}): ConnectorActionPreviewResponse {
+  const actionCopy = connectorActionPreviewCopy[input.action];
+  const relatedContextItemIds = uniqueStrings([
+    ...input.connector.relatedContextItemIds,
+    ...input.contextItemIds
+  ]);
+
+  return {
+    mode: input.mode,
+    preview: {
+      id: `${input.connector.id}:${input.action}:preview`,
+      mode: input.mode,
+      connectorId: input.connector.id,
+      connectorDisplayName: input.connector.displayName,
+      action: input.action,
+      previewOnly: true,
+      permissionState: input.connector.permissionState,
+      riskLevel: input.connector.riskLevel,
+      relatedContextItemIds,
+      requiredApprovalRequestIds: input.connector.requiredApprovalRequestIds,
+      ...(input.prompt ? { prompt: input.prompt } : {}),
+      summary: actionCopy.summary(input.connector.displayName),
+      steps: actionCopy.steps.map((step, index) => ({
+        id: `${input.connector.id}:${input.action}:step-${index + 1}`,
+        title: step.title,
+        description: step.description(input.connector.displayName),
+        externalEffect: "none" as const
+      })),
+      safetyBoundary: {
+        previewOnly: true,
+        externalEffects: ["none"],
+        prohibitedExternalActions: [
+          "send_email",
+          "write_document",
+          "schedule_calendar_event",
+          "create_task",
+          "read_private_external_data"
+        ],
+        statement:
+          "Preview only: SeekDesk describes the connector action plan but does not read private external data, send, write, schedule, or create records."
+      }
+    }
+  };
+}
+
+function createApprovalDecisionResponse(input: {
+  mode: AppMode;
+  approvalRequest: DailyApprovalRequest;
+  decisionInput: ApprovalDecisionInput;
+  reason?: string;
+}): DailyApprovalDecisionResponse {
+  const normalized = normalizeApprovalDecisionInput(input.decisionInput);
+  const request: DailyApprovalRequest = {
+    ...input.approvalRequest,
+    decision: normalized.decision,
+    status: normalized.status
+  };
+
+  return {
+    mode: input.mode,
+    request,
+    audit: {
+      previewOnly: true,
+      decidedAt: new Date().toISOString(),
+      decision: normalized.decision,
+      status: normalized.status,
+      ...(input.reason ? { reason: input.reason } : {}),
+      externalEffects: ["none"],
+      statement:
+        "Decision preview only: this response records the simulated approval state and does not perform any external connector action."
+    }
+  };
+}
+
+function normalizeApprovalDecisionInput(decisionInput: ApprovalDecisionInput): {
+  decision: ApprovalDecision;
+  status: DailyApprovalRequest["status"];
+} {
+  if (decisionInput === "denied" || decisionInput === "deny") {
+    return {
+      decision: "deny",
+      status: "denied"
+    };
+  }
+
+  return {
+    decision:
+      decisionInput === "allow_for_session" ? "allow_for_session" : "allow_once",
+    status: "approved"
+  };
+}
+
+function uniqueStrings(values: string[]) {
+  return [...new Set(values)];
+}
+
+const connectorActionPreviewCopy: Record<
+  ConnectorAction,
+  {
+    summary: (connectorName: string) => string;
+    steps: Array<{
+      title: string;
+      description: (connectorName: string) => string;
+    }>;
+  }
+> = {
+  search: {
+    summary: (connectorName) =>
+      `Prepare a search plan for ${connectorName} without querying the external provider.`,
+    steps: [
+      {
+        title: "Scope query",
+        description: (connectorName) =>
+          `Define search keywords and filters for ${connectorName}.`
+      },
+      {
+        title: "Return preview",
+        description: () =>
+          "Show the proposed query, expected fields, and approval needs only."
+      }
+    ]
+  },
+  read_context: {
+    summary: (connectorName) =>
+      `Preview which context would be read from ${connectorName}.`,
+    steps: [
+      {
+        title: "List context targets",
+        description: (connectorName) =>
+          `Identify candidate context records from ${connectorName}.`
+      },
+      {
+        title: "Hold for permission",
+        description: () =>
+          "Wait for explicit approval before any private context is read."
+      }
+    ]
+  },
+  summarize: {
+    summary: (connectorName) =>
+      `Preview a summarization plan for workspace-safe material in ${connectorName}.`,
+    steps: [
+      {
+        title: "Choose sources",
+        description: (connectorName) =>
+          `Select the notes or references that would be summarized from ${connectorName}.`
+      },
+      {
+        title: "Draft outline",
+        description: () =>
+          "Return only a summary outline and required review gates."
+      }
+    ]
+  },
+  draft_document: {
+    summary: (connectorName) =>
+      `Preview a document draft workflow using ${connectorName}.`,
+    steps: [
+      {
+        title: "Collect inputs",
+        description: (connectorName) =>
+          `Map relevant source documents from ${connectorName}.`
+      },
+      {
+        title: "Prepare draft shell",
+        description: () =>
+          "Create a draft outline in the response only; no file is written."
+      }
+    ]
+  },
+  prepare_email_draft: {
+    summary: (connectorName) =>
+      `Preview an email draft plan using ${connectorName}.`,
+    steps: [
+      {
+        title: "Review thread boundary",
+        description: (connectorName) =>
+          `Show which email context from ${connectorName} would require approval.`
+      },
+      {
+        title: "Prepare response draft",
+        description: () =>
+          "Return a draft plan only; no email is sent or queued."
+      }
+    ]
+  },
+  prepare_calendar_follow_up: {
+    summary: (connectorName) =>
+      `Preview a calendar follow-up plan using ${connectorName}.`,
+    steps: [
+      {
+        title: "Check scheduling intent",
+        description: (connectorName) =>
+          `Describe the calendar hold that would be prepared in ${connectorName}.`
+      },
+      {
+        title: "Wait for confirmation",
+        description: () =>
+          "Return proposed timing and attendees only; no calendar event is created."
+      }
+    ]
+  },
+  open_reference: {
+    summary: (connectorName) =>
+      `Preview a safe reference-opening handoff for ${connectorName}.`,
+    steps: [
+      {
+        title: "Identify reference",
+        description: (connectorName) =>
+          `Resolve the reference label inside ${connectorName}.`
+      },
+      {
+        title: "Prepare handoff",
+        description: () =>
+          "Return a user-visible reference target without opening a browser or provider."
+      }
+    ]
+  }
+};
 
 async function filterDailyWorkTemplates(
   repository: DailyWorkRepository,

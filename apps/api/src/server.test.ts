@@ -4,9 +4,11 @@ import type { AddressInfo } from "node:net";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import {
+  connectorActionPreviewResponseSchema,
   dailyActivityEventResponseSchema,
   dailyActivityEventsResponseSchema,
-  dailyActivitySnapshotMessageSchema
+  dailyActivitySnapshotMessageSchema,
+  dailyApprovalDecisionResponseSchema
 } from "@seekdesk/shared";
 
 import { buildServer } from "./server.js";
@@ -206,6 +208,132 @@ describe("api server", () => {
       ])
     });
     expect(response.json().requests).toHaveLength(4);
+
+    await app.close();
+  });
+
+  it("previews an approved daily-work approval decision", async () => {
+    const app = await buildServer();
+    const response = await app.inject({
+      method: "POST",
+      url: "/api/daily/approvals/draft-external-reply/decision",
+      payload: {
+        decision: "approved",
+        reason: "Reviewed the customer-facing draft boundary."
+      }
+    });
+    const body = dailyApprovalDecisionResponseSchema.parse(response.json());
+
+    expect(response.statusCode).toBe(200);
+    expect(body).toEqual({
+      mode: "daily_work",
+      request: expect.objectContaining({
+        id: "draft-external-reply",
+        status: "approved",
+        decision: "allow_once"
+      }),
+      audit: expect.objectContaining({
+        previewOnly: true,
+        decision: "allow_once",
+        status: "approved",
+        reason: "Reviewed the customer-facing draft boundary.",
+        externalEffects: ["none"],
+        statement: expect.stringContaining("does not perform")
+      })
+    });
+    expect(Date.parse(body.audit.decidedAt)).not.toBeNaN();
+
+    await app.close();
+  });
+
+  it("previews a denied daily-work approval decision", async () => {
+    const app = await buildServer();
+    const response = await app.inject({
+      method: "POST",
+      url: "/api/daily/approvals/read-customer-email-context/decision",
+      payload: {
+        decision: "deny"
+      }
+    });
+
+    expect(response.statusCode).toBe(200);
+    expect(dailyApprovalDecisionResponseSchema.parse(response.json())).toEqual({
+      mode: "daily_work",
+      request: expect.objectContaining({
+        id: "read-customer-email-context",
+        status: "denied",
+        decision: "deny"
+      }),
+      audit: expect.objectContaining({
+        previewOnly: true,
+        decision: "deny",
+        status: "denied",
+        externalEffects: ["none"]
+      })
+    });
+
+    await app.close();
+  });
+
+  it("returns 404 when an approval decision target is missing", async () => {
+    const app = await buildServer();
+    const response = await app.inject({
+      method: "POST",
+      url: "/api/daily/approvals/missing-approval/decision",
+      payload: {
+        decision: "approved"
+      }
+    });
+
+    expect(response.statusCode).toBe(404);
+    expect(response.json()).toEqual({
+      mode: "daily_work",
+      error: "Daily-work approval request not found."
+    });
+
+    await app.close();
+  });
+
+  it("returns 400 for an invalid approval decision", async () => {
+    const app = await buildServer();
+    const response = await app.inject({
+      method: "POST",
+      url: "/api/daily/approvals/draft-external-reply/decision",
+      payload: {
+        decision: "maybe"
+      }
+    });
+
+    expect(response.statusCode).toBe(400);
+    expect(response.json()).toEqual({
+      error: "Invalid approval decision.",
+      issues: expect.arrayContaining([
+        expect.objectContaining({
+          path: "decision"
+        })
+      ])
+    });
+
+    await app.close();
+  });
+
+  it("handles CORS preflight for approval decisions", async () => {
+    const app = await buildServer();
+    const response = await app.inject({
+      method: "OPTIONS",
+      url: "/api/daily/approvals/draft-external-reply/decision",
+      headers: {
+        origin: "http://localhost:3000"
+      }
+    });
+
+    expect(response.statusCode).toBe(204);
+    expect(response.headers["access-control-allow-origin"]).toBe(
+      "http://localhost:3000"
+    );
+    expect(response.headers["access-control-allow-methods"]).toBe(
+      "GET,POST,OPTIONS"
+    );
 
     await app.close();
   });
@@ -416,6 +544,121 @@ describe("api server", () => {
     await app.close();
   });
 
+  it("previews a daily-work connector action without external effects", async () => {
+    const app = await buildServer();
+    const response = await app.inject({
+      method: "POST",
+      url: "/api/daily/connectors/customer-email/preview",
+      payload: {
+        action: "prepare_email_draft",
+        contextItemIds: ["meeting-notes"],
+        prompt: "Draft a concise customer follow-up."
+      }
+    });
+    const body = connectorActionPreviewResponseSchema.parse(response.json());
+
+    expect(response.statusCode).toBe(200);
+    expect(body).toEqual({
+      mode: "daily_work",
+      preview: expect.objectContaining({
+        id: "customer-email:prepare_email_draft:preview",
+        mode: "daily_work",
+        connectorId: "customer-email",
+        connectorDisplayName: "Customer Email",
+        action: "prepare_email_draft",
+        previewOnly: true,
+        permissionState: "requires_review",
+        riskLevel: "high",
+        relatedContextItemIds: ["customer-email", "meeting-notes"],
+        requiredApprovalRequestIds: [
+          "read-customer-email-context",
+          "draft-external-reply"
+        ],
+        prompt: "Draft a concise customer follow-up.",
+        safetyBoundary: expect.objectContaining({
+          previewOnly: true,
+          externalEffects: ["none"],
+          prohibitedExternalActions: expect.arrayContaining([
+            "send_email",
+            "read_private_external_data"
+          ])
+        })
+      })
+    });
+    expect(body.preview.steps).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          externalEffect: "none"
+        })
+      ])
+    );
+
+    await app.close();
+  });
+
+  it("returns 400 when a connector preview action is not available", async () => {
+    const app = await buildServer();
+    const response = await app.inject({
+      method: "POST",
+      url: "/api/daily/connectors/team-calendar/preview",
+      payload: {
+        action: "prepare_email_draft"
+      }
+    });
+
+    expect(response.statusCode).toBe(400);
+    expect(response.json()).toEqual({
+      mode: "daily_work",
+      connectorId: "team-calendar",
+      action: "prepare_email_draft",
+      error: "Connector action is not available for this connector."
+    });
+
+    await app.close();
+  });
+
+  it("returns 404 when a connector preview target is missing", async () => {
+    const app = await buildServer();
+    const response = await app.inject({
+      method: "POST",
+      url: "/api/daily/connectors/missing-connector/preview",
+      payload: {
+        action: "search"
+      }
+    });
+
+    expect(response.statusCode).toBe(404);
+    expect(response.json()).toEqual({
+      mode: "daily_work",
+      error: "Daily-work connector not found."
+    });
+
+    await app.close();
+  });
+
+  it("returns 400 for an invalid connector preview action", async () => {
+    const app = await buildServer();
+    const response = await app.inject({
+      method: "POST",
+      url: "/api/daily/connectors/customer-email/preview",
+      payload: {
+        action: "send_email"
+      }
+    });
+
+    expect(response.statusCode).toBe(400);
+    expect(response.json()).toEqual({
+      error: "Invalid connector action preview request.",
+      issues: expect.arrayContaining([
+        expect.objectContaining({
+          path: "action"
+        })
+      ])
+    });
+
+    await app.close();
+  });
+
   it("returns 404 when a daily-work connector is missing", async () => {
     const app = await buildServer();
     const response = await app.inject({
@@ -453,6 +696,27 @@ describe("api server", () => {
     const response = await app.inject({
       method: "OPTIONS",
       url: "/api/daily/connectors",
+      headers: {
+        origin: "http://localhost:3000"
+      }
+    });
+
+    expect(response.statusCode).toBe(204);
+    expect(response.headers["access-control-allow-origin"]).toBe(
+      "http://localhost:3000"
+    );
+    expect(response.headers["access-control-allow-methods"]).toBe(
+      "GET,POST,OPTIONS"
+    );
+
+    await app.close();
+  });
+
+  it("handles CORS preflight for connector action previews", async () => {
+    const app = await buildServer();
+    const response = await app.inject({
+      method: "OPTIONS",
+      url: "/api/daily/connectors/customer-email/preview",
       headers: {
         origin: "http://localhost:3000"
       }
