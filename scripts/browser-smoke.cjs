@@ -734,6 +734,7 @@ function dataLayerStateExpression() {
     const dedicatedSelectors = [
       "[data-daily-data-layer]",
       "[data-data-layer-state]",
+      "[data-persistence-panel]",
       "[data-persistence-state]",
       "[data-storage-state]",
       "[data-sync-state]"
