@@ -9,6 +9,7 @@ import {
   dailyActivityEventsResponseSchema,
   dailyActivitySnapshotMessageSchema,
   dailyApprovalDecisionResponseSchema,
+  dailyContextUsePreviewResponseSchema,
   dailyWorkTemplateApplyPreviewResponseSchema,
   dailyWorkWorkflowPreviewResponseSchema
 } from "@seekdesk/shared";
@@ -340,6 +341,176 @@ describe("api server", () => {
       ])
     });
     expect(response.json().items).toHaveLength(5);
+
+    await app.close();
+  });
+
+  it("previews daily-work context use without reading real content", async () => {
+    const app = await buildServer();
+    const response = await app.inject({
+      method: "POST",
+      url: "/api/daily/context/customer-email/use-preview",
+      payload: {
+        templateId: "email-draft",
+        prompt: "Use this customer context to prepare an approval-safe reply."
+      }
+    });
+    const body = dailyContextUsePreviewResponseSchema.parse(response.json());
+
+    expect(response.statusCode).toBe(200);
+    expect(body).toEqual({
+      mode: "daily_work",
+      preview: expect.objectContaining({
+        id: "customer-email:use-preview",
+        mode: "daily_work",
+        contextItemId: "customer-email",
+        title: "Customer Email",
+        sourceType: "customer_email",
+        permissionState: "requires_review",
+        tags: ["customer", "email", "private"],
+        templateId: "email-draft",
+        requiredApprovalRequestIds: ["read-customer-email-context"],
+        previewOnly: true,
+        externalEffects: ["none"],
+        promptDraft: expect.stringContaining("daily_work"),
+        safetyBoundary: expect.objectContaining({
+          previewOnly: true,
+          externalEffects: ["none"],
+          prohibitedExternalActions: expect.arrayContaining([
+            "read_real_email_content",
+            "read_private_external_data",
+            "send_email",
+            "write_document"
+          ]),
+          statement: expect.stringContaining("does not read real files")
+        }),
+        generatedAt: expect.any(String)
+      })
+    });
+    expect(body.preview.promptDraft).toEqual(
+      expect.stringContaining("Context item id: customer-email")
+    );
+    expect(body.preview.promptDraft).toEqual(
+      expect.stringContaining("Context title: Customer Email")
+    );
+    expect(body.preview.promptDraft).toEqual(
+      expect.stringContaining("Source type: customer_email")
+    );
+    expect(body.preview.promptDraft).toEqual(
+      expect.stringContaining("Permission state: requires_review")
+    );
+    expect(body.preview.promptDraft).toEqual(
+      expect.stringContaining("Template id: email-draft")
+    );
+    expect(body.preview.promptDraft).toEqual(
+      expect.stringContaining("read-customer-email-context")
+    );
+    expect(body.preview.promptDraft).toEqual(
+      expect.stringContaining("no external effects")
+    );
+    expect(body.preview.promptDraft).toEqual(
+      expect.stringContaining("Use this customer context to prepare an approval-safe reply.")
+    );
+    expect(body.preview.steps).toHaveLength(4);
+    expect(body.preview.steps).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          id: "customer-email:use-preview:step-1",
+          previewOnly: true,
+          externalEffect: "none",
+          description: expect.stringContaining("without reading")
+        }),
+        expect.objectContaining({
+          id: "customer-email:use-preview:step-4",
+          description: expect.stringContaining("read-customer-email-context")
+        })
+      ])
+    );
+    expect(Date.parse(body.preview.generatedAt)).not.toBeNaN();
+
+    await app.close();
+  });
+
+  it("refuses context use previews for the reserved coding-agent mode", async () => {
+    const app = await buildServer();
+    const response = await app.inject({
+      method: "POST",
+      url: "/api/daily/context/customer-email/use-preview",
+      payload: {
+        mode: "coding_agent"
+      }
+    });
+
+    expect(response.statusCode).toBe(400);
+    expect(response.json()).toEqual({
+      mode: "coding_agent",
+      error: "Context use previews are only available in daily_work mode."
+    });
+
+    await app.close();
+  });
+
+  it("returns 404 when a daily-work context use preview target is missing", async () => {
+    const app = await buildServer();
+    const response = await app.inject({
+      method: "POST",
+      url: "/api/daily/context/missing-context/use-preview",
+      payload: {}
+    });
+
+    expect(response.statusCode).toBe(404);
+    expect(response.json()).toEqual({
+      mode: "daily_work",
+      error: "Daily-work context item not found."
+    });
+
+    await app.close();
+  });
+
+  it("returns 400 for an invalid context use preview request", async () => {
+    const app = await buildServer();
+    const response = await app.inject({
+      method: "POST",
+      url: "/api/daily/context/customer-email/use-preview",
+      payload: {
+        prompt: "",
+        templateId: ""
+      }
+    });
+
+    expect(response.statusCode).toBe(400);
+    expect(response.json()).toEqual({
+      error: "Invalid context use preview request.",
+      issues: expect.arrayContaining([
+        expect.objectContaining({
+          path: "prompt"
+        }),
+        expect.objectContaining({
+          path: "templateId"
+        })
+      ])
+    });
+
+    await app.close();
+  });
+
+  it("handles CORS preflight for context use previews", async () => {
+    const app = await buildServer();
+    const response = await app.inject({
+      method: "OPTIONS",
+      url: "/api/daily/context/customer-email/use-preview",
+      headers: {
+        origin: "http://localhost:3000"
+      }
+    });
+
+    expect(response.statusCode).toBe(204);
+    expect(response.headers["access-control-allow-origin"]).toBe(
+      "http://localhost:3000"
+    );
+    expect(response.headers["access-control-allow-methods"]).toBe(
+      "GET,POST,OPTIONS"
+    );
 
     await app.close();
   });

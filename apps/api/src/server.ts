@@ -14,6 +14,7 @@ import {
   createDailyActivitySnapshotMessage,
   createDailyModelUsageResponse,
   dailyApprovalDecisionRequestSchema,
+  dailyContextUsePreviewRequestSchema,
   dailyWorkSessionRestorePreviewRequestSchema,
   dailyWorkTemplateApplyPreviewRequestSchema,
   dailyWorkWorkflowPreviewRequestSchema,
@@ -32,6 +33,7 @@ import {
   type DailyActivityEventsResponse,
   type DailyContextItem,
   type DailyContextResponse,
+  type DailyContextUsePreviewResponse,
   type DailyModelUsageResponse,
   type DailyWorkArtifactResponse,
   type DailyWorkArtifactsResponse,
@@ -85,6 +87,10 @@ export async function buildServer(options?: {
   app.options("/api/chat", async (_request, reply) => reply.code(204).send());
   app.options("/api/daily/context", async (_request, reply) =>
     reply.code(204).send()
+  );
+  app.options(
+    "/api/daily/context/:contextItemId/use-preview",
+    async (_request, reply) => reply.code(204).send()
   );
   app.options("/api/daily/approvals", async (_request, reply) =>
     reply.code(204).send()
@@ -161,6 +167,62 @@ export async function buildServer(options?: {
         mode,
         items: await filterDailyWorkContextItems(dailyWorkRepository, mode)
       };
+    }
+  );
+
+  app.post<{
+    Params: { contextItemId: string };
+    Body: unknown;
+  }>(
+    "/api/daily/context/:contextItemId/use-preview",
+    async (
+      request,
+      reply
+    ): Promise<DailyContextUsePreviewResponse | void> => {
+      const parsed = dailyContextUsePreviewRequestSchema.safeParse(
+        request.body ?? {}
+      );
+      if (!parsed.success) {
+        reply
+          .code(400)
+          .send(
+            createValidationError(
+              "Invalid context use preview request.",
+              parsed.error.issues
+            )
+          );
+        return;
+      }
+
+      const mode = normalizeAppMode(parsed.data.mode);
+      if (mode !== "daily_work") {
+        reply.code(400).send({
+          mode,
+          error: "Context use previews are only available in daily_work mode."
+        });
+        return;
+      }
+
+      const contextItem = await filterDailyWorkContextItem(
+        dailyWorkRepository,
+        mode,
+        request.params.contextItemId
+      );
+
+      if (!contextItem) {
+        reply.code(404).send({
+          mode,
+          error: "Daily-work context item not found."
+        });
+        return;
+      }
+
+      return createDailyContextUsePreviewResponse({
+        mode,
+        contextItem,
+        ...(parsed.data.prompt ? { prompt: parsed.data.prompt } : {}),
+        ...(parsed.data.templateId ? { templateId: parsed.data.templateId } : {})
+      });
     }
   );
 
@@ -794,6 +856,158 @@ function createValidationError(
       message: issue.message
     }))
   };
+}
+
+function createDailyContextUsePreviewResponse(input: {
+  mode: AppMode;
+  contextItem: DailyContextItem;
+  prompt?: string;
+  templateId?: string;
+}): DailyContextUsePreviewResponse {
+  const requiredApprovalRequestIds = getContextUseApprovalRequestIds(
+    input.contextItem
+  );
+  const promptDraft = createDailyContextUsePreviewPrompt({
+    contextItem: input.contextItem,
+    requiredApprovalRequestIds,
+    ...(input.prompt ? { prompt: input.prompt } : {}),
+    ...(input.templateId ? { templateId: input.templateId } : {})
+  });
+
+  return {
+    mode: input.mode,
+    preview: {
+      id: `${input.contextItem.id}:use-preview`,
+      mode: input.mode,
+      contextItemId: input.contextItem.id,
+      title: input.contextItem.title,
+      sourceType: input.contextItem.sourceType,
+      permissionState: input.contextItem.permissionState,
+      tags: input.contextItem.tags,
+      promptDraft,
+      ...(input.templateId ? { templateId: input.templateId } : {}),
+      requiredApprovalRequestIds,
+      steps: createDailyContextUsePreviewSteps({
+        contextItem: input.contextItem,
+        requiredApprovalRequestIds
+      }),
+      previewOnly: true,
+      externalEffects: ["none"],
+      safetyBoundary: {
+        previewOnly: true,
+        externalEffects: ["none"],
+        prohibitedExternalActions: [
+          "send_email",
+          "write_document",
+          "schedule_calendar_event",
+          "create_task",
+          "read_private_external_data",
+          "read_real_file_content",
+          "read_real_email_content",
+          "read_real_notes_content"
+        ],
+        statement:
+          "Preview-only context use: SeekDesk uses stored daily_work context metadata to draft a prompt. It does not read real files, emails, notes, or private external data, and it performs no external effects such as sending, writing, scheduling, or task creation."
+      },
+      generatedAt: new Date().toISOString()
+    }
+  };
+}
+
+function createDailyContextUsePreviewPrompt(input: {
+  contextItem: DailyContextItem;
+  requiredApprovalRequestIds: string[];
+  prompt?: string;
+  templateId?: string;
+}) {
+  const userPrompt = input.prompt
+    ? `User prompt: ${input.prompt}`
+    : "User prompt: use this context metadata to ask for the next safe daily-work step before drafting.";
+
+  return [
+    "Use SeekDesk daily_work context as a preview only.",
+    `Context item id: ${input.contextItem.id}`,
+    `Context title: ${input.contextItem.title}`,
+    `Source type: ${input.contextItem.sourceType}`,
+    `Permission state: ${input.contextItem.permissionState}`,
+    `Tags: ${joinSessionRefIds(input.contextItem.tags)}`,
+    `Template id: ${input.templateId ?? "none"}`,
+    `Required approval request ids: ${joinSessionRefIds(input.requiredApprovalRequestIds)}`,
+    "Safety boundary: previewOnly=true; externalEffects=[none]; no external effects; do not read real files, emails, notes, or private external data; do not send email, write documents, schedule calendar events, or create tasks.",
+    userPrompt
+  ].join("\n");
+}
+
+function createDailyContextUsePreviewSteps(input: {
+  contextItem: DailyContextItem;
+  requiredApprovalRequestIds: string[];
+}) {
+  return [
+    {
+      id: `${input.contextItem.id}:use-preview:step-1`,
+      title: "Resolve context metadata",
+      description:
+        `Load metadata for ${input.contextItem.title} without reading the underlying ${input.contextItem.sourceType} content.`,
+      previewOnly: true as const,
+      externalEffect: "none" as const
+    },
+    {
+      id: `${input.contextItem.id}:use-preview:step-2`,
+      title: "Check permission boundary",
+      description:
+        `Apply permissionState=${input.contextItem.permissionState} and keep approval requirements visible before any real context access.`,
+      previewOnly: true as const,
+      externalEffect: "none" as const
+    },
+    {
+      id: `${input.contextItem.id}:use-preview:step-3`,
+      title: "Draft context-use prompt",
+      description:
+        "Create an in-response daily_work prompt draft that references metadata only and does not read real files, emails, or notes.",
+      previewOnly: true as const,
+      externalEffect: "none" as const
+    },
+    {
+      id: `${input.contextItem.id}:use-preview:step-4`,
+      title: "Hold for review",
+      description:
+        input.requiredApprovalRequestIds.length > 0
+          ? `Surface approval gates: ${joinSessionRefIds(input.requiredApprovalRequestIds)}.`
+          : "No approval request is required for this context-use preview, and no external action is executed.",
+      previewOnly: true as const,
+      externalEffect: "none" as const
+    }
+  ];
+}
+
+function getContextUseApprovalRequestIds(contextItem: DailyContextItem) {
+  const approvalRequestIds: string[] = [];
+
+  if (
+    contextItem.id === "customer-email" ||
+    contextItem.sourceType === "customer_email"
+  ) {
+    approvalRequestIds.push("read-customer-email-context");
+  }
+
+  if (
+    contextItem.id === "meeting-notes" ||
+    contextItem.id === "team-notes" ||
+    contextItem.sourceType === "meeting_notes" ||
+    contextItem.sourceType === "team_notes"
+  ) {
+    approvalRequestIds.push("use-internal-meeting-notes");
+  }
+
+  if (
+    (contextItem.permissionState === "requires_review" ||
+      contextItem.permissionState === "restricted") &&
+    approvalRequestIds.length === 0
+  ) {
+    approvalRequestIds.push("read-customer-email-context");
+  }
+
+  return uniqueStrings(approvalRequestIds);
 }
 
 function createDailyWorkTemplateApplyPreviewResponse(input: {
@@ -1604,6 +1818,16 @@ async function filterDailyWorkContextItems(
   }
 
   return repository.listContextItems();
+}
+
+async function filterDailyWorkContextItem(
+  repository: DailyWorkRepository,
+  mode: AppMode,
+  contextItemId: string
+) {
+  return (await filterDailyWorkContextItems(repository, mode)).find(
+    (item) => item.id === contextItemId
+  );
 }
 
 async function filterDailyWorkApprovalRequests(
