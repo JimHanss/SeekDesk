@@ -63,6 +63,63 @@ export const dailyWorkConnectorResponseSchema = z.object({
   connector: dailyWorkConnectorSchema
 });
 
+export const connectorActionPreviewRequestSchema = z.object({
+  mode: appModeSchema.default("daily_work"),
+  action: connectorActionSchema,
+  prompt: z.string().trim().min(1).max(2000).optional(),
+  contextItemIds: z.array(z.string()).default([])
+});
+
+export const connectorActionPreviewStepSchema = z.object({
+  id: z.string(),
+  title: z.string(),
+  description: z.string(),
+  externalEffect: z.literal("none").default("none")
+});
+
+export const connectorActionPreviewSchema = z.object({
+  id: z.string(),
+  mode: appModeSchema.default("daily_work"),
+  connectorId: z.string(),
+  connectorDisplayName: z.string(),
+  action: connectorActionSchema,
+  previewOnly: z.literal(true).default(true),
+  permissionState: connectorPermissionStateSchema,
+  riskLevel: connectorRiskLevelSchema,
+  relatedContextItemIds: z.array(z.string()).default([]),
+  requiredApprovalRequestIds: z.array(z.string()).default([]),
+  prompt: z.string().optional(),
+  summary: z.string(),
+  steps: z.array(connectorActionPreviewStepSchema).default([]),
+  safetyBoundary: z.object({
+    previewOnly: z.literal(true).default(true),
+    externalEffects: z.array(z.literal("none")).default(["none"]),
+    prohibitedExternalActions: z
+      .array(
+        z.enum([
+          "send_email",
+          "write_document",
+          "schedule_calendar_event",
+          "create_task",
+          "read_private_external_data"
+        ])
+      )
+      .default([
+        "send_email",
+        "write_document",
+        "schedule_calendar_event",
+        "create_task",
+        "read_private_external_data"
+      ]),
+    statement: z.string()
+  })
+});
+
+export const connectorActionPreviewResponseSchema = z.object({
+  mode: appModeSchema,
+  preview: connectorActionPreviewSchema
+});
+
 export const defaultDailyWorkConnectors: DailyWorkConnector[] = [
   {
     id: "workspace-documents",
@@ -166,4 +223,16 @@ export type DailyWorkConnectorsResponse = z.infer<
 >;
 export type DailyWorkConnectorResponse = z.infer<
   typeof dailyWorkConnectorResponseSchema
+>;
+export type ConnectorActionPreviewRequest = z.infer<
+  typeof connectorActionPreviewRequestSchema
+>;
+export type ConnectorActionPreviewStep = z.infer<
+  typeof connectorActionPreviewStepSchema
+>;
+export type ConnectorActionPreview = z.infer<
+  typeof connectorActionPreviewSchema
+>;
+export type ConnectorActionPreviewResponse = z.infer<
+  typeof connectorActionPreviewResponseSchema
 >;

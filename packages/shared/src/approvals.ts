@@ -45,6 +45,36 @@ export const dailyApprovalRequestsResponseSchema = z.object({
   requests: z.array(dailyApprovalRequestSchema)
 });
 
+export const approvalDecisionInputSchema = z.enum([
+  "approved",
+  "denied",
+  "allow_once",
+  "allow_for_session",
+  "deny"
+]);
+
+export const dailyApprovalDecisionRequestSchema = z.object({
+  mode: appModeSchema.default("daily_work"),
+  decision: approvalDecisionInputSchema,
+  reason: z.string().trim().min(1).max(1000).optional()
+});
+
+export const dailyApprovalDecisionAuditSchema = z.object({
+  previewOnly: z.literal(true).default(true),
+  decidedAt: z.string().datetime(),
+  decision: approvalDecisionSchema,
+  status: approvalStatusSchema,
+  reason: z.string().optional(),
+  externalEffects: z.array(z.literal("none")).default(["none"]),
+  statement: z.string()
+});
+
+export const dailyApprovalDecisionResponseSchema = z.object({
+  mode: appModeSchema,
+  request: dailyApprovalRequestSchema,
+  audit: dailyApprovalDecisionAuditSchema
+});
+
 export const defaultDailyWorkApprovalRequests: DailyApprovalRequest[] = [
   {
     id: "read-customer-email-context",
@@ -107,8 +137,18 @@ export const defaultDailyWorkApprovalRequests: DailyApprovalRequest[] = [
 export type ApprovalRiskLevel = z.infer<typeof approvalRiskLevelSchema>;
 export type ApprovalActionType = z.infer<typeof approvalActionTypeSchema>;
 export type ApprovalDecision = z.infer<typeof approvalDecisionSchema>;
+export type ApprovalDecisionInput = z.infer<typeof approvalDecisionInputSchema>;
 export type ApprovalStatus = z.infer<typeof approvalStatusSchema>;
 export type DailyApprovalRequest = z.infer<typeof dailyApprovalRequestSchema>;
 export type DailyApprovalRequestsResponse = z.infer<
   typeof dailyApprovalRequestsResponseSchema
+>;
+export type DailyApprovalDecisionRequest = z.infer<
+  typeof dailyApprovalDecisionRequestSchema
+>;
+export type DailyApprovalDecisionAudit = z.infer<
+  typeof dailyApprovalDecisionAuditSchema
+>;
+export type DailyApprovalDecisionResponse = z.infer<
+  typeof dailyApprovalDecisionResponseSchema
 >;
