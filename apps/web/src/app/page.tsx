@@ -102,6 +102,8 @@ type SessionHistoryItem = WorkflowSnapshotItem;
 
 type ArtifactState = "计划中" | "排队中" | "草稿" | "可复用" | "待复核";
 type ArtifactFilter = "全部" | "草稿" | "可复用";
+type ArtifactPanelSource = "fallback" | "api" | "degraded";
+type ArtifactPanelSyncStatus = "syncing" | "live" | "degraded";
 
 interface ArtifactTraceItem {
   label: string;
@@ -124,6 +126,70 @@ interface ArtifactItem {
   nextAction: string;
   permissionStatus: string;
   icon: LucideIcon;
+}
+
+interface DailyWorkArtifactOwnerDto {
+  displayName?: string;
+  team?: string;
+}
+
+interface DailyWorkArtifactNextActionDto {
+  label?: string;
+  description?: string;
+  approvalRequestId?: string;
+}
+
+interface DailyWorkArtifactTraceEventDto {
+  actor?: string;
+  type?: string;
+  summary?: string;
+  at?: string;
+}
+
+interface DailyWorkArtifactTraceDto {
+  origin?: string;
+  createdBy?: string;
+  createdAt?: string;
+  events?: DailyWorkArtifactTraceEventDto[];
+}
+
+interface DailyWorkArtifactDto {
+  id?: string;
+  mode?: AppMode;
+  artifactType?: string;
+  title?: string;
+  description?: string;
+  templateId?: string;
+  summary?: string;
+  status?: string;
+  owner?: DailyWorkArtifactOwnerDto;
+  updatedAt?: string;
+  sourceContextIds?: string[];
+  approvalRequestIds?: string[];
+  version?: number;
+  reusable?: boolean;
+  nextAction?: DailyWorkArtifactNextActionDto | null;
+  permissionState?: string;
+  trace?: DailyWorkArtifactTraceDto;
+  lifecycle?: DailyWorkArtifactTraceEventDto[];
+  tags?: string[];
+}
+
+interface DailyWorkArtifactsResponseDto {
+  mode?: AppMode;
+  artifacts?: DailyWorkArtifactDto[];
+}
+
+interface DailyWorkArtifactResponseDto {
+  mode?: AppMode;
+  artifact?: DailyWorkArtifactDto;
+}
+
+interface ArtifactPanelState {
+  items: ArtifactItem[];
+  source: ArtifactPanelSource;
+  syncStatus: ArtifactPanelSyncStatus;
+  notice: string;
 }
 
 interface ContextItem {
@@ -1135,6 +1201,225 @@ const artifacts: ArtifactItem[] = [
   }
 ];
 
+function createFallbackArtifactPanelState(): ArtifactPanelState {
+  return {
+    items: artifacts,
+    source: "fallback",
+    syncStatus: "syncing",
+    notice: "正在从 /api/daily/artifacts?mode=daily_work 同步产物；暂时展示本地 fallback。"
+  };
+}
+
+function mapArtifactsResponse(payload: DailyWorkArtifactsResponseDto): ArtifactItem[] {
+  if (payload.mode !== activeMode || !Array.isArray(payload.artifacts)) {
+    throw new Error("Artifacts response did not include daily_work artifacts.");
+  }
+
+  return payload.artifacts.map(mapArtifactDtoToItem);
+}
+
+function mapArtifactResponse(payload: DailyWorkArtifactResponseDto): ArtifactItem {
+  if (payload.mode !== activeMode || !payload.artifact) {
+    throw new Error("Artifact detail response did not include a daily_work artifact.");
+  }
+
+  return mapArtifactDtoToItem(payload.artifact);
+}
+
+function mapArtifactDtoToItem(artifact: DailyWorkArtifactDto): ArtifactItem {
+  const artifactType = nonEmptyText(
+    artifactTypeLabel(artifact.artifactType),
+    "日常产物"
+  );
+  const ownerName = nonEmptyText(artifact.owner?.displayName, "SeekDesk");
+  const sourceContextIds = artifact.sourceContextIds ?? [];
+  const approvalRequestIds = artifact.approvalRequestIds ?? [];
+  const lifecycle = artifact.lifecycle ?? artifact.trace?.events ?? [];
+  const traceItems: ArtifactTraceItem[] = [
+    {
+      label: "来源",
+      value:
+        [
+          artifact.trace?.origin ? `origin: ${artifact.trace.origin}` : "",
+          artifact.trace?.createdBy ? `created by ${artifact.trace.createdBy}` : "",
+          formatModelUsageTimestamp(artifact.trace?.createdAt)
+        ]
+          .filter(Boolean)
+          .join(" · ") || "来源追踪待补充"
+    },
+    {
+      label: "上下文",
+      value:
+        sourceContextIds.length > 0
+          ? `来源上下文：${sourceContextIds.join("、")}`
+          : "未绑定额外上下文"
+    },
+    {
+      label: "审批",
+      value:
+        approvalRequestIds.length > 0
+          ? `审批请求：${approvalRequestIds.join("、")}`
+          : "无审批请求"
+    },
+    ...lifecycle.slice(0, 3).map((event) => ({
+      label: lifecycleEventLabel(event.type),
+      value: [
+        event.summary,
+        event.actor ? `by ${event.actor}` : "",
+        formatModelUsageTimestamp(event.at)
+      ]
+        .filter(Boolean)
+        .join(" · ")
+    }))
+  ];
+
+  return {
+    id: nonEmptyText(artifact.id, "unknown-artifact"),
+    artifactType,
+    title: nonEmptyText(artifact.title, artifactType),
+    description: nonEmptyText(
+      artifact.description,
+      "后端产物记录已同步，等待补充描述。"
+    ),
+    summary: nonEmptyText(artifact.summary, "暂无摘要。"),
+    state: artifactStateFromApi(artifact.status, artifact.reusable),
+    owner: artifact.owner?.team
+      ? `${ownerName} / ${artifact.owner.team}`
+      : ownerName,
+    updatedAt:
+      formatModelUsageTimestamp(artifact.updatedAt) ??
+      nonEmptyText(artifact.updatedAt, "刚刚同步"),
+    source:
+      sourceContextIds.length > 0
+        ? sourceContextIds.join(" / ")
+        : "未绑定上下文",
+    templateTitle: nonEmptyText(
+      artifactTemplateLabel(artifact.templateId),
+      artifact.templateId ?? "未绑定模板"
+    ),
+    tags: artifact.tags && artifact.tags.length > 0 ? artifact.tags : ["daily_work"],
+    trace: traceItems,
+    nextAction: formatArtifactNextAction(artifact.nextAction),
+    permissionStatus: artifactPermissionLabel(
+      artifact.permissionState,
+      approvalRequestIds
+    ),
+    icon: artifactIcon(artifact.artifactType)
+  };
+}
+
+function artifactTypeLabel(value: string | undefined) {
+  switch (value) {
+    case "email_draft":
+      return "客户沟通";
+    case "meeting_summary":
+      return "会议纪要";
+    case "research_note":
+      return "资料研究";
+    case "task_list":
+      return "任务计划";
+    case "weekly_report":
+      return "工作汇报";
+    case "brief":
+      return "简报";
+    default:
+      return value;
+  }
+}
+
+function artifactTemplateLabel(value: string | undefined) {
+  const template = templates.find((item) => item.id === value);
+  return template?.title;
+}
+
+function artifactStateFromApi(
+  status: string | undefined,
+  reusable: boolean | undefined
+): ArtifactState {
+  if (reusable || status === "reusable" || status === "ready") {
+    return "可复用";
+  }
+
+  if (status === "review") {
+    return "待复核";
+  }
+
+  if (status === "draft") {
+    return "草稿";
+  }
+
+  return "计划中";
+}
+
+function artifactPermissionLabel(
+  permissionState: string | undefined,
+  approvalRequestIds: string[]
+) {
+  const approvalText =
+    approvalRequestIds.length > 0
+      ? `；关联审批 ${approvalRequestIds.join("、")}`
+      : "；无审批请求";
+
+  switch (permissionState) {
+    case "public":
+      return `公开来源，可复用${approvalText}`;
+    case "workspace_shared":
+      return `工作区共享，复用前仍需确认上下文${approvalText}`;
+    case "requires_review":
+      return `需复核后使用${approvalText}`;
+    case "restricted":
+      return `受限产物，不可外发${approvalText}`;
+    default:
+      return `权限状态待确认${approvalText}`;
+  }
+}
+
+function formatArtifactNextAction(
+  nextAction: DailyWorkArtifactNextActionDto | null | undefined
+) {
+  if (!nextAction) {
+    return "暂无下一步动作。";
+  }
+
+  return [nextAction.label, nextAction.description, nextAction.approvalRequestId]
+    .filter(Boolean)
+    .join(" · ");
+}
+
+function lifecycleEventLabel(value: string | undefined) {
+  switch (value) {
+    case "created":
+      return "创建";
+    case "context_linked":
+      return "上下文";
+    case "approval_linked":
+      return "审批";
+    case "status_changed":
+      return "状态";
+    case "marked_reusable":
+      return "复用";
+    default:
+      return "追踪";
+  }
+}
+
+function artifactIcon(value: string | undefined): LucideIcon {
+  switch (value) {
+    case "email_draft":
+      return Mail;
+    case "meeting_summary":
+      return Presentation;
+    case "research_note":
+      return Search;
+    case "task_list":
+      return Workflow;
+    case "weekly_report":
+      return CalendarClock;
+    default:
+      return FileText;
+  }
+}
+
 const initialMessages: ChatMessage[] = [];
 
 const initialApprovalRequests: ApprovalRequestItem[] = [
@@ -1732,6 +2017,9 @@ export default function Page() {
     artifacts[0]?.id ?? null
   );
   const [artifactFilter, setArtifactFilter] = useState<ArtifactFilter>("全部");
+  const [artifactPanel, setArtifactPanel] = useState<ArtifactPanelState>(() =>
+    createFallbackArtifactPanelState()
+  );
   const [modelRouteMode, setModelRouteMode] = useState<ModelRouteMode>("fast");
   const [modelUsagePanel, setModelUsagePanel] = useState<ModelUsagePanelState>(
     () => createFallbackModelUsagePanelState()
@@ -1823,20 +2111,21 @@ export default function Page() {
       null,
     [activityFeedEvents, selectedActivityEventId]
   );
+  const artifactItems = artifactPanel.items;
   const filteredArtifacts = useMemo(
     () =>
       artifactFilter === "全部"
-        ? artifacts
-        : artifacts.filter((artifact) => artifact.state === artifactFilter),
-    [artifactFilter]
+        ? artifactItems
+        : artifactItems.filter((artifact) => artifact.state === artifactFilter),
+    [artifactFilter, artifactItems]
   );
   const selectedArtifact = useMemo(() => {
     const selectedInFilter = filteredArtifacts.find(
       (artifact) => artifact.id === selectedArtifactId
     );
 
-    return selectedInFilter ?? filteredArtifacts[0] ?? artifacts[0] ?? null;
-  }, [filteredArtifacts, selectedArtifactId]);
+    return selectedInFilter ?? filteredArtifacts[0] ?? artifactItems[0] ?? null;
+  }, [artifactItems, filteredArtifacts, selectedArtifactId]);
   const filteredSessionHistory = useMemo(
     () =>
       sessionHistoryFilter === "全部"
@@ -1987,6 +2276,129 @@ export default function Page() {
       controller.abort();
     };
   }, [apiBaseUrl, selectedWorkflowAction]);
+
+  useEffect(() => {
+    let isDisposed = false;
+    const controller = new AbortController();
+
+    async function fetchArtifacts() {
+      setArtifactPanel((current) => ({
+        ...current,
+        syncStatus: "syncing",
+        notice: "正在从 /api/daily/artifacts?mode=daily_work 同步产物列表。"
+      }));
+
+      try {
+        const response = await fetch(
+          `${apiBaseUrl}/api/daily/artifacts?mode=${activeMode}`,
+          {
+            signal: controller.signal
+          }
+        );
+
+        if (!response.ok) {
+          throw new Error(`Artifacts request failed: ${response.status}`);
+        }
+
+        const items = mapArtifactsResponse(
+          (await response.json()) as DailyWorkArtifactsResponseDto
+        );
+
+        if (!isDisposed) {
+          setArtifactPanel({
+            items,
+            source: "api",
+            syncStatus: "live",
+            notice:
+              "已从 /api/daily/artifacts?mode=daily_work 同步产物、上下文追踪、审批链路和 lifecycle。"
+          });
+          setSelectedArtifactId((current) =>
+            current && items.some((item) => item.id === current)
+              ? current
+              : items[0]?.id ?? null
+          );
+        }
+      } catch {
+        if (controller.signal.aborted || isDisposed) {
+          return;
+        }
+
+        setArtifactPanel((current) => ({
+          ...current,
+          source: "degraded",
+          syncStatus: "degraded",
+          notice:
+            "暂未从后端同步产物列表，已保留本地 artifacts fallback。"
+        }));
+      }
+    }
+
+    void fetchArtifacts();
+
+    return () => {
+      isDisposed = true;
+      controller.abort();
+    };
+  }, [apiBaseUrl]);
+
+  useEffect(() => {
+    if (!selectedArtifactId) {
+      return;
+    }
+
+    let isDisposed = false;
+    const controller = new AbortController();
+
+    async function fetchArtifactDetail() {
+      try {
+        const response = await fetch(
+          `${apiBaseUrl}/api/daily/artifacts/${selectedArtifactId}?mode=${activeMode}`,
+          {
+            signal: controller.signal
+          }
+        );
+
+        if (!response.ok) {
+          throw new Error(`Artifact detail request failed: ${response.status}`);
+        }
+
+        const nextItem = mapArtifactResponse(
+          (await response.json()) as DailyWorkArtifactResponseDto
+        );
+
+        if (!isDisposed) {
+          setArtifactPanel((current) => ({
+            ...current,
+            source: "api",
+            syncStatus: "live",
+            items: current.items.map((item) =>
+              item.id === nextItem.id ? nextItem : item
+            ),
+            notice: `已从 /api/daily/artifacts/${nextItem.id}?mode=daily_work 同步产物详情。`
+          }));
+        }
+      } catch {
+        if (controller.signal.aborted || isDisposed) {
+          return;
+        }
+
+        setArtifactPanel((current) => ({
+          ...current,
+          source: "degraded",
+          syncStatus: "degraded",
+          notice:
+            "暂未从后端同步选中产物详情，继续展示当前产物快照。"
+        }));
+      }
+    }
+
+    void fetchArtifactDetail();
+
+    return () => {
+      isDisposed = true;
+      controller.abort();
+    };
+  }, [apiBaseUrl, selectedArtifactId]);
 
   useEffect(() => {
     let isDisposed = false;
@@ -2995,7 +3407,9 @@ export default function Page() {
                 </div>
               </div>
 
-              <div className="rounded-[8px] border border-teal-100 bg-teal-50 p-3">
+              <div
+                className="rounded-[8px] border border-teal-100 bg-teal-50 p-3"
+              >
                 <div className="flex flex-col gap-3 md:flex-row md:items-start md:justify-between">
                   <div className="min-w-0">
                     <div className="flex items-center gap-2 text-sm font-semibold text-teal-950">
@@ -3241,7 +3655,9 @@ export default function Page() {
                 </div>
               </div>
 
-              <div className="rounded-[8px] border border-teal-100 bg-teal-50 p-3">
+              <div
+                className="rounded-[8px] border border-teal-100 bg-teal-50 p-3"
+              >
                 <div className="flex flex-col gap-3 md:flex-row md:items-start md:justify-between">
                   <div className="min-w-0">
                     <div className="flex items-center gap-2 text-sm font-semibold text-teal-950">
@@ -3588,7 +4004,19 @@ export default function Page() {
                 </p>
               </div>
 
-              <div className="rounded-[8px] border border-teal-100 bg-teal-50 p-3">
+              <div
+                className="rounded-[8px] border border-teal-100 bg-teal-50 p-3"
+                data-artifact-panel
+                data-artifact-panel-source={artifactPanel.source}
+                data-artifact-panel-sync-status={artifactPanel.syncStatus}
+                data-artifact-panel-notice={artifactPanel.notice}
+                data-artifact-panel-count={artifactItems.length}
+                data-artifacts-panel
+                data-artifacts-source={artifactPanel.source}
+                data-artifacts-sync-status={artifactPanel.syncStatus}
+                data-artifacts-count={artifactItems.length}
+                data-selected-artifact-id={selectedArtifact?.id ?? ""}
+              >
                 <div className="mb-3 flex flex-col gap-3">
                   <div className="flex items-center justify-between gap-3">
                     <div className="min-w-0 flex items-center gap-2 text-sm font-medium text-teal-950">
@@ -3922,8 +4350,15 @@ export default function Page() {
                       <span className="min-w-0 break-words">日常工作产物</span>
                     </div>
                     <span className="shrink-0 rounded-[999px] bg-white px-2 py-0.5 text-[11px] font-medium text-teal-700">
-                      {filteredArtifacts.length}/{artifacts.length}
+                      {filteredArtifacts.length}/{artifactItems.length}
                     </span>
+                  </div>
+
+                  <div className="rounded-[8px] border border-teal-100 bg-white px-3 py-2 text-xs leading-5 text-teal-700">
+                    <span className="font-medium text-teal-950">
+                      {artifactPanel.source} / {artifactPanel.syncStatus}
+                    </span>
+                    <span className="ml-2">{artifactPanel.notice}</span>
                   </div>
 
                   <div className="flex flex-wrap gap-2" aria-label="产物筛选">
@@ -3952,7 +4387,7 @@ export default function Page() {
                                 : "bg-teal-50 text-teal-700"
                             )}
                           >
-                            {artifactFilterCount(filter)}
+                            {artifactFilterCount(filter, artifactItems)}
                           </span>
                         </button>
                       );
@@ -3970,6 +4405,8 @@ export default function Page() {
                         key={artifact.id}
                         type="button"
                         onClick={() => setSelectedArtifactId(artifact.id)}
+                        data-artifact-card={artifact.id}
+                        data-artifact-state={artifact.state}
                         className={cn(
                           "flex w-full cursor-pointer items-start gap-3 rounded-[8px] border px-3 py-3 text-left transition-colors duration-200 focus-visible:outline focus-visible:outline-2 focus-visible:outline-teal-600",
                           isSelected
@@ -4005,7 +4442,10 @@ export default function Page() {
                 </div>
 
                 {selectedArtifact ? (
-                  <div className="mt-3 border-t border-teal-100 pt-3">
+                  <div
+                    className="mt-3 border-t border-teal-100 pt-3"
+                    data-artifact-detail={selectedArtifact.id}
+                  >
                     <div className="flex items-start justify-between gap-3">
                       <div className="min-w-0">
                         <div className="text-[11px] font-medium text-teal-700">
@@ -5683,12 +6123,12 @@ function sessionHistoryStatusClass(status: SessionHistoryStatus) {
   }
 }
 
-function artifactFilterCount(filter: ArtifactFilter) {
+function artifactFilterCount(filter: ArtifactFilter, items: ArtifactItem[]) {
   if (filter === "全部") {
-    return artifacts.length;
+    return items.length;
   }
 
-  return artifacts.filter((artifact) => artifact.state === filter).length;
+  return items.filter((artifact) => artifact.state === filter).length;
 }
 
 function connectorFilterCount(filter: ConnectorFilter) {
