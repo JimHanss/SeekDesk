@@ -42,8 +42,10 @@ async function main() {
 
   try {
     client = await openPage(browser.debugPort, smokePageUrl(apiServer.url));
+    await runDailyEndpointsSmoke(apiServer.url);
     await runActivityStreamSmoke(client, apiServer.url);
     await runModelUsageSmoke(client, apiServer.url);
+    await runDataLayerStateSmoke(client);
     await runPromptSmoke(client);
     await runChatSendSmoke(client);
     await runCodeBlockSmoke(client);
@@ -504,6 +506,39 @@ async function runActivityStreamSmoke(client, apiUrl) {
   });
 }
 
+async function runDailyEndpointsSmoke(apiUrl) {
+  const endpoints = [
+    { path: "/api/daily/templates?mode=daily_work", collectionKey: "templates" },
+    { path: "/api/daily/context?mode=daily_work", collectionKey: "items" },
+    { path: "/api/daily/approvals?mode=daily_work", collectionKey: "requests" },
+    { path: "/api/daily/artifacts?mode=daily_work", collectionKey: "artifacts" },
+    { path: "/api/daily/connectors?mode=daily_work", collectionKey: "connectors" },
+    { path: "/api/daily/workflows?mode=daily_work", collectionKey: "workflows" },
+    { path: "/api/daily/sessions?mode=daily_work", collectionKey: "sessions" },
+    { path: "/api/daily/events?mode=daily_work", collectionKey: "events" }
+  ];
+  const snapshots = [];
+
+  for (const endpoint of endpoints) {
+    const snapshot = await fetchDailyEndpointSnapshot(apiUrl, endpoint.path);
+    assertDailyEndpointSnapshot(snapshot, endpoint.collectionKey, endpoint.path);
+    snapshots.push({
+      path: endpoint.path,
+      count: snapshot[endpoint.collectionKey].length
+    });
+  }
+
+  const modelUsageSnapshot = await fetchModelUsageSnapshot(apiUrl);
+  assertModelUsageSnapshot(modelUsageSnapshot, "model usage API response");
+
+  checks.push({
+    name: "daily endpoints API contract",
+    status: "passed",
+    endpoints: snapshots,
+    modelUsageRecords: modelUsageSnapshot.usage.records.length
+  });
+}
+
 async function runModelUsageSmoke(client, apiUrl) {
   const apiSnapshot = await fetchModelUsageSnapshot(apiUrl);
   assertModelUsageSnapshot(apiSnapshot, "model usage API response");
@@ -527,6 +562,38 @@ async function runModelUsageSmoke(client, apiUrl) {
     syncStatus: pageState.status,
     selectedModel: apiSnapshot.config.selectedModel,
     recordCount: apiSnapshot.usage.records.length
+  });
+}
+
+async function runDataLayerStateSmoke(client) {
+  const pageState = await waitForValue(
+    client,
+    dataLayerStateExpression(),
+    (state) =>
+      state.hasDedicatedState ||
+      (state.activityFeedSource !== "fallback" && state.modelUsageSource === "api"),
+    "data layer state display",
+    Math.min(timeoutMs, 5000)
+  );
+
+  if (pageState.hasDedicatedState) {
+    if (!pageState.dedicatedTextLength) {
+      throw new Error("Data layer state display was present but empty.");
+    }
+
+    if (!pageState.hasStateSignal) {
+      throw new Error("Data layer state display did not expose source or status text.");
+    }
+  }
+
+  checks.push({
+    name: "data layer state display",
+    status: pageState.hasDedicatedState ? "passed" : "fallback-compatible",
+    dedicatedState: pageState.hasDedicatedState,
+    activityFeedSource: pageState.activityFeedSource,
+    activityConnectionStatus: pageState.activityConnectionStatus,
+    modelUsageSource: pageState.modelUsageSource,
+    modelUsageStatus: pageState.modelUsageStatus
   });
 }
 
@@ -658,6 +725,34 @@ function modelUsagePanelExpression() {
       status: root ? root.getAttribute("data-model-usage-status") || "" : "",
       hasDeepSeekText: /DeepSeek/i.test(text),
       hasUsageText: /usage|tokens|prompt|completion|用量|模型/i.test(text)
+    };
+  })()`);
+}
+
+function dataLayerStateExpression() {
+  return withSmokeHelpers(`(() => {
+    const dedicatedSelectors = [
+      "[data-daily-data-layer]",
+      "[data-data-layer-state]",
+      "[data-persistence-state]",
+      "[data-storage-state]",
+      "[data-sync-state]"
+    ];
+    const dedicated = dedicatedSelectors
+      .map((selector) => document.querySelector(selector))
+      .find(Boolean);
+    const dedicatedText = dedicated ? dedicated.textContent || "" : "";
+    const activityRoot = document.querySelector("[data-activity-feed]");
+    const modelUsageRoot = document.querySelector("[data-model-usage-source]");
+
+    return {
+      hasDedicatedState: Boolean(dedicated),
+      dedicatedTextLength: dedicatedText.trim().length,
+      hasStateSignal: /api|live|sync|persist|storage|fallback|degraded|connected|ready/i.test(dedicatedText),
+      activityFeedSource: activityRoot ? activityRoot.getAttribute("data-activity-feed-source") || "" : "",
+      activityConnectionStatus: activityRoot ? activityRoot.getAttribute("data-activity-connection-status") || "" : "",
+      modelUsageSource: modelUsageRoot ? modelUsageRoot.getAttribute("data-model-usage-source") || "" : "",
+      modelUsageStatus: modelUsageRoot ? modelUsageRoot.getAttribute("data-model-usage-status") || "" : ""
     };
   })()`);
 }
@@ -954,6 +1049,21 @@ async function fetchModelUsageSnapshot(apiUrl) {
   return response.json();
 }
 
+async function fetchDailyEndpointSnapshot(apiUrl, path) {
+  const response = await fetch(new URL(path, apiUrl).toString(), {
+    headers: {
+      Accept: "application/json"
+    },
+    signal: AbortSignal.timeout(5000)
+  });
+
+  if (!response.ok) {
+    throw new Error(`${path} returned HTTP ${response.status}.`);
+  }
+
+  return response.json();
+}
+
 async function fetchActivityWebSocketSnapshot(apiUrl) {
   const wsUrl = activityWebSocketUrl(apiUrl);
   return new Promise((resolve, reject) => {
@@ -1046,6 +1156,16 @@ function assertModelUsageSnapshot(snapshot, label) {
 
   if (!snapshot.usage.records.length) {
     throw new Error(`${label} did not include any usage records.`);
+  }
+}
+
+function assertDailyEndpointSnapshot(snapshot, collectionKey, path) {
+  if (!snapshot || snapshot.mode !== "daily_work" || !Array.isArray(snapshot[collectionKey])) {
+    throw new Error(`${path} did not return a daily_work ${collectionKey} array.`);
+  }
+
+  if (!snapshot[collectionKey].length) {
+    throw new Error(`${path} returned an empty ${collectionKey} array.`);
   }
 }
 
