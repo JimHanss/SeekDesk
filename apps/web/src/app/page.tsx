@@ -4006,16 +4006,6 @@ export default function Page() {
 
               <div
                 className="rounded-[8px] border border-teal-100 bg-teal-50 p-3"
-                data-artifact-panel
-                data-artifact-panel-source={artifactPanel.source}
-                data-artifact-panel-sync-status={artifactPanel.syncStatus}
-                data-artifact-panel-notice={artifactPanel.notice}
-                data-artifact-panel-count={artifactItems.length}
-                data-artifacts-panel
-                data-artifacts-source={artifactPanel.source}
-                data-artifacts-sync-status={artifactPanel.syncStatus}
-                data-artifacts-count={artifactItems.length}
-                data-selected-artifact-id={selectedArtifact?.id ?? ""}
               >
                 <div className="mb-3 flex flex-col gap-3">
                   <div className="flex items-center justify-between gap-3">
@@ -4339,7 +4329,19 @@ export default function Page() {
                 ) : null}
               </div>
 
-              <div className="rounded-[8px] border border-teal-100 bg-teal-50 p-3">
+              <div
+                className="rounded-[8px] border border-teal-100 bg-teal-50 p-3"
+                data-artifact-panel
+                data-artifact-panel-source={artifactPanel.source}
+                data-artifact-panel-sync-status={artifactPanel.syncStatus}
+                data-artifact-panel-notice={artifactPanel.notice}
+                data-artifact-panel-count={artifactItems.length}
+                data-artifacts-panel
+                data-artifacts-source={artifactPanel.source}
+                data-artifacts-sync-status={artifactPanel.syncStatus}
+                data-artifacts-count={artifactItems.length}
+                data-selected-artifact-id={selectedArtifact?.id ?? ""}
+              >
                 <div className="mb-3 flex flex-col gap-3">
                   <div className="flex items-center justify-between gap-3">
                     <div className="min-w-0 flex items-center gap-2 text-sm font-medium text-teal-950">
