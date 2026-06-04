@@ -46,6 +46,7 @@ async function main() {
   try {
     client = await openPage(browser.debugPort, smokePageUrl(apiServer.url));
     await runDailyEndpointsSmoke(apiServer.url);
+    await runApprovalLedgerSmoke(client, apiServer.url);
     await runContextUsePreviewSmoke(client, apiServer.url);
     await runTemplateApplyPreviewSmoke(client, apiServer.url);
     await runSessionRestoreSmoke(client, apiServer.url);
@@ -562,6 +563,72 @@ async function runDailyEndpointsSmoke(apiUrl) {
     status: "passed",
     endpoints: snapshots,
     modelUsageRecords: modelUsageSnapshot.usage.records.length
+  });
+}
+
+async function runApprovalLedgerSmoke(client, apiUrl) {
+  const approvalSnapshot = await fetchDailyEndpointSnapshot(
+    apiUrl,
+    "/api/daily/approvals?mode=daily_work"
+  );
+  const trackedRequests = assertApprovalRequestsSnapshot(approvalSnapshot);
+
+  const panelState = await waitForValue(
+    client,
+    approvalLedgerPanelExpression(),
+    (state) =>
+      state.present &&
+      state.source === "api" &&
+      state.syncStatus === "live" &&
+      state.count >= 4 &&
+      state.hasReadCustomerEmail &&
+      state.hasDraftExternalReply,
+    "approval ledger API panel state"
+  );
+
+  const allowRect = await waitForRect(
+    client,
+    approvalLedgerDecisionButtonExpression("allow_once", "draft-external-reply"),
+    "approval ledger allow button"
+  );
+  await clickAt(client, allowRect);
+  await evaluate(
+    client,
+    approvalLedgerDecisionClickExpression("allow_once", "draft-external-reply")
+  );
+
+  const allowedState = await waitForValue(
+    client,
+    approvalLedgerRequestExpression("draft-external-reply"),
+    (state) => state.status === "allowed_once" && state.panelSyncStatus === "live",
+    "approval ledger allow state"
+  );
+
+  const denyRect = await waitForRect(
+    client,
+    approvalLedgerDecisionButtonExpression("deny", "draft-external-reply"),
+    "approval ledger deny button"
+  );
+  await clickAt(client, denyRect);
+  await evaluate(client, approvalLedgerDecisionClickExpression("deny", "draft-external-reply"));
+
+  const deniedState = await waitForValue(
+    client,
+    approvalLedgerRequestExpression("draft-external-reply"),
+    (state) => state.status === "denied" && state.panelSyncStatus === "live",
+    "approval ledger deny state"
+  );
+
+  checks.push({
+    name: "approval ledger API and UI",
+    status: "passed",
+    requests: approvalSnapshot.requests.length,
+    trackedRequests: trackedRequests.map((request) => request.id),
+    source: panelState.source,
+    syncStatus: panelState.syncStatus,
+    count: panelState.count,
+    allowedStatus: allowedState.status,
+    deniedStatus: deniedState.status
   });
 }
 
@@ -1244,6 +1311,69 @@ function dataLayerStateExpression() {
       modelUsageSource: modelUsageRoot ? modelUsageRoot.getAttribute("data-model-usage-source") || "" : "",
       modelUsageStatus: modelUsageRoot ? modelUsageRoot.getAttribute("data-model-usage-status") || "" : ""
     };
+  })()`);
+}
+
+function approvalLedgerPanelExpression() {
+  return withSmokeHelpers(`(() => {
+    const root = document.querySelector("[data-approval-ledger-panel]");
+    const requests = root ? [...root.querySelectorAll("[data-approval-request]")] : [];
+    const requestIds = requests.map((request) => request.getAttribute("data-approval-request") || "");
+
+    return {
+      present: Boolean(root),
+      source: root ? root.getAttribute("data-approval-ledger-source") || "" : "",
+      syncStatus: root ? root.getAttribute("data-approval-ledger-sync-status") || "" : "",
+      count: root ? Number(root.getAttribute("data-approval-ledger-count") || requests.length) : 0,
+      requestCount: requests.length,
+      requestIds,
+      hasReadCustomerEmail: requestIds.includes("read-customer-email-context"),
+      hasDraftExternalReply: requestIds.includes("draft-external-reply")
+    };
+  })()`);
+}
+
+function approvalLedgerRequestExpression(requestId) {
+  return withSmokeHelpers(`(() => {
+    const root = document.querySelector("[data-approval-ledger-panel]");
+    const request = root
+      ? root.querySelector(${JSON.stringify(`[data-approval-request="${requestId}"]`)})
+      : null;
+
+    return {
+      present: Boolean(request),
+      requestId: request ? request.getAttribute("data-approval-request") || "" : "",
+      status: request ? request.getAttribute("data-approval-status") || "" : "",
+      panelSyncStatus: root ? root.getAttribute("data-approval-ledger-sync-status") || "" : ""
+    };
+  })()`);
+}
+
+function approvalLedgerDecisionButtonExpression(action, requestId) {
+  return withSmokeHelpers(`(() => {
+    const root = document.querySelector("[data-approval-ledger-panel]");
+    if (!root) return null;
+    const button = root.querySelector(
+      ${JSON.stringify(
+        `[data-approval-decision-action="${action}"][data-approval-decision-target="${requestId}"]`
+      )}
+    );
+    return smokeRect(button && isClickableSmokeButton(button) ? button : null);
+  })()`);
+}
+
+function approvalLedgerDecisionClickExpression(action, requestId) {
+  return withSmokeHelpers(`(() => {
+    const root = document.querySelector("[data-approval-ledger-panel]");
+    if (!root) return false;
+    const button = root.querySelector(
+      ${JSON.stringify(
+        `[data-approval-decision-action="${action}"][data-approval-decision-target="${requestId}"]`
+      )}
+    );
+    if (!button || button.disabled) return false;
+    button.click();
+    return true;
   })()`);
 }
 
@@ -2199,6 +2329,46 @@ function assertWorkflowPreviewSnapshot(snapshot, expected) {
   if (typeof preview.summary !== "string" || !preview.summary.trim()) {
     throw new Error("Workflow preview API did not include a summary.");
   }
+}
+
+function assertApprovalRequestsSnapshot(snapshot) {
+  if (!snapshot || snapshot.mode !== "daily_work" || !Array.isArray(snapshot.requests)) {
+    throw new Error("Approval requests API did not return a daily_work requests array.");
+  }
+
+  if (snapshot.requests.length < 4) {
+    throw new Error(
+      `Approval requests API returned ${snapshot.requests.length} request(s), expected at least 4.`
+    );
+  }
+
+  const requestsById = new Map(
+    snapshot.requests
+      .filter((request) => request && typeof request.id === "string")
+      .map((request) => [request.id, request])
+  );
+  const expectedIds = ["read-customer-email-context", "draft-external-reply"];
+  const missingIds = expectedIds.filter((id) => !requestsById.has(id));
+
+  if (missingIds.length) {
+    throw new Error(`Approval requests API missed expected request(s): ${missingIds.join(", ")}.`);
+  }
+
+  for (const request of snapshot.requests) {
+    if (
+      !request ||
+      request.mode !== "daily_work" ||
+      typeof request.riskLevel !== "string" ||
+      typeof request.status !== "string" ||
+      !Array.isArray(request.contextItemIds) ||
+      typeof request.requiredPermissionMode !== "string" ||
+      request.permissionAware !== true
+    ) {
+      throw new Error("Approval requests API returned a request without risk/status/context/permission fields.");
+    }
+  }
+
+  return expectedIds.map((id) => requestsById.get(id));
 }
 
 function assertApprovalDecisionSnapshot(snapshot) {
