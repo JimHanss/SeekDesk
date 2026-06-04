@@ -42,6 +42,7 @@ async function main() {
 
   try {
     client = await openPage(browser.debugPort, smokePageUrl(apiServer.url));
+    await runActivityStreamSmoke(client, apiServer.url);
     await runPromptSmoke(client);
     await runCodeBlockSmoke(client);
 
@@ -78,7 +79,8 @@ Environment:
 
 The smoke starts or connects to a production web page, launches Chrome/Edge with
 Chrome DevTools Protocol, clicks prompt controls with real mouse events, and
-asserts that the chat input is populated and submit is enabled.`);
+asserts that the activity stream binds to the API/WebSocket snapshot, then
+checks that the chat input is populated and submit is enabled.`);
 }
 
 async function ensureApiServer() {
@@ -463,6 +465,42 @@ async function runPromptSmoke(client) {
   });
 }
 
+async function runActivityStreamSmoke(client, apiUrl) {
+  const apiSnapshot = await fetchActivityEventsSnapshot(apiUrl);
+  assertActivityEventsSnapshot(apiSnapshot, "activity API response");
+
+  const wsSnapshot = await fetchActivityWebSocketSnapshot(apiUrl);
+  assertActivityEventsSnapshot(wsSnapshot, "activity WebSocket snapshot", {
+    expectGeneratedAt: true
+  });
+  assertMatchingActivityEvents(apiSnapshot.events, wsSnapshot.events);
+
+  const expectedTitles = apiSnapshot.events.map((event) => event.title);
+  const pageState = await waitForValue(
+    client,
+    activityFeedExpression(expectedTitles),
+    (state) =>
+      state.present &&
+      state.count === apiSnapshot.events.length &&
+      state.eventButtonCount >= apiSnapshot.events.length &&
+      (state.source === "api" || state.source === "websocket") &&
+      state.connectionStatus !== "connecting" &&
+      state.hasStatusText &&
+      state.hasCountText &&
+      state.includesExpectedTitles,
+    "activity stream API/WebSocket state"
+  );
+
+  checks.push({
+    name: "activity stream API and WebSocket snapshot",
+    status: "passed",
+    events: apiSnapshot.events.length,
+    source: pageState.source,
+    connectionStatus: pageState.connectionStatus,
+    generatedAt: wsSnapshot.generatedAt
+  });
+}
+
 async function runCodeBlockSmoke(client) {
   const initialInspection = await inspectCodeBlockDom(client);
   if (initialInspection.hasBlocks) {
@@ -518,6 +556,26 @@ async function runCodeBlockSmoke(client) {
   throw new Error(
     "Code block smoke streamed fenced code, but highlighted code block DOM was not rendered."
   );
+}
+
+function activityFeedExpression(expectedTitles) {
+  return withSmokeHelpers(`(() => {
+    const root = document.querySelector("[data-activity-feed]");
+    const text = root ? root.textContent || "" : "";
+    const expectedTitles = ${JSON.stringify(expectedTitles)};
+    return {
+      present: Boolean(root),
+      count: root ? Number(root.getAttribute("data-activity-feed-count")) : 0,
+      source: root ? root.getAttribute("data-activity-feed-source") || "" : "",
+      connectionStatus: root ? root.getAttribute("data-activity-connection-status") || "" : "",
+      eventButtonCount: root
+        ? [...root.querySelectorAll("button")].filter((button) => isClickableSmokeButton(button)).length
+        : 0,
+      hasStatusText: /WebSocket|\\/api\\/daily\\/events\\?mode=daily_work/.test(text),
+      hasCountText: text.includes(String(expectedTitles.length)),
+      includesExpectedTitles: expectedTitles.every((title) => text.includes(title))
+    };
+  })()`);
 }
 
 function templateButtonExpression() {
@@ -708,6 +766,139 @@ async function fetchCodeFenceProbe(endpoint) {
       reason: `chat API probe failed: ${error instanceof Error ? error.message : String(error)}`
     };
   }
+}
+
+async function fetchActivityEventsSnapshot(apiUrl) {
+  const response = await fetch(
+    new URL("/api/daily/events?mode=daily_work", apiUrl).toString(),
+    {
+      headers: {
+        Accept: "application/json"
+      },
+      signal: AbortSignal.timeout(5000)
+    }
+  );
+
+  if (!response.ok) {
+    throw new Error(`Activity API returned HTTP ${response.status}.`);
+  }
+
+  return response.json();
+}
+
+async function fetchActivityWebSocketSnapshot(apiUrl) {
+  const wsUrl = activityWebSocketUrl(apiUrl);
+  return new Promise((resolve, reject) => {
+    if (typeof WebSocket === "undefined") {
+      reject(new Error("This script requires Node.js with a global WebSocket implementation."));
+      return;
+    }
+
+    const socket = new WebSocket(wsUrl);
+    const timer = setTimeout(() => {
+      closeSocket(socket);
+      reject(new Error(`Timed out waiting for daily.activity.snapshot from ${wsUrl}.`));
+    }, 5000);
+
+    socket.addEventListener("message", (event) => {
+      const payload = parseJsonMessage(normalizeWebSocketData(event.data));
+      if (payload && payload.type === "daily.activity.snapshot") {
+        clearTimeout(timer);
+        closeSocket(socket);
+        resolve(payload);
+      }
+    });
+    socket.addEventListener(
+      "error",
+      () => {
+        clearTimeout(timer);
+        closeSocket(socket);
+        reject(new Error(`Could not connect to activity WebSocket at ${wsUrl}.`));
+      },
+      { once: true }
+    );
+  });
+}
+
+function activityWebSocketUrl(apiUrl) {
+  const url = new URL(apiUrl);
+  url.protocol = url.protocol === "https:" ? "wss:" : "ws:";
+  url.pathname = "/ws";
+  url.search = "";
+  url.hash = "";
+  return url.toString();
+}
+
+function assertActivityEventsSnapshot(snapshot, label, options = {}) {
+  if (!snapshot || snapshot.mode !== "daily_work" || !Array.isArray(snapshot.events)) {
+    throw new Error(`${label} did not include a daily_work events array.`);
+  }
+
+  if (snapshot.events.length <= 1) {
+    throw new Error(`${label} only included ${snapshot.events.length} event(s).`);
+  }
+
+  for (const event of snapshot.events) {
+    if (
+      !event ||
+      typeof event.id !== "string" ||
+      typeof event.title !== "string" ||
+      typeof event.eventType !== "string" ||
+      typeof event.status !== "string"
+    ) {
+      throw new Error(`${label} included an invalid event payload.`);
+    }
+  }
+
+  if (options.expectGeneratedAt) {
+    const generatedAt = Date.parse(snapshot.generatedAt);
+    if (typeof snapshot.generatedAt !== "string" || Number.isNaN(generatedAt)) {
+      throw new Error(`${label} was missing a valid generatedAt timestamp.`);
+    }
+  }
+}
+
+function assertMatchingActivityEvents(apiEvents, wsEvents) {
+  const apiIds = apiEvents.map((event) => event.id);
+  const wsIds = new Set(wsEvents.map((event) => event.id));
+
+  if (wsEvents.length !== apiEvents.length) {
+    throw new Error(
+      `WebSocket snapshot event count ${wsEvents.length} did not match API count ${apiEvents.length}.`
+    );
+  }
+
+  const missingIds = apiIds.filter((id) => !wsIds.has(id));
+  if (missingIds.length) {
+    throw new Error(`WebSocket snapshot missed API events: ${missingIds.join(", ")}.`);
+  }
+}
+
+function normalizeWebSocketData(data) {
+  if (typeof data === "string") {
+    return data;
+  }
+  if (data instanceof ArrayBuffer) {
+    return Buffer.from(data).toString("utf8");
+  }
+  if (ArrayBuffer.isView(data)) {
+    return Buffer.from(data.buffer, data.byteOffset, data.byteLength).toString("utf8");
+  }
+  return String(data);
+}
+
+function parseJsonMessage(data) {
+  try {
+    return JSON.parse(data);
+  } catch {
+    return null;
+  }
+}
+
+function closeSocket(socket) {
+  try {
+    socket.close();
+  } catch {}
 }
 
 function assertCodeBlockDom(inspection, label) {

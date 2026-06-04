@@ -1646,7 +1646,13 @@ export default function Page() {
                 </div>
               </div>
 
-              <div className="rounded-[8px] border border-teal-100 bg-white p-3">
+              <div
+                className="rounded-[8px] border border-teal-100 bg-white p-3"
+                data-activity-feed
+                data-activity-feed-count={activityFeedEvents.length}
+                data-activity-feed-source={activityFeedSource}
+                data-activity-connection-status={activityConnectionStatus}
+              >
                 <div className="flex flex-col gap-3 md:flex-row md:items-start md:justify-between">
                   <div className="min-w-0">
                     <div className="flex items-center gap-2 text-sm font-semibold text-teal-950">
