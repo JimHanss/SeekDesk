@@ -1,5 +1,10 @@
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import type { AddressInfo } from "node:net";
+import {
+  dailyActivityEventResponseSchema,
+  dailyActivityEventsResponseSchema,
+  dailyActivitySnapshotMessageSchema
+} from "@seekdesk/shared";
 
 import { buildServer } from "./server.js";
 
@@ -968,8 +973,13 @@ describe("api server", () => {
       url: "/api/daily/events"
     });
     const body = response.json();
+    const parsed = dailyActivityEventsResponseSchema.parse(body);
 
     expect(response.statusCode).toBe(200);
+    expect(parsed.mode).toBe("daily_work");
+    expect(
+      dailyActivityEventsResponseSchema.parse({ events: parsed.events }).mode
+    ).toBe("daily_work");
     expect(body).toEqual({
       mode: "daily_work",
       events: expect.arrayContaining([
@@ -1028,6 +1038,19 @@ describe("api server", () => {
       ])
     });
     expect(body.events).toHaveLength(7);
+    expect(parsed.events[0]).toEqual(
+      expect.objectContaining({
+        actor: expect.any(String),
+        metadata: expect.objectContaining({
+          externalEffects: ["none"]
+        }),
+        relatedRefs: expect.objectContaining({
+          sessionIds: expect.any(Array),
+          workflowIds: expect.any(Array),
+          artifactIds: expect.any(Array)
+        })
+      })
+    );
 
     await app.close();
   });
@@ -1038,9 +1061,12 @@ describe("api server", () => {
       method: "GET",
       url: "/api/daily/events/daily-event-workflow-preview-queued"
     });
+    const body = response.json();
+    const parsed = dailyActivityEventResponseSchema.parse(body);
 
     expect(response.statusCode).toBe(200);
-    expect(response.json()).toEqual({
+    expect(parsed.mode).toBe("daily_work");
+    expect(body).toEqual({
       mode: "daily_work",
       event: expect.objectContaining({
         id: "daily-event-workflow-preview-queued",
@@ -1088,9 +1114,11 @@ describe("api server", () => {
       method: "GET",
       url: "/api/daily/events?mode=coding_agent"
     });
+    const body = response.json();
+    const parsed = dailyActivityEventsResponseSchema.parse(body);
 
     expect(response.statusCode).toBe(200);
-    expect(response.json()).toEqual({
+    expect(parsed).toEqual({
       mode: "coding_agent",
       events: []
     });
@@ -1156,10 +1184,13 @@ describe("api server", () => {
         service: "seekdesk-api"
       })
     );
-    expect(messages[1]).toEqual({
+    const snapshot = dailyActivitySnapshotMessageSchema.parse(messages[1]);
+
+    expect(snapshot).toEqual({
       type: "daily.activity.snapshot",
       mode: "daily_work",
-      events: [
+      generatedAt: expect.any(String),
+      events: expect.arrayContaining([
         expect.objectContaining({
           id: "daily-event-session-restored",
           eventType: "session.restored",
@@ -1171,8 +1202,9 @@ describe("api server", () => {
             sessionIds: ["customer-follow-up-session"]
           })
         })
-      ]
+      ])
     });
+    expect(snapshot.events).toHaveLength(7);
     expect(messages[2]).toEqual({
       type: "echo",
       payload: "hello-events"

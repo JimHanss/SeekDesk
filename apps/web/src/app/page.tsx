@@ -1,7 +1,7 @@
 "use client";
 
 import type { FormEvent, ReactNode } from "react";
-import { useMemo, useRef, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import {
   Activity,
   AlertCircle,
@@ -174,7 +174,18 @@ interface WorkflowActionItem {
 }
 
 type ActivityEventType = "session" | "workflow" | "artifact" | "approval" | "connector";
-type ActivityEventStatus = "已恢复" | "已填入" | "待审批" | "已预演" | "待复核" | "可复用";
+type ActivityEventStatus =
+  | "已恢复"
+  | "已填入"
+  | "待审批"
+  | "已预演"
+  | "待复核"
+  | "可复用"
+  | "排队中"
+  | "进行中"
+  | "已完成"
+  | "已阻断"
+  | "失败";
 
 interface ActivityEventItem {
   id: string;
@@ -188,6 +199,60 @@ interface ActivityEventItem {
   safetyBoundary: string;
   promptFocus: string;
   icon: LucideIcon;
+}
+
+type ActivityFeedSource = "fallback" | "api" | "websocket";
+type ActivityConnectionStatus =
+  | "connecting"
+  | "live"
+  | "degraded"
+  | "closed";
+
+interface DailyActivityRelatedRefs {
+  sessionIds?: string[];
+  templateIds?: string[];
+  workflowIds?: string[];
+  actionQueueItemIds?: string[];
+  artifactIds?: string[];
+  approvalRequestIds?: string[];
+  connectorIds?: string[];
+  contextItemIds?: string[];
+}
+
+interface DailyActivitySafetyBoundary {
+  previewOnly?: boolean;
+  externalEffects?: string[];
+  prohibitedExternalActions?: string[];
+  statement?: string;
+}
+
+interface DailyActivityNextAction {
+  label: string;
+  description?: string;
+  targetType: ActivityEventType | "template" | "context";
+  targetId: string;
+  requiredStatus?: string;
+  dueAt?: string;
+}
+
+interface DailyActivityEventDto {
+  id: string;
+  mode?: AppMode;
+  eventType: string;
+  status: string;
+  timestamp: string;
+  title: string;
+  summary: string;
+  actor: string;
+  relatedRefs?: DailyActivityRelatedRefs;
+  safetyBoundary?: DailyActivitySafetyBoundary;
+  nextAction?: DailyActivityNextAction | null;
+}
+
+interface DailyActivitySnapshotDto {
+  type?: string;
+  mode?: AppMode;
+  events?: DailyActivityEventDto[];
 }
 
 type ApprovalStatus = "waiting" | "allowed_once" | "denied" | "blocked";
@@ -923,6 +988,17 @@ export default function Page() {
   const [selectedActivityEventId, setSelectedActivityEventId] = useState<
     string | null
   >(activityEvents[0]?.id ?? null);
+  const [activityFeedEvents, setActivityFeedEvents] =
+    useState<ActivityEventItem[]>(activityEvents);
+  const [activityFeedSource, setActivityFeedSource] =
+    useState<ActivityFeedSource>("fallback");
+  const [activityConnectionStatus, setActivityConnectionStatus] =
+    useState<ActivityConnectionStatus>("connecting");
+  const [activityLastUpdated, setActivityLastUpdated] =
+    useState("前端 fallback 示例");
+  const [activityFeedNotice, setActivityFeedNotice] = useState(
+    "正在连接后端活动源，暂时展示前端 fallback 示例。"
+  );
   const [selectedArtifactId, setSelectedArtifactId] = useState<string | null>(
     artifacts[0]?.id ?? null
   );
@@ -935,9 +1011,10 @@ export default function Page() {
   const inputRef = useRef<HTMLInputElement | null>(null);
 
   const isBusy = status === "submitting" || status === "streaming";
+  const apiBaseUrl = useMemo(() => getRuntimeApiBaseUrl().replace(/\/$/, ""), []);
   const endpoint = useMemo(
-    () => `${getRuntimeApiBaseUrl().replace(/\/$/, "")}/api/chat`,
-    []
+    () => `${apiBaseUrl}/api/chat`,
+    [apiBaseUrl]
   );
   const activeModelSnapshot = modelSnapshots[modelRouteMode];
   const activeUsageSnapshot = usageSnapshots[modelRouteMode];
@@ -982,10 +1059,10 @@ export default function Page() {
   }, [filteredWorkflowActions, selectedWorkflowActionId]);
   const selectedActivityEvent = useMemo(
     () =>
-      activityEvents.find((event) => event.id === selectedActivityEventId) ??
-      activityEvents[0] ??
+      activityFeedEvents.find((event) => event.id === selectedActivityEventId) ??
+      activityFeedEvents[0] ??
       null,
-    [selectedActivityEventId]
+    [activityFeedEvents, selectedActivityEventId]
   );
   const filteredArtifacts = useMemo(
     () =>
@@ -1015,6 +1092,115 @@ export default function Page() {
 
     return selectedInFilter ?? filteredSessionHistory[0] ?? sessionHistoryItems[0] ?? null;
   }, [filteredSessionHistory, selectedSessionHistoryId]);
+
+  useEffect(() => {
+    let isDisposed = false;
+    const controller = new AbortController();
+
+    const applySnapshot = (
+      payload: DailyActivitySnapshotDto,
+      source: Exclude<ActivityFeedSource, "fallback">
+    ) => {
+      const nextEvents = mapDailyActivitySnapshot(payload);
+
+      if (isDisposed || nextEvents.length === 0) {
+        return;
+      }
+
+      setActivityFeedEvents(nextEvents);
+      setActivityFeedSource(source);
+      setActivityLastUpdated(formatActivityUpdatedAt(new Date()));
+      setActivityFeedNotice(
+        source === "websocket"
+          ? "已从 WebSocket 收到 daily.activity.snapshot，活动流保持实时同步。"
+          : "已从 /api/daily/events?mode=daily_work 同步活动流。"
+      );
+      setSelectedActivityEventId((currentId) =>
+        nextEvents.some((event) => event.id === currentId)
+          ? currentId
+          : nextEvents[0]?.id ?? null
+      );
+    };
+
+    async function fetchActivityEvents() {
+      try {
+        const response = await fetch(
+          `${apiBaseUrl}/api/daily/events?mode=${activeMode}`,
+          {
+            signal: controller.signal
+          }
+        );
+
+        if (!response.ok) {
+          throw new Error(`Activity events request failed: ${response.status}`);
+        }
+
+        applySnapshot((await response.json()) as DailyActivitySnapshotDto, "api");
+      } catch {
+        if (controller.signal.aborted || isDisposed) {
+          return;
+        }
+
+        setActivityConnectionStatus("degraded");
+        setActivityFeedNotice(
+          "暂未取到后端活动列表，页面会继续保留前端 fallback 示例。"
+        );
+      }
+    }
+
+    function connectActivitySocket() {
+      const socketUrl = getRuntimeWebSocketUrl(apiBaseUrl);
+
+      if (!socketUrl) {
+        setActivityConnectionStatus("degraded");
+        setActivityFeedNotice("WebSocket 地址不可用，活动流继续使用当前快照。");
+        return undefined;
+      }
+
+      const socket = new WebSocket(socketUrl);
+
+      socket.addEventListener("open", () => {
+        if (!isDisposed) {
+          setActivityConnectionStatus("live");
+        }
+      });
+
+      socket.addEventListener("message", (event) => {
+        const payload = parseDailyActivitySnapshot(event.data);
+
+        if (payload?.type === "daily.activity.snapshot") {
+          applySnapshot(payload, "websocket");
+        }
+      });
+
+      socket.addEventListener("error", () => {
+        if (!isDisposed) {
+          setActivityConnectionStatus("degraded");
+          setActivityFeedNotice("WebSocket 连接失败，活动流继续使用当前快照。");
+        }
+      });
+
+      socket.addEventListener("close", () => {
+        if (!isDisposed) {
+          setActivityConnectionStatus((currentStatus) =>
+            currentStatus === "live" ? "closed" : "degraded"
+          );
+        }
+      });
+
+      return socket;
+    }
+
+    setActivityConnectionStatus("connecting");
+    void fetchActivityEvents();
+    const socket = connectActivitySocket();
+
+    return () => {
+      isDisposed = true;
+      controller.abort();
+      socket?.close();
+    };
+  }, [apiBaseUrl]);
 
   async function handleSubmit(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
@@ -1460,7 +1646,13 @@ export default function Page() {
                 </div>
               </div>
 
-              <div className="rounded-[8px] border border-teal-100 bg-white p-3">
+              <div
+                className="rounded-[8px] border border-teal-100 bg-white p-3"
+                data-activity-feed
+                data-activity-feed-count={activityFeedEvents.length}
+                data-activity-feed-source={activityFeedSource}
+                data-activity-connection-status={activityConnectionStatus}
+              >
                 <div className="flex flex-col gap-3 md:flex-row md:items-start md:justify-between">
                   <div className="min-w-0">
                     <div className="flex items-center gap-2 text-sm font-semibold text-teal-950">
@@ -1474,17 +1666,40 @@ export default function Page() {
 
                   <span className="inline-flex shrink-0 items-center gap-1 rounded-[999px] bg-teal-50 px-2.5 py-1 text-[11px] font-medium text-teal-700">
                     <Lock className="size-3.5" aria-hidden="true" />
-                    {activityEvents.length} 条前端示例事件
+                    {activityFeedEvents.length} 条活动事件
                   </span>
                 </div>
 
+                <div className="mt-3 grid gap-2 md:grid-cols-3">
+                  <ActivityFeedMeta
+                    label="事件来源"
+                    value={activityFeedSourceLabel(activityFeedSource)}
+                  />
+                  <ActivityFeedMeta
+                    label="连接状态"
+                    value={activityConnectionStatusLabel(activityConnectionStatus)}
+                  />
+                  <ActivityFeedMeta label="最近更新" value={activityLastUpdated} />
+                </div>
+
+                <div
+                  className={cn(
+                    "mt-3 rounded-[8px] border px-3 py-2 text-xs leading-5",
+                    activityConnectionStatus === "degraded"
+                      ? "border-orange-200 bg-orange-50 text-orange-800"
+                      : "border-teal-100 bg-teal-50 text-teal-800"
+                  )}
+                >
+                  {activityFeedNotice}
+                </div>
+
                 <div className="mt-3 rounded-[8px] border border-orange-200 bg-orange-50 px-3 py-2 text-xs leading-5 text-orange-800">
-                  编码模式兼容提示：这些事件只描述日常工作自动化状态，不暴露 coding-agent 命令、仓库操作或脚本工具。
+                  编码模式兼容提示：这些事件只描述 daily_work 日常工作自动化状态，不暴露 coding_agent 命令、仓库操作或脚本工具。
                 </div>
 
                 <div className="mt-3 grid gap-3 xl:grid-cols-[minmax(0,1.08fr)_minmax(0,0.92fr)]">
                   <div className="space-y-2">
-                    {activityEvents.map((event) => {
+                    {activityFeedEvents.map((event) => {
                       const Icon = event.icon;
                       const isSelected = selectedActivityEvent?.id === event.id;
 
@@ -2480,6 +2695,233 @@ function getRuntimeApiBaseUrl() {
   return smokeApiUrl || defaultApiBaseUrl;
 }
 
+function getRuntimeWebSocketUrl(apiBaseUrl: string) {
+  try {
+    const url = new URL(
+      apiBaseUrl,
+      typeof window === "undefined" ? defaultApiBaseUrl : window.location.origin
+    );
+    url.protocol = url.protocol === "https:" ? "wss:" : "ws:";
+    url.pathname = "/ws";
+    url.search = "";
+    url.hash = "";
+
+    return url.toString();
+  } catch {
+    return null;
+  }
+}
+
+function parseDailyActivitySnapshot(data: unknown): DailyActivitySnapshotDto | null {
+  if (typeof data !== "string") {
+    return null;
+  }
+
+  try {
+    const payload = JSON.parse(data) as unknown;
+
+    return isDailyActivitySnapshot(payload) ? payload : null;
+  } catch {
+    return null;
+  }
+}
+
+function mapDailyActivitySnapshot(payload: DailyActivitySnapshotDto) {
+  if (!isDailyActivitySnapshot(payload)) {
+    return [];
+  }
+
+  return (payload.events ?? [])
+    .filter((event) => event.mode === undefined || event.mode === activeMode)
+    .map(mapDailyActivityEvent);
+}
+
+function mapDailyActivityEvent(event: DailyActivityEventDto): ActivityEventItem {
+  const type = backendEventTypeToActivityType(event.eventType, event.nextAction);
+  const relatedObject = event.nextAction?.targetType ?? type;
+  const relatedLabel =
+    event.nextAction?.label ??
+    firstRelatedRefLabel(event.relatedRefs) ??
+    event.actor ??
+    "daily_work";
+  const safetyBoundary =
+    event.safetyBoundary?.statement ??
+    "后端未提供安全边界说明，前端按 daily_work 只读状态事件处理。";
+  const promptFocus =
+    event.nextAction?.description ??
+    `根据“${event.title}”继续 daily_work，先复述状态、风险边界和下一步建议。`;
+
+  return {
+    id: event.id,
+    type,
+    time: formatActivityTimestamp(event.timestamp),
+    title: event.title,
+    status: backendActivityStatusLabel(event.status),
+    relatedObject,
+    relatedLabel,
+    summary: `${event.summary} 来源：${event.actor}`,
+    safetyBoundary,
+    promptFocus,
+    icon: backendActivityIcon(event.eventType, type)
+  };
+}
+
+function isDailyActivitySnapshot(value: unknown): value is DailyActivitySnapshotDto {
+  if (!isRecord(value) || !Array.isArray(value.events)) {
+    return false;
+  }
+
+  return value.events.every(isDailyActivityEvent);
+}
+
+function isDailyActivityEvent(value: unknown): value is DailyActivityEventDto {
+  if (!isRecord(value)) {
+    return false;
+  }
+
+  return (
+    typeof value.id === "string" &&
+    typeof value.eventType === "string" &&
+    typeof value.status === "string" &&
+    typeof value.timestamp === "string" &&
+    typeof value.title === "string" &&
+    typeof value.summary === "string" &&
+    typeof value.actor === "string"
+  );
+}
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === "object" && value !== null;
+}
+
+function backendEventTypeToActivityType(
+  eventType: string,
+  nextAction?: DailyActivityNextAction | null
+): ActivityEventType {
+  if (nextAction?.targetType && isActivityEventType(nextAction.targetType)) {
+    return nextAction.targetType;
+  }
+
+  if (eventType.startsWith("session.")) {
+    return "session";
+  }
+
+  if (eventType.startsWith("approval.")) {
+    return "approval";
+  }
+
+  if (eventType.startsWith("artifact.")) {
+    return "artifact";
+  }
+
+  if (eventType.startsWith("workflow.") || eventType.startsWith("template.")) {
+    return "workflow";
+  }
+
+  return "connector";
+}
+
+function isActivityEventType(value: string): value is ActivityEventType {
+  return (
+    value === "session" ||
+    value === "workflow" ||
+    value === "artifact" ||
+    value === "approval" ||
+    value === "connector"
+  );
+}
+
+function backendActivityStatusLabel(status: string): ActivityEventStatus {
+  switch (status) {
+    case "queued":
+      return "排队中";
+    case "in_progress":
+      return "进行中";
+    case "waiting_for_approval":
+      return "待审批";
+    case "completed":
+      return "已完成";
+    case "ready":
+      return "可复用";
+    case "blocked":
+      return "已阻断";
+    case "failed":
+      return "失败";
+    case "info":
+    default:
+      return "已恢复";
+  }
+}
+
+function backendActivityIcon(eventType: string, type: ActivityEventType) {
+  if (eventType.startsWith("template.")) {
+    return Presentation;
+  }
+
+  switch (type) {
+    case "session":
+      return MessageSquare;
+    case "workflow":
+      return Workflow;
+    case "artifact":
+      return FileText;
+    case "approval":
+      return ShieldCheck;
+    case "connector":
+      return Globe;
+  }
+}
+
+function firstRelatedRefLabel(relatedRefs?: DailyActivityRelatedRefs) {
+  if (!relatedRefs) {
+    return null;
+  }
+
+  const refGroups: Array<[string, string[] | undefined]> = [
+    ["session", relatedRefs.sessionIds],
+    ["template", relatedRefs.templateIds],
+    ["workflow", relatedRefs.workflowIds],
+    ["artifact", relatedRefs.artifactIds],
+    ["approval", relatedRefs.approvalRequestIds],
+    ["connector", relatedRefs.connectorIds],
+    ["context", relatedRefs.contextItemIds],
+    ["queue", relatedRefs.actionQueueItemIds]
+  ];
+
+  const firstGroup = refGroups.find(([, values]) => values && values.length > 0);
+
+  if (!firstGroup) {
+    return null;
+  }
+
+  const [label, values] = firstGroup;
+
+  return `${label}: ${(values ?? []).slice(0, 2).join(" / ")}`;
+}
+
+function formatActivityTimestamp(timestamp: string) {
+  const date = new Date(timestamp);
+
+  if (Number.isNaN(date.getTime())) {
+    return timestamp;
+  }
+
+  return new Intl.DateTimeFormat("zh-CN", {
+    month: "numeric",
+    day: "numeric",
+    hour: "2-digit",
+    minute: "2-digit"
+  }).format(date);
+}
+
+function formatActivityUpdatedAt(date: Date) {
+  return new Intl.DateTimeFormat("zh-CN", {
+    hour: "2-digit",
+    minute: "2-digit",
+    second: "2-digit"
+  }).format(date);
+}
+
 function ChatBubble({
   message,
   streaming
@@ -3153,6 +3595,17 @@ function StatusRow({ label, value }: { label: string; value: string }) {
   );
 }
 
+function ActivityFeedMeta({ label, value }: { label: string; value: string }) {
+  return (
+    <div className="min-h-14 rounded-[8px] border border-teal-100 bg-teal-50 px-3 py-2">
+      <div className="text-[11px] font-medium text-teal-700">{label}</div>
+      <div className="mt-1 truncate text-sm font-semibold text-teal-950">
+        {value}
+      </div>
+    </div>
+  );
+}
+
 function statusLabel(status: ChatStatus) {
   switch (status) {
     case "idle":
@@ -3281,6 +3734,40 @@ function activityEventStatusClass(status: ActivityEventStatus) {
       return "bg-amber-100 text-amber-800";
     case "可复用":
       return "bg-emerald-100 text-emerald-800";
+    case "排队中":
+      return "bg-slate-100 text-slate-700";
+    case "进行中":
+      return "bg-sky-100 text-sky-800";
+    case "已完成":
+      return "bg-emerald-100 text-emerald-800";
+    case "已阻断":
+      return "bg-red-100 text-red-800";
+    case "失败":
+      return "bg-red-100 text-red-800";
+  }
+}
+
+function activityFeedSourceLabel(source: ActivityFeedSource) {
+  switch (source) {
+    case "fallback":
+      return "前端 fallback";
+    case "api":
+      return "HTTP API";
+    case "websocket":
+      return "WebSocket 快照";
+  }
+}
+
+function activityConnectionStatusLabel(status: ActivityConnectionStatus) {
+  switch (status) {
+    case "connecting":
+      return "连接中";
+    case "live":
+      return "实时连接";
+    case "degraded":
+      return "降级保留快照";
+    case "closed":
+      return "连接已关闭";
   }
 }
 
