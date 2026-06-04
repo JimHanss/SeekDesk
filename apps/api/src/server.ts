@@ -380,7 +380,7 @@ export async function buildServer() {
       JSON.stringify({
         type: "connection.ready",
         service: "seekdesk-api",
-        message: "WebSocket orchestration placeholder connected."
+        message: "Daily activity WebSocket connected."
       })
     );
     socket.send(
