@@ -75,6 +75,61 @@ export const dailyWorkSessionResponseSchema = z.object({
   session: dailyWorkSessionDetailSchema
 });
 
+export const dailyWorkSessionRestorePreviewRequestSchema = z.object({
+  mode: appModeSchema.default("daily_work"),
+  includeRecentMessages: z.boolean().default(false),
+  prompt: z.string().trim().min(1).max(2000).optional()
+});
+
+export const dailyWorkSessionRestoreSafetyBoundarySchema = z.object({
+  previewOnly: z.literal(true).default(true),
+  externalEffects: z.array(z.literal("none")).default(["none"]),
+  prohibitedExternalActions: z
+    .array(
+      z.enum([
+        "send_email",
+        "write_document",
+        "schedule_calendar_event",
+        "create_task",
+        "read_private_external_data",
+        "resume_real_execution"
+      ])
+    )
+    .default([
+      "send_email",
+      "write_document",
+      "schedule_calendar_event",
+      "create_task",
+      "read_private_external_data",
+      "resume_real_execution"
+    ]),
+  statement: z.string()
+});
+
+export const dailyWorkSessionRestorePreviewSchema = z.object({
+  id: z.string(),
+  mode: appModeSchema.default("daily_work"),
+  sessionId: z.string(),
+  sessionTitle: z.string(),
+  status: sessionWorkflowStatusSchema,
+  summary: z.string(),
+  lastAction: dailyWorkSessionLastActionSchema.nullable(),
+  restorePrompt: z.string(),
+  artifactIds: z.array(z.string()).default([]),
+  contextItemIds: z.array(z.string()).default([]),
+  approvalRequestIds: z.array(z.string()).default([]),
+  recentMessagesPreview: z.array(dailyWorkSessionMessageSchema).optional(),
+  previewOnly: z.literal(true).default(true),
+  externalEffects: z.array(z.literal("none")).default(["none"]),
+  safetyBoundary: dailyWorkSessionRestoreSafetyBoundarySchema,
+  generatedAt: z.string().datetime()
+});
+
+export const dailyWorkSessionRestorePreviewResponseSchema = z.object({
+  mode: appModeSchema,
+  preview: dailyWorkSessionRestorePreviewSchema
+});
+
 export const defaultDailyWorkSessionDetails: DailyWorkSessionDetail[] = [
   {
     id: "customer-follow-up-session",
@@ -251,4 +306,16 @@ export type DailyWorkSessionsResponse = z.infer<
 >;
 export type DailyWorkSessionResponse = z.infer<
   typeof dailyWorkSessionResponseSchema
+>;
+export type DailyWorkSessionRestorePreviewRequest = z.infer<
+  typeof dailyWorkSessionRestorePreviewRequestSchema
+>;
+export type DailyWorkSessionRestoreSafetyBoundary = z.infer<
+  typeof dailyWorkSessionRestoreSafetyBoundarySchema
+>;
+export type DailyWorkSessionRestorePreview = z.infer<
+  typeof dailyWorkSessionRestorePreviewSchema
+>;
+export type DailyWorkSessionRestorePreviewResponse = z.infer<
+  typeof dailyWorkSessionRestorePreviewResponseSchema
 >;
