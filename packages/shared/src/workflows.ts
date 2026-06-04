@@ -144,6 +144,60 @@ export const dailyWorkWorkflowResponseSchema = z.object({
   workflow: dailyWorkWorkflowSchema
 });
 
+export const dailyWorkWorkflowPreviewRequestSchema = z.object({
+  mode: appModeSchema.default("daily_work"),
+  actionId: z.string().trim().min(1).optional(),
+  prompt: z.string().trim().min(1).max(2000).optional(),
+  contextItemIds: z.array(z.string().trim().min(1)).default([])
+});
+
+export const workflowPreviewStepSchema = z.object({
+  id: z.string(),
+  actionId: z.string(),
+  actionType: workflowActionTypeSchema,
+  title: z.string(),
+  description: z.string(),
+  status: workflowActionQueueItemStatusSchema,
+  riskLevel: workflowRiskLevelSchema,
+  permissionState: workflowPermissionStateSchema,
+  requiredPermissionMode: permissionModeSchema,
+  previewOnly: z.literal(true).default(true),
+  externalEffect: z.literal("none").default("none"),
+  summary: z.string(),
+  suggestedNextStep: z.string(),
+  userVisibleDraft: z.string(),
+  connectorLinks: z.array(workflowLinkedConnectorSchema).default([]),
+  contextLinks: z.array(workflowLinkedContextSchema).default([]),
+  artifactLinks: z.array(workflowLinkedArtifactSchema).default([]),
+  approvalLinks: z.array(workflowLinkedApprovalSchema).default([])
+});
+
+export const dailyWorkWorkflowPreviewSchema = z.object({
+  id: z.string(),
+  mode: appModeSchema.default("daily_work"),
+  workflowId: z.string(),
+  workflowTitle: z.string(),
+  selectedActionId: z.string(),
+  selectedActionType: workflowActionTypeSchema,
+  selectedActionStatus: workflowActionQueueItemStatusSchema,
+  previewOnly: z.literal(true).default(true),
+  externalEffects: z.array(z.literal("none")).default(["none"]),
+  prompt: z.string().optional(),
+  requestedContextItemIds: z.array(z.string()).default([]),
+  summary: z.string(),
+  steps: z.array(workflowPreviewStepSchema).default([]),
+  connectorLinks: z.array(workflowLinkedConnectorSchema).default([]),
+  contextLinks: z.array(workflowLinkedContextSchema).default([]),
+  artifactLinks: z.array(workflowLinkedArtifactSchema).default([]),
+  approvalLinks: z.array(workflowLinkedApprovalSchema).default([]),
+  safetyBoundary: workflowSafetyBoundarySchema
+});
+
+export const dailyWorkWorkflowPreviewResponseSchema = z.object({
+  mode: appModeSchema,
+  preview: dailyWorkWorkflowPreviewSchema
+});
+
 const previewSafetyBoundary: z.infer<typeof workflowSafetyBoundarySchema> = {
   previewOnly: true,
   externalEffects: ["none"],
@@ -697,4 +751,14 @@ export type DailyWorkflowsResponse = z.infer<
 >;
 export type DailyWorkWorkflowResponse = z.infer<
   typeof dailyWorkWorkflowResponseSchema
+>;
+export type DailyWorkWorkflowPreviewRequest = z.infer<
+  typeof dailyWorkWorkflowPreviewRequestSchema
+>;
+export type WorkflowPreviewStep = z.infer<typeof workflowPreviewStepSchema>;
+export type DailyWorkWorkflowPreview = z.infer<
+  typeof dailyWorkWorkflowPreviewSchema
+>;
+export type DailyWorkWorkflowPreviewResponse = z.infer<
+  typeof dailyWorkWorkflowPreviewResponseSchema
 >;

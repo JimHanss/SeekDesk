@@ -14,6 +14,7 @@ import {
   createDailyActivitySnapshotMessage,
   createDailyModelUsageResponse,
   dailyApprovalDecisionRequestSchema,
+  dailyWorkWorkflowPreviewRequestSchema,
   type AppMode,
   type ApprovalDecision,
   type ApprovalDecisionInput,
@@ -24,20 +25,25 @@ import {
   type DailyApprovalRequestsResponse,
   type DailyApprovalDecisionResponse,
   type DailyApprovalRequest,
-  type DailyWorkArtifactResponse,
-  type DailyWorkArtifactsResponse,
   type DailyActivityEventResponse,
   type DailyActivityEventsResponse,
+  type DailyContextItem,
+  type DailyContextResponse,
+  type DailyModelUsageResponse,
+  type DailyWorkArtifactResponse,
+  type DailyWorkArtifactsResponse,
   type DailyWorkConnector,
   type DailyWorkConnectorResponse,
   type DailyWorkConnectorsResponse,
-  type DailyModelUsageResponse,
   type DailyWorkSessionResponse,
   type DailyWorkSessionsResponse,
   type DailyWorkTemplatesResponse,
-  type DailyContextResponse,
+  type DailyWorkWorkflow,
   type DailyWorkWorkflowResponse,
-  type DailyWorkflowsResponse
+  type DailyWorkWorkflowPreviewResponse,
+  type DailyWorkflowsResponse,
+  type WorkflowActionQueueItem,
+  type WorkflowLinkedContext
 } from "@seekdesk/shared";
 import websocket from "@fastify/websocket";
 import Fastify, { type FastifyReply, type FastifyRequest } from "fastify";
@@ -118,6 +124,10 @@ export async function buildServer(options?: {
   );
   app.options("/api/daily/workflows/:workflowId", async (_request, reply) =>
     reply.code(204).send()
+  );
+  app.options(
+    "/api/daily/workflows/:workflowId/preview",
+    async (_request, reply) => reply.code(204).send()
   );
 
   app.get("/health", async () => ({
@@ -490,6 +500,84 @@ export async function buildServer(options?: {
     }
   );
 
+  app.post<{
+    Params: { workflowId: string };
+    Body: unknown;
+  }>(
+    "/api/daily/workflows/:workflowId/preview",
+    async (
+      request,
+      reply
+    ): Promise<DailyWorkWorkflowPreviewResponse | void> => {
+      const parsed = dailyWorkWorkflowPreviewRequestSchema.safeParse(
+        request.body
+      );
+      if (!parsed.success) {
+        reply
+          .code(400)
+          .send(
+            createValidationError(
+              "Invalid workflow preview request.",
+              parsed.error.issues
+            )
+          );
+        return;
+      }
+
+      const mode = normalizeAppMode(parsed.data.mode);
+      if (mode !== "daily_work") {
+        reply.code(400).send({
+          mode,
+          error: "Workflow previews are only available in daily_work mode."
+        });
+        return;
+      }
+
+      const workflow = await filterDailyWorkWorkflow(
+        dailyWorkRepository,
+        mode,
+        request.params.workflowId
+      );
+
+      if (!workflow) {
+        reply.code(404).send({
+          mode,
+          error: "Daily-work workflow not found."
+        });
+        return;
+      }
+
+      const selectedAction = selectWorkflowPreviewAction(
+        workflow,
+        parsed.data.actionId
+      );
+      if (!selectedAction) {
+        reply.code(400).send({
+          mode,
+          workflowId: workflow.id,
+          ...(parsed.data.actionId ? { actionId: parsed.data.actionId } : {}),
+          error: parsed.data.actionId
+            ? "Workflow action is not available for this workflow."
+            : "Daily-work workflow has no action queue to preview."
+        });
+        return;
+      }
+
+      return createDailyWorkWorkflowPreviewResponse({
+        mode,
+        workflow,
+        selectedAction,
+        selectedActionOnly: Boolean(parsed.data.actionId),
+        contextItems: await filterDailyWorkContextItems(
+          dailyWorkRepository,
+          mode
+        ),
+        contextItemIds: parsed.data.contextItemIds,
+        ...(parsed.data.prompt ? { prompt: parsed.data.prompt } : {})
+      });
+    }
+  );
+
   app.post<{ Body: unknown }>("/api/chat", async (request, reply) => {
     const parsed = chatRequestSchema.safeParse(request.body);
     if (!parsed.success) {
@@ -630,6 +718,150 @@ function createConnectorActionPreviewResponse(input: {
   };
 }
 
+function createDailyWorkWorkflowPreviewResponse(input: {
+  mode: AppMode;
+  workflow: DailyWorkWorkflow;
+  selectedAction: WorkflowActionQueueItem;
+  selectedActionOnly: boolean;
+  contextItems: DailyContextItem[];
+  contextItemIds: string[];
+  prompt?: string;
+}): DailyWorkWorkflowPreviewResponse {
+  const requestedContextItemIds = uniqueStrings(input.contextItemIds);
+  const requestedContextLinks = createRequestedWorkflowContextLinks(
+    requestedContextItemIds,
+    input.contextItems
+  );
+  const previewActions = input.selectedActionOnly
+    ? [input.selectedAction]
+    : input.workflow.actionQueue;
+  const connectorLinks = uniqueBy(
+    [
+      ...input.workflow.connectorLinks,
+      ...previewActions.flatMap((action) => action.connectorLinks)
+    ],
+    (link) => `${link.connectorId}:${link.action}`
+  );
+  const contextLinks = uniqueBy(
+    [
+      ...input.workflow.contextLinks,
+      ...previewActions.flatMap((action) => action.contextLinks),
+      ...requestedContextLinks
+    ],
+    (link) => `${link.contextItemId}:${link.usage}`
+  );
+  const artifactLinks = uniqueBy(
+    [
+      ...input.workflow.artifactLinks,
+      ...previewActions.flatMap((action) => action.artifactLinks)
+    ],
+    (link) => link.artifactId
+  );
+  const approvalLinks = uniqueBy(
+    [
+      ...input.workflow.approvalLinks,
+      ...previewActions.flatMap((action) => action.approvalLinks)
+    ],
+    (link) => link.approvalRequestId
+  );
+  const steps = previewActions.map((action, index) =>
+    createWorkflowPreviewStep(action, index)
+  );
+  const selectedActionLabel = input.selectedActionOnly
+    ? `selected action "${input.selectedAction.title}"`
+    : `${steps.length} queued workflow step${steps.length === 1 ? "" : "s"}`;
+
+  return {
+    mode: input.mode,
+    preview: {
+      id: `${input.workflow.id}:${input.selectedAction.id}:preview`,
+      mode: input.mode,
+      workflowId: input.workflow.id,
+      workflowTitle: input.workflow.title,
+      selectedActionId: input.selectedAction.id,
+      selectedActionType: input.selectedAction.actionType,
+      selectedActionStatus: input.selectedAction.status,
+      previewOnly: true,
+      externalEffects: ["none"],
+      ...(input.prompt ? { prompt: input.prompt } : {}),
+      requestedContextItemIds,
+      summary:
+        `${input.workflow.title} preview for ${selectedActionLabel}. ` +
+        `${input.selectedAction.preview.summary} No connector action, external write, calendar update, email send, or task creation is performed.`,
+      steps,
+      connectorLinks,
+      contextLinks,
+      artifactLinks,
+      approvalLinks,
+      safetyBoundary: {
+        ...input.workflow.safetyBoundary,
+        previewOnly: true,
+        externalEffects: ["none"]
+      }
+    }
+  };
+}
+
+function selectWorkflowPreviewAction(
+  workflow: DailyWorkWorkflow,
+  actionId?: string
+) {
+  if (actionId) {
+    return workflow.actionQueue.find((action) => action.id === actionId);
+  }
+
+  return workflow.actionQueue[0];
+}
+
+function createWorkflowPreviewStep(
+  action: WorkflowActionQueueItem,
+  index: number
+) {
+  return {
+    id: `${action.workflowId}:preview-step-${index + 1}`,
+    actionId: action.id,
+    actionType: action.actionType,
+    title: action.title,
+    description: action.description,
+    status: action.status,
+    riskLevel: action.riskLevel,
+    permissionState: action.permissionState,
+    requiredPermissionMode: action.requiredPermissionMode,
+    previewOnly: true as const,
+    externalEffect: "none" as const,
+    summary: action.preview.summary,
+    suggestedNextStep: action.preview.suggestedNextStep,
+    userVisibleDraft: action.preview.userVisibleDraft,
+    connectorLinks: action.connectorLinks,
+    contextLinks: action.contextLinks,
+    artifactLinks: action.artifactLinks,
+    approvalLinks: action.approvalLinks
+  };
+}
+
+function createRequestedWorkflowContextLinks(
+  contextItemIds: string[],
+  contextItems: DailyContextItem[]
+): WorkflowLinkedContext[] {
+  const contextById = new Map(contextItems.map((item) => [item.id, item]));
+
+  return contextItemIds.flatMap((contextItemId) => {
+    const contextItem = contextById.get(contextItemId);
+    if (!contextItem) {
+      return [];
+    }
+
+    return [
+      {
+        contextItemId: contextItem.id,
+        title: contextItem.title,
+        permissionState: contextItem.permissionState,
+        usage: "reference" as const
+      }
+    ];
+  });
+}
+
 function createApprovalDecisionResponse(input: {
   mode: AppMode;
   approvalRequest: DailyApprovalRequest;
@@ -679,6 +911,20 @@ function normalizeApprovalDecisionInput(decisionInput: ApprovalDecisionInput): {
 
 function uniqueStrings(values: string[]) {
   return [...new Set(values)];
+}
+
+function uniqueBy<T>(values: T[], createKey: (value: T) => string) {
+  const seen = new Set<string>();
+
+  return values.filter((value) => {
+    const key = createKey(value);
+    if (seen.has(key)) {
+      return false;
+    }
+
+    seen.add(key);
+    return true;
+  });
 }
 
 const connectorActionPreviewCopy: Record<
