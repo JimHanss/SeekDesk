@@ -94,14 +94,51 @@ export const dailyActivityEventSchema = z.object({
 });
 
 export const dailyActivityEventsResponseSchema = z.object({
-  mode: appModeSchema,
+  mode: appModeSchema.default("daily_work"),
   events: z.array(dailyActivityEventSchema)
 });
 
 export const dailyActivityEventResponseSchema = z.object({
-  mode: appModeSchema,
+  mode: appModeSchema.default("daily_work"),
   event: dailyActivityEventSchema
 });
+
+export const dailyActivitySnapshotPayloadSchema = z.object({
+  mode: appModeSchema.default("daily_work"),
+  events: z.array(dailyActivityEventSchema),
+  generatedAt: z.string().datetime()
+});
+
+export const dailyActivitySnapshotMessageSchema =
+  dailyActivitySnapshotPayloadSchema.extend({
+    type: z.literal("daily.activity.snapshot")
+  });
+
+export function createDailyActivityEventsResponse(input: {
+  mode?: DailyActivityEventsResponse["mode"];
+  events: DailyActivityEvent[];
+}): DailyActivityEventsResponse {
+  return dailyActivityEventsResponseSchema.parse(input);
+}
+
+export function createDailyActivityEventResponse(input: {
+  mode?: DailyActivityEventResponse["mode"];
+  event: DailyActivityEvent;
+}): DailyActivityEventResponse {
+  return dailyActivityEventResponseSchema.parse(input);
+}
+
+export function createDailyActivitySnapshotMessage(input: {
+  mode?: DailyActivitySnapshotMessage["mode"];
+  events: DailyActivityEvent[];
+  generatedAt?: string;
+}): DailyActivitySnapshotMessage {
+  return dailyActivitySnapshotMessageSchema.parse({
+    type: "daily.activity.snapshot",
+    ...input,
+    generatedAt: input.generatedAt ?? new Date().toISOString()
+  });
+}
 
 const previewSafetyBoundary: DailyActivityEvent["safetyBoundary"] = {
   previewOnly: true,
@@ -428,4 +465,10 @@ export type DailyActivityEventsResponse = z.infer<
 >;
 export type DailyActivityEventResponse = z.infer<
   typeof dailyActivityEventResponseSchema
+>;
+export type DailyActivitySnapshotPayload = z.infer<
+  typeof dailyActivitySnapshotPayloadSchema
+>;
+export type DailyActivitySnapshotMessage = z.infer<
+  typeof dailyActivitySnapshotMessageSchema
 >;

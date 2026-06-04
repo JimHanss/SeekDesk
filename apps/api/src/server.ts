@@ -15,6 +15,9 @@ import {
   defaultDailyWorkSessionSummaries,
   defaultDailyWorkTemplates,
   defaultDailyWorkflows,
+  createDailyActivityEventResponse,
+  createDailyActivityEventsResponse,
+  createDailyActivitySnapshotMessage,
   createDailyModelUsageResponse,
   type AppMode,
   type DailyApprovalRequestsResponse,
@@ -238,10 +241,10 @@ export async function buildServer() {
     async (request): Promise<DailyActivityEventsResponse> => {
       const mode = normalizeAppMode(request.query.mode);
 
-      return {
+      return createDailyActivityEventsResponse({
         mode,
         events: filterDailyActivityEvents(mode)
-      };
+      });
     }
   );
 
@@ -263,10 +266,10 @@ export async function buildServer() {
         return;
       }
 
-      return {
+      return createDailyActivityEventResponse({
         mode,
         event
-      };
+      });
     }
   );
 
@@ -381,11 +384,12 @@ export async function buildServer() {
       })
     );
     socket.send(
-      JSON.stringify({
-        type: "daily.activity.snapshot",
-        mode: "daily_work",
-        events: filterDailyActivityEvents("daily_work").slice(0, 1)
-      })
+      JSON.stringify(
+        createDailyActivitySnapshotMessage({
+          mode: "daily_work",
+          events: filterDailyActivityEvents("daily_work")
+        })
+      )
     );
 
     socket.on("message", (message: Buffer) => {
