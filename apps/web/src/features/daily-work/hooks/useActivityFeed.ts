@@ -14,7 +14,7 @@ export function useActivityFeed(
   const [activityConnectionStatus, setActivityConnectionStatus] =
     React.useState<DailyWorkTypes.ActivityConnectionStatus>("connecting");
   const [activityLastUpdated, setActivityLastUpdated] =
-    React.useState("鍓嶇 fallback 绀轰緥");
+    React.useState("前端 fallback 示例");
   const [activityFeedNotice, setActivityFeedNotice] = React.useState(
     "Connecting to the backend activity feed; showing frontend fallback data for now."
   );
