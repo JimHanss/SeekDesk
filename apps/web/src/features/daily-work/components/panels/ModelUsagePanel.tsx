@@ -48,7 +48,7 @@ export function ModelUsagePanel({
             <span className="min-w-0 break-words">模型与用量</span>
           </div>
           <p className="mt-1 text-xs leading-5 text-teal-700">
-            DeepSeek 日常工作模式快照，启动后同步后端 daily_work 模型配置与 usage 统计。
+            DeepSeek 日常工作模式快照；启动后同步后端 daily_work 模型配置与用量统计。
           </p>
         </div>
 
@@ -116,8 +116,8 @@ export function ModelUsagePanel({
               label="当前模式"
               value={activeModelSnapshot.currentMode}
             />
-            <SnapshotRow label="Provider" value={activeModelSnapshot.provider} />
-            <SnapshotRow label="Base URL" value={activeModelSnapshot.baseUrl} />
+            <SnapshotRow label="服务商" value={activeModelSnapshot.provider} />
+            <SnapshotRow label="接口地址" value={activeModelSnapshot.baseUrl} />
             <SnapshotRow label="快速模型" value={activeModelSnapshot.fastModel} />
             <SnapshotRow label="深度模型" value={activeModelSnapshot.proModel} />
             <SnapshotRow
@@ -129,25 +129,25 @@ export function ModelUsagePanel({
               value={modelRouteLabel(activeModelSnapshot.selectedRoute)}
             />
             <SnapshotRow
-              label="Thinking"
+              label="思考模式"
               value={
                 activeModelSnapshot.thinkingMode === "enabled"
-                  ? "enabled / 后端配置"
-                  : "disabled / 后端配置"
+                  ? "已启用 / 后端配置"
+                  : "已关闭 / 后端配置"
               }
             />
             <SnapshotRow
-              label="Stream Usage"
+              label="流式用量"
               value={
-                activeModelSnapshot.streamUsageEnabled ? "enabled" : "disabled"
+                activeModelSnapshot.streamUsageEnabled ? "已启用" : "已关闭"
               }
             />
             <SnapshotRow
-              label="API Key"
+              label="API 密钥"
               value={
                 activeModelSnapshot.configured
                   ? "已配置 / 不展示密钥"
-                  : "未配置 / mock usage"
+                  : "未配置 / 模拟用量"
               }
             />
           </div>
@@ -209,7 +209,7 @@ export function ModelUsagePanel({
       </div>
 
       <div className="mt-3 rounded-[8px] border border-slate-200 bg-white px-3 py-2 text-xs leading-5 text-slate-700">
-        边界：当前面板只消费 daily_work；coding_agent 的模型用量路径保留为兼容说明，不在此处切换或暴露编码工具状态。
+        边界：当前面板只读取 daily_work 的模型用量；coding_agent 路径仅作为兼容说明，不在此处切换或暴露编码工具状态。
       </div>
 
       <div className="mt-3 grid gap-2 md:grid-cols-2">

@@ -54,7 +54,7 @@ export function TemplateLibraryPanel({
                 日常工作模式
               </div>
               <div className="mt-1 text-xs leading-5 text-teal-700">
-                选择模板会先生成 preview-only 草稿，你可以继续补充上下文后再发送。
+                选择模板会先生成仅预览草稿，你可以继续补充上下文后再发送。
               </div>
             </div>
             <span className="shrink-0 rounded-[999px] bg-white px-2 py-0.5 text-[11px] font-medium text-teal-700">
@@ -186,7 +186,7 @@ export function TemplateLibraryPanel({
             编码模式兼容
           </div>
           <p className="text-xs leading-5">
-            架构保留 Coding Agent 能力位，当前页面只开放日常工作模式，不暴露编码工具。
+            架构保留编码助手能力位；当前页面只开放日常工作模式，不暴露编码工具。
           </p>
         </div>
       </div>

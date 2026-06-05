@@ -176,7 +176,7 @@ export function ConnectorDirectoryPanel({
 
           <div className="mt-3 grid gap-2">
             <StatusRow label="权限状态" value={selectedConnector.permissionState} />
-            <StatusRow label="Provider" value={selectedConnector.provider} />
+            <StatusRow label="服务商" value={selectedConnector.provider} />
             <StatusRow label="目录状态" value={selectedConnector.status} />
           </div>
 
@@ -215,7 +215,7 @@ export function ConnectorDirectoryPanel({
                     aria-hidden="true"
                   />
                   <span className="min-w-0 break-words">
-                    工具调用预览 / preview-only
+                    工具调用预览 / 仅预览
                   </span>
                 </div>
                 <p className="mt-1 text-xs leading-5 text-cyan-800">
@@ -371,7 +371,7 @@ export function ConnectorDirectoryPanel({
             填入接入提示
           </Button>
           <p className="mt-2 text-xs leading-5 text-teal-700">
-            该操作只填充输入框，不接真实授权、登录或外部服务。
+            该操作只填充输入框，不连接真实授权、登录或外部服务。
           </p>
         </div>
       ) : null}

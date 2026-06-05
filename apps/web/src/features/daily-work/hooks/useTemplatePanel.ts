@@ -62,7 +62,7 @@ export function useTemplatePanel(apiBaseUrl: string) {
           ...current,
           source: "degraded",
           syncStatus: "degraded",
-          notice: "暂未从后端同步模板库，已保留本地 templates fallback。"
+          notice: "暂未从后端同步模板库，已保留本地模板示例。"
         }));
       }
     }

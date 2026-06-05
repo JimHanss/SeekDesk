@@ -179,7 +179,7 @@ export function ActivityFeedPanel({
               onClick={() => onApplyEventPrompt(selectedEvent)}
             >
               <Send className="size-4" aria-hidden="true" />
-              将事件转为 Prompt
+              将事件转为提示词
             </Button>
           </div>
         ) : null}

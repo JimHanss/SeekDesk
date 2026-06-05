@@ -69,7 +69,7 @@ export function SessionHistoryPanel({
             <span className="min-w-0 break-words">最近工作流 / 会话历史</span>
           </div>
           <p className="mt-1 text-xs leading-5 text-teal-700">
-            从 daily_work sessions API 同步会话快照，并通过 restore-preview 预演把可继续工作的提示填入输入框。
+            从 daily_work sessions API 同步会话快照，并通过恢复预演把继续工作的提示填入输入框。
           </p>
         </div>
 
@@ -243,7 +243,7 @@ export function SessionHistoryPanel({
             </div>
 
             <div className="mt-3 rounded-[8px] border border-orange-200 bg-orange-50 px-3 py-2 text-xs leading-5 text-orange-800">
-              恢复会先请求后端 restore-preview，成功后填入 API 返回的 restorePrompt；当前预演只进入输入框，由你确认后再发送，不执行外部效果。
+              恢复会先请求后端预演，成功后把恢复提示填入输入框；当前预演由你确认后再发送，不执行外部效果。
               <span className="mt-1 block text-[11px]">
                 {panel.restorePreview.notice}
               </span>

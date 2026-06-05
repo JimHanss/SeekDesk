@@ -42,7 +42,7 @@ export function usePersistencePanel(apiBaseUrl: string) {
           source: "degraded",
           syncStatus: "degraded",
           notice:
-            "暂未从 /health 读取到数据层状态；工作台继续使用 seed/mock fallback。"
+            "暂未从 /health 读取到数据层状态；工作台继续使用本地示例快照。"
         }));
       }
     }

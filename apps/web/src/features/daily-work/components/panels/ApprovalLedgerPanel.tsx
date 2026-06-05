@@ -141,7 +141,7 @@ export function ApprovalLedgerPanel({
         })}
       </div>
       <p className="mt-3 text-xs leading-5 text-amber-800">
-        审批按钮只写入后端 preview-only 决策回执；不会触发真实邮件、日历或外部系统操作。
+        审批按钮只写入后端的仅预览决策回执；不会触发真实邮件、日历或外部系统操作。
       </p>
     </div>
   );

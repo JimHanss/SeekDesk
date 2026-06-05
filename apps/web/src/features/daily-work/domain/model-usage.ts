@@ -138,8 +138,8 @@ export function mapDailyModelUsageResponse(
   const usageNotes = [
     "后端返回的是 daily_work rolling window 聚合用量，fast/pro 切换不代表独立账单。",
     configured
-      ? "DeepSeek API Key 已在后端配置；前端不会展示或接触密钥。"
-      : "后端未配置 DeepSeek API Key；当前 usage 仍是 mock/tracking 快照。"
+      ? "DeepSeek API 密钥已在后端配置；前端不会展示或接触密钥。"
+      : "后端未配置 DeepSeek API 密钥；当前用量仍是模拟追踪快照。"
   ];
   const nextModelSnapshots = (["fast", "pro"] as const).reduce(
     (snapshots, route) => {
@@ -326,7 +326,7 @@ export function buildModelSwitchPrompt(
   return [
     `请按“${modelRouteLabel(modelSnapshot.id)}”示例模式继续这个 daily_work 会话。`,
     "",
-    `模型快照：Provider ${modelSnapshot.provider}，当前展示模型 ${modelSnapshot.selectedModel}，后端路由 ${modelRouteLabel(
+    `模型快照：服务商 ${modelSnapshot.provider}，当前展示模型 ${modelSnapshot.selectedModel}，后端路由 ${modelRouteLabel(
       modelSnapshot.selectedRoute
     )}，thinking ${modelSnapshot.thinkingMode}，stream usage ${
       modelSnapshot.streamUsageEnabled ? "enabled" : "disabled"

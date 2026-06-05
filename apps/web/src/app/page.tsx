@@ -134,8 +134,8 @@ export default function Page() {
   const activeModelSnapshot = modelUsagePanel.modelSnapshots[modelRouteMode];
   const modelInputPlaceholder =
     modelRouteMode === "fast"
-      ? "快速模式示例：适合写客户更新、整理会议纪要、把笔记转成任务计划"
-      : "深度模式示例：适合复杂资料归纳、风险复核和长上下文分析";
+      ? "例如：帮我写客户更新邮件，整理时间线、风险和下一步。"
+      : "例如：归纳这批资料，复核风险并列出还需要补充的上下文。";
   const templateItems = templatePanel.items;
   const contextPanelItems = contextPanel.items;
   const approvalRequests = approvalPanel.items;
@@ -215,7 +215,7 @@ export default function Page() {
                 SeekDesk
               </h1>
               <p className="truncate text-sm text-teal-700">
-                日常工作模板、会话知识上下文与流式 AI 对话
+                面向日常工作的模板、会话上下文与流式 AI 助手
               </p>
             </div>
           </div>
@@ -223,7 +223,7 @@ export default function Page() {
           <div className="flex flex-wrap items-center gap-2">
             <Button variant="secondary" size="sm">
               <Search className="size-4" aria-hidden="true" />
-              搜索
+              搜索上下文
             </Button>
             <Button variant="secondary" size="sm">
               <PanelLeft className="size-4" aria-hidden="true" />
@@ -231,7 +231,7 @@ export default function Page() {
             </Button>
             <Button size="sm" className="bg-orange-500 hover:bg-orange-600">
               <Play className="size-4" aria-hidden="true" />
-              新建工作流
+              新建流程
             </Button>
           </div>
         </header>
@@ -246,12 +246,12 @@ export default function Page() {
           <section className="flex min-h-[680px] min-w-0 flex-col bg-white">
             <PanelHeader
               icon={<MessageSquare className="size-4" aria-hidden="true" />}
-              title="日常工作对话"
+              title="日常工作助手"
               action={
                 <Button
                   variant="ghost"
                   size="icon"
-                  aria-label="取消任务"
+                  aria-label="停止当前回复"
                   disabled={!isBusy}
                   onClick={cancelRequest}
                 >
@@ -264,20 +264,20 @@ export default function Page() {
               <div className="grid gap-3 md:grid-cols-3">
                 <PromptCard
                   icon={<Mail className="size-4" aria-hidden="true" />}
-                  title="邮件起草"
-                  text="帮我写一封给客户的更新邮件，包含结果、时间线和下一步。"
+                  title="客户更新"
+                  text="帮我写一封客户更新邮件，交代当前结果、时间线、风险和下一步。"
                   onClick={applyPrompt}
                 />
                 <PromptCard
                   icon={<Presentation className="size-4" aria-hidden="true" />}
                   title="会议纪要"
-                  text="把这些会议记录整理成可分享纪要，包含决策、负责人和风险。"
+                  text="把这些会议记录整理成可分享的纪要，标出决策、负责人、风险和待补信息。"
                   onClick={applyPrompt}
                 />
                 <PromptCard
                   icon={<Search className="size-4" aria-hidden="true" />}
                   title="研究简报"
-                  text="把最新资料整理成简报，指出已知信息、缺口和建议下一步。"
+                  text="把最新资料整理成一页简报，区分已知信息、信息缺口和建议下一步。"
                   onClick={applyPrompt}
                 />
               </div>
@@ -342,7 +342,7 @@ export default function Page() {
                   ref={inputRef}
                   className="max-h-40 min-h-10 min-w-0 flex-1 resize-none bg-transparent py-2 text-sm leading-5 text-teal-950 outline-none placeholder:text-teal-500"
                   placeholder={modelInputPlaceholder}
-                  aria-label="日常工作输入"
+                  aria-label="输入日常工作请求"
                   value={input}
                   onChange={(event) => setInput(event.target.value)}
                   disabled={isBusy}
@@ -360,14 +360,14 @@ export default function Page() {
                     <Send className="size-4" aria-hidden="true" />
                   )}
                   {status === "submitting"
-                    ? "连接中"
+                    ? "正在连接"
                     : status === "streaming"
-                      ? "接收中"
+                      ? "正在接收"
                       : "发送"}
                 </Button>
               </div>
               <div className="mt-2 flex flex-wrap items-center gap-x-3 gap-y-1 text-xs text-teal-600">
-                <span>Endpoint: {endpoint}</span>
+                <span>接口: {endpoint}</span>
                 <span>模式: daily_work</span>
                 <span>状态: {statusLabel(status)}</span>
                 {selectedContextId ? (

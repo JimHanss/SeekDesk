@@ -159,7 +159,7 @@ export function createFallbackSessionHistoryPanelState(): SessionHistoryPanelSta
     source: "fallback",
     syncStatus: "syncing",
     notice:
-      "正在从 /api/daily/sessions?mode=daily_work 同步会话列表；连接完成前保留前端 fallback 快照。",
+      "正在从 /api/daily/sessions?mode=daily_work 同步会话列表；连接完成前先展示本地快照。",
     restorePreview: createLocalSessionRestorePreviewState(firstSession)
   };
 }
@@ -167,7 +167,7 @@ export function createFallbackSessionHistoryPanelState(): SessionHistoryPanelSta
 export function createLocalSessionRestorePreviewState(
   item: SessionHistoryItem | null,
   syncStatus: SessionRestorePreviewSyncStatus = "idle",
-  notice = "尚未调用 restore-preview；点击恢复后会先生成 preview-only 输入框提示。"
+  notice = "尚未调用恢复预演；点击恢复后会先生成仅预览的输入框提示。"
 ): SessionRestorePreviewPanelState {
   return {
     sessionId: item?.id ?? "",
@@ -176,9 +176,9 @@ export function createLocalSessionRestorePreviewState(
     previewOnly: true,
     externalEffects: ["none"],
     safetyStatement:
-      "Preview only: 当前恢复动作只填入输入框，不发送邮件、不写入文档、不创建日历或任务，也不读取真实外部数据。",
+      "仅预览：当前恢复动作只填入输入框，不发送邮件、不写入文档、不创建日历或任务，也不读取真实外部数据。",
     restorePrompt: item ? buildSessionRestorePrompt(item) : "",
-    generatedAt: "前端 fallback",
+    generatedAt: "本地示例",
     notice
   };
 }
@@ -263,12 +263,12 @@ export function mapSessionRestorePreviewResponse(
     externalEffects: normalizedExternalEffects,
     safetyStatement: nonEmptyText(
       preview.safetyBoundary?.statement,
-      "Preview only: 后端声明恢复预演不会产生外部效果。"
+      "仅预览：后端声明恢复预演不会产生外部效果。"
     ),
     restorePrompt: nonEmptyText(preview.restorePrompt, buildSessionRestorePrompt(item)),
     generatedAt: formatSessionHistoryTimestamp(preview.generatedAt),
     notice:
-      "已从 /api/daily/sessions/:sessionId/restore-preview 同步；响应声明 previewOnly=true 且 externalEffects=['none']。"
+      "已从 /api/daily/sessions/:sessionId/restore-preview 同步；后端声明这是仅预览恢复提示，不会产生外部效果。"
   };
 }
 

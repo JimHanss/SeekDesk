@@ -129,8 +129,8 @@ export function createLocalWorkflowPreviewState(
     artifactLinks: [action.artifact],
     approvalLinks: [action.approvalStatus],
     safetyStatement:
-      "Preview only: 当前工作流不会发送邮件、写入文档、创建日历或生成外部任务。",
-    notice: "当前展示本地 workflow preview fallback；后端可用时会自动同步 API 预演。"
+      "仅预览：当前工作流不会发送邮件、写入文档、创建日历或生成外部任务。",
+    notice: "当前展示本地工作流预演；后端可用时会自动同步 API 预演。"
   };
 }
 
@@ -186,7 +186,7 @@ export function mapWorkflowPreviewResponse(
       localState.safetyStatement
     ),
     notice:
-      "已从 /api/daily/workflows/:workflowId/preview 同步；响应声明 previewOnly=true 且 externalEffects=['none']。"
+      "已从 /api/daily/workflows/:workflowId/preview 同步；后端声明这是仅预览工作流，不会产生外部效果。"
   };
 }
 
@@ -270,9 +270,9 @@ export function buildWorkflowPreviewPrompt(
   return [
     `请基于「${item.title}」继续 daily_work 工作流预演。`,
     "",
-    `后端来源：${preview.source} / ${preview.syncStatus}`,
-    `Workflow：${preview.workflowId}`,
-    `Action：${preview.actionId}`,
+    `预演来源：${workflowPreviewSourceText(preview.source)} / ${workflowPreviewSyncText(preview.syncStatus)}`,
+    `工作流：${preview.workflowId}`,
+    `动作：${preview.actionId}`,
     `当前状态：${preview.selectedActionStatus}`,
     `预演摘要：${preview.summary}`,
     "",
@@ -289,4 +289,32 @@ export function buildWorkflowPreviewPrompt(
     "",
     "请输出：最小上下文、可复核草稿结构、审批检查点、风险项，以及用户确认后才可继续的下一步。"
   ].join("\n");
+}
+
+function workflowPreviewSourceText(source: WorkflowPreviewPanelState["source"]) {
+  if (source === "api") {
+    return "后端同步";
+  }
+
+  if (source === "degraded") {
+    return "本地回退";
+  }
+
+  return "本地预演";
+}
+
+function workflowPreviewSyncText(status: WorkflowPreviewPanelState["syncStatus"]) {
+  if (status === "live") {
+    return "已同步";
+  }
+
+  if (status === "syncing") {
+    return "同步中";
+  }
+
+  if (status === "idle") {
+    return "待触发";
+  }
+
+  return "已降级";
 }

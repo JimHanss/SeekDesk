@@ -353,7 +353,7 @@ export function activityEventStatusClass(status: ActivityEventStatus) {
 export function activityFeedSourceLabel(source: ActivityFeedSource) {
   switch (source) {
     case "fallback":
-      return "前端 fallback";
+      return "本地示例";
     case "api":
       return "HTTP API";
     case "websocket":

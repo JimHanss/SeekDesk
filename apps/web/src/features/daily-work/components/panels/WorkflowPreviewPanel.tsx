@@ -55,11 +55,11 @@ export function WorkflowPreviewPanel({
           <div className="flex items-center gap-2 text-sm font-semibold text-teal-950">
             <Workflow className="size-4 shrink-0 text-teal-700" aria-hidden="true" />
             <span className="min-w-0 break-words">
-              工作流编排预演 / Action Queue
+              工作流编排预演 / 动作队列
             </span>
           </div>
           <p className="mt-1 text-xs leading-5 text-teal-700">
-            daily_work 当前只做自动化预演：不调用外部系统、不自动发送邮件、不写入日历或文档。
+            daily_work 当前只生成自动化预演：不调用外部系统、不自动发送邮件、不写入日历或文档。
           </p>
         </div>
 
@@ -193,7 +193,7 @@ export function WorkflowPreviewPanel({
                       aria-hidden="true"
                     />
                     <span className="min-w-0 break-words">
-                      工作流 API 预演合同
+                      工作流 API 预演契约
                     </span>
                   </div>
                   <div className="mt-1 break-words font-mono text-[11px] text-cyan-700">
@@ -274,7 +274,7 @@ export function WorkflowPreviewPanel({
               onClick={() => onApplyWorkflowActionPrompt(selectedAction)}
             >
               <Send className="size-4" aria-hidden="true" />
-              生成预演 Prompt
+              生成预演提示词
             </Button>
           </div>
         ) : null}

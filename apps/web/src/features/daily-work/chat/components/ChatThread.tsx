@@ -130,12 +130,12 @@ function ChatEmptyState({
         </div>
         <span className="inline-flex shrink-0 items-center gap-1 rounded-[999px] bg-white px-2.5 py-1 text-[11px] font-medium text-teal-700">
           <CheckCircle2 className="size-3.5" aria-hidden="true" />
-          API ready
+          接口就绪
         </span>
       </div>
       <div className="mt-3 grid gap-2 md:grid-cols-2">
-        <ChatInfoRow label="Endpoint" value={endpoint} />
-        <ChatInfoRow label="Model" value={modelName} />
+        <ChatInfoRow label="接口" value={endpoint} />
+        <ChatInfoRow label="模型" value={modelName} />
       </div>
     </div>
   );

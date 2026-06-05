@@ -63,7 +63,7 @@ export function useArtifacts(
           source: "degraded",
           syncStatus: "degraded",
           notice:
-            "暂未从后端同步产物列表，已保留本地 artifacts fallback。"
+            "暂未从后端同步产物列表，已保留本地产物示例。"
         }));
       }
     }
