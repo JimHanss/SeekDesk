@@ -116,6 +116,8 @@ export function ConnectorDirectoryPanel({
             <button
               key={connector.id}
               type="button"
+              data-connector-card={connector.apiConnectorId}
+              data-connector-id={connector.id}
               onClick={() => onSelectConnector(connector.id)}
               className={cn(
                 "w-full cursor-pointer rounded-[8px] border px-3 py-3 text-left transition-colors duration-200 focus-visible:outline focus-visible:outline-2 focus-visible:outline-teal-600",

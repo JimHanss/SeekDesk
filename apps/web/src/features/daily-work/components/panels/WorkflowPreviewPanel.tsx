@@ -110,6 +110,9 @@ export function WorkflowPreviewPanel({
               <button
                 key={action.id}
                 type="button"
+                data-workflow-action={action.apiActionId}
+                data-workflow-action-id={action.id}
+                data-api-workflow-id={action.apiWorkflowId}
                 onClick={() => onSelectAction(action.id)}
                 className={cn(
                   "flex w-full cursor-pointer items-start gap-3 rounded-[8px] border px-3 py-3 text-left transition-colors duration-200 focus-visible:outline focus-visible:outline-2 focus-visible:outline-teal-600",
