@@ -1,4 +1,4 @@
-import { readFile } from "node:fs/promises";
+import { mkdir, readFile, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 
 import {
@@ -17,7 +17,6 @@ import {
   defaultDailyWorkConnectors,
   defaultDailyWorkContextItems,
   defaultDailyWorkSessionDetails,
-  defaultDailyWorkSessionSummaries,
   defaultDailyWorkTemplates,
   defaultDailyWorkflows,
   type DailyActivityEvent,
@@ -66,43 +65,78 @@ export interface DailyWorkRepository {
   listEvents(): Promise<DailyActivityEvent[]>;
   listConnectors(): Promise<DailyWorkConnector[]>;
   listWorkflows(): Promise<DailyWorkWorkflow[]>;
+  updateApprovalRequest(request: DailyApprovalRequest): Promise<DailyApprovalRequest>;
+  updateSessionDetail(session: DailyWorkSessionDetail): Promise<DailyWorkSessionDetail>;
+  upsertActivityEvent(event: DailyActivityEvent): Promise<DailyActivityEvent>;
 }
 
 export class SeedDailyWorkRepository implements DailyWorkRepository {
+  private readonly templates = cloneJson(defaultDailyWorkTemplates);
+  private readonly contextItems = cloneJson(defaultDailyWorkContextItems);
+  private readonly approvalRequests = cloneJson(defaultDailyWorkApprovalRequests);
+  private readonly artifacts = cloneJson(defaultDailyWorkArtifacts);
+  private readonly sessionDetails = cloneJson(defaultDailyWorkSessionDetails);
+  private readonly events = cloneJson(defaultDailyActivityEvents);
+  private readonly connectors = cloneJson(defaultDailyWorkConnectors);
+  private readonly workflows = cloneJson(defaultDailyWorkflows);
+
   async listTemplates() {
-    return cloneJson(defaultDailyWorkTemplates);
+    return cloneJson(this.templates);
   }
 
   async listContextItems() {
-    return cloneJson(defaultDailyWorkContextItems);
+    return cloneJson(this.contextItems);
   }
 
   async listApprovalRequests() {
-    return cloneJson(defaultDailyWorkApprovalRequests);
+    return cloneJson(this.approvalRequests);
   }
 
   async listArtifacts() {
-    return cloneJson(defaultDailyWorkArtifacts);
+    return cloneJson(this.artifacts);
   }
 
   async listSessionSummaries() {
-    return cloneJson(defaultDailyWorkSessionSummaries);
+    return dailyWorkSessionSummarySchema.array().parse(
+      this.sessionDetails.map(({ recentMessages, ...summary }) => {
+        void recentMessages;
+        return summary;
+      })
+    );
   }
 
   async listSessionDetails() {
-    return cloneJson(defaultDailyWorkSessionDetails);
+    return cloneJson(this.sessionDetails);
   }
 
   async listEvents() {
-    return cloneJson(defaultDailyActivityEvents);
+    return cloneJson(this.events);
   }
 
   async listConnectors() {
-    return cloneJson(defaultDailyWorkConnectors);
+    return cloneJson(this.connectors);
   }
 
   async listWorkflows() {
-    return cloneJson(defaultDailyWorkflows);
+    return cloneJson(this.workflows);
+  }
+
+  async updateApprovalRequest(request: DailyApprovalRequest) {
+    const parsed = dailyApprovalRequestSchema.parse(request);
+
+    return cloneJson(parsed);
+  }
+
+  async updateSessionDetail(session: DailyWorkSessionDetail) {
+    const parsed = dailyWorkSessionDetailSchema.parse(session);
+
+    return cloneJson(parsed);
+  }
+
+  async upsertActivityEvent(event: DailyActivityEvent) {
+    const parsed = dailyActivityEventSchema.parse(event);
+
+    return cloneJson(parsed);
   }
 }
 
@@ -187,6 +221,41 @@ export class JsonDailyWorkRepository implements DailyWorkRepository {
     );
   }
 
+  async updateApprovalRequest(request: DailyApprovalRequest) {
+    const parsed = dailyApprovalRequestSchema.parse(request);
+    const approvalRequests = await this.listApprovalRequests();
+    replaceById(approvalRequests, parsed);
+    await this.writeCollection(
+      "approvals",
+      dailyApprovalRequestSchema.array(),
+      approvalRequests
+    );
+
+    return cloneJson(parsed);
+  }
+
+  async updateSessionDetail(session: DailyWorkSessionDetail) {
+    const parsed = dailyWorkSessionDetailSchema.parse(session);
+    const sessionDetails = await this.listSessionDetails();
+    replaceById(sessionDetails, parsed);
+    await this.writeCollection(
+      "sessions",
+      dailyWorkSessionDetailSchema.array(),
+      sessionDetails
+    );
+
+    return cloneJson(parsed);
+  }
+
+  async upsertActivityEvent(event: DailyActivityEvent) {
+    const parsed = dailyActivityEventSchema.parse(event);
+    const events = await this.listEvents();
+    upsertFirstById(events, parsed);
+    await this.writeCollection("events", dailyActivityEventSchema.array(), events);
+
+    return cloneJson(parsed);
+  }
+
   private async readCollection<T>(
     key: JsonCollectionKey,
     parser: JsonArrayParser<T>,
@@ -207,6 +276,22 @@ export class JsonDailyWorkRepository implements DailyWorkRepository {
 
       throw error;
     }
+  }
+
+  private async writeCollection<T>(
+    key: JsonCollectionKey,
+    parser: JsonArrayParser<T>,
+    values: T[]
+  ) {
+    const parsed = parser.parse(values);
+    const filePath = join(this.dataDir, jsonFileNames[key]);
+
+    await mkdir(this.dataDir, { recursive: true });
+    await writeFile(
+      filePath,
+      `${JSON.stringify({ [key]: parsed }, null, 2)}\n`,
+      "utf8"
+    );
   }
 }
 
@@ -244,4 +329,21 @@ function isMissingFileError(error: unknown): boolean {
 
 function cloneJson<T>(value: T): T {
   return JSON.parse(JSON.stringify(value)) as T;
+}
+
+function replaceById<T extends { id: string }>(items: T[], nextItem: T) {
+  const index = items.findIndex((item) => item.id === nextItem.id);
+
+  if (index === -1) {
+    items.push(nextItem);
+    return;
+  }
+
+  items[index] = nextItem;
+}
+
+function upsertFirstById<T extends { id: string }>(items: T[], nextItem: T) {
+  const filtered = items.filter((item) => item.id !== nextItem.id);
+  items.length = 0;
+  items.push(nextItem, ...filtered);
 }

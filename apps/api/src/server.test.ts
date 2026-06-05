@@ -1,5 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { mkdtemp, rm, writeFile } from "node:fs/promises";
+import { mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import type { AddressInfo } from "node:net";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -431,6 +431,67 @@ describe("api server", () => {
     await app.close();
   });
 
+  it("persists daily-work context preview activity in the configured JSON data directory", async () => {
+    const dataDir = await mkdtemp(join(tmpdir(), "seekdesk-api-data-"));
+    process.env.SEEKDESK_DATA_DIR = dataDir;
+
+    try {
+      const app = await buildServer();
+
+      try {
+        const response = await app.inject({
+          method: "POST",
+          url: "/api/daily/context/customer-email/use-preview",
+          payload: {
+            templateId: "email-draft",
+            prompt: "Create a persisted context preview event."
+          }
+        });
+        const body = dailyContextUsePreviewResponseSchema.parse(response.json());
+
+        expect(response.statusCode).toBe(200);
+        expect(body.preview.contextItemId).toBe("customer-email");
+
+        const eventsResponse = await app.inject({
+          method: "GET",
+          url: "/api/daily/events"
+        });
+        const eventsBody = dailyActivityEventsResponseSchema.parse(
+          eventsResponse.json()
+        );
+        expect(eventsBody.events[0]).toEqual(
+          expect.objectContaining({
+            id: "daily-event-context-customer-email-use-preview",
+            eventType: "workflow.preview.completed",
+            status: "completed",
+            relatedRefs: expect.objectContaining({
+              templateIds: ["email-draft"],
+              approvalRequestIds: ["read-customer-email-context"],
+              contextItemIds: ["customer-email"]
+            }),
+            metadata: expect.objectContaining({
+              permissionState: "requires_review",
+              externalEffects: ["none"]
+            })
+          })
+        );
+
+        const eventsFile = JSON.parse(
+          await readFile(join(dataDir, "events.json"), "utf8")
+        );
+        expect(eventsFile.events[0]).toEqual(
+          expect.objectContaining({
+            id: "daily-event-context-customer-email-use-preview"
+          })
+        );
+      } finally {
+        await app.close();
+      }
+    } finally {
+      await rm(dataDir, { force: true, recursive: true });
+    }
+  });
+
   it("refuses context use previews for the reserved coding-agent mode", async () => {
     const app = await buildServer();
     const response = await app.inject({
@@ -579,6 +640,98 @@ describe("api server", () => {
     expect(Date.parse(body.audit.decidedAt)).not.toBeNaN();
 
     await app.close();
+  });
+
+  it("persists daily-work approval decisions to the configured JSON data directory", async () => {
+    const dataDir = await mkdtemp(join(tmpdir(), "seekdesk-api-data-"));
+    process.env.SEEKDESK_DATA_DIR = dataDir;
+
+    try {
+      const app = await buildServer();
+
+      try {
+        const decisionResponse = await app.inject({
+          method: "POST",
+          url: "/api/daily/approvals/draft-external-reply/decision",
+          payload: {
+            decision: "approved",
+            reason: "Persist this simulated approval."
+          }
+        });
+        const decisionBody = dailyApprovalDecisionResponseSchema.parse(
+          decisionResponse.json()
+        );
+
+        expect(decisionResponse.statusCode).toBe(200);
+        expect(decisionBody.request).toEqual(
+          expect.objectContaining({
+            id: "draft-external-reply",
+            status: "approved",
+            decision: "allow_once"
+          })
+        );
+
+        const approvalListResponse = await app.inject({
+          method: "GET",
+          url: "/api/daily/approvals"
+        });
+        expect(approvalListResponse.json().requests).toEqual(
+          expect.arrayContaining([
+            expect.objectContaining({
+              id: "draft-external-reply",
+              status: "approved",
+              decision: "allow_once"
+            })
+          ])
+        );
+
+        const eventsResponse = await app.inject({
+          method: "GET",
+          url: "/api/daily/events"
+        });
+        const eventsBody = dailyActivityEventsResponseSchema.parse(
+          eventsResponse.json()
+        );
+        expect(eventsBody.events[0]).toEqual(
+          expect.objectContaining({
+            id: "daily-event-approval-draft-external-reply-decision",
+            eventType: "approval.changed",
+            status: "completed",
+            relatedRefs: expect.objectContaining({
+              approvalRequestIds: ["draft-external-reply"]
+            }),
+            taskStatus: expect.objectContaining({
+              approvalStatus: "approved"
+            })
+          })
+        );
+
+        const approvalsFile = JSON.parse(
+          await readFile(join(dataDir, "approvals.json"), "utf8")
+        );
+        expect(approvalsFile.approvals).toEqual(
+          expect.arrayContaining([
+            expect.objectContaining({
+              id: "draft-external-reply",
+              status: "approved",
+              decision: "allow_once"
+            })
+          ])
+        );
+        const eventsFile = JSON.parse(
+          await readFile(join(dataDir, "events.json"), "utf8")
+        );
+        expect(eventsFile.events[0]).toEqual(
+          expect.objectContaining({
+            id: "daily-event-approval-draft-external-reply-decision"
+          })
+        );
+      } finally {
+        await app.close();
+      }
+    } finally {
+      await rm(dataDir, { force: true, recursive: true });
+    }
   });
 
   it("previews a denied daily-work approval decision", async () => {
@@ -1746,6 +1899,92 @@ describe("api server", () => {
     expect(body.preview.recentMessagesPreview).toHaveLength(2);
 
     await app.close();
+  });
+
+  it("persists daily-work session restore previews to the configured JSON data directory", async () => {
+    const dataDir = await mkdtemp(join(tmpdir(), "seekdesk-api-data-"));
+    process.env.SEEKDESK_DATA_DIR = dataDir;
+
+    try {
+      const app = await buildServer();
+
+      try {
+        const restoreResponse = await app.inject({
+          method: "POST",
+          url: "/api/daily/sessions/customer-follow-up-session/restore-preview",
+          payload: {
+            includeRecentMessages: true,
+            prompt: "Persist this restore preview."
+          }
+        });
+        const restoreBody = restoreResponse.json();
+
+        expect(restoreResponse.statusCode).toBe(200);
+        expect(restoreBody.preview.generatedAt).toEqual(expect.any(String));
+
+        const sessionResponse = await app.inject({
+          method: "GET",
+          url: "/api/daily/sessions/customer-follow-up-session"
+        });
+        expect(sessionResponse.statusCode).toBe(200);
+        expect(sessionResponse.json().session).toEqual(
+          expect.objectContaining({
+            id: "customer-follow-up-session",
+            updatedAt: restoreBody.preview.generatedAt,
+            lastAction: expect.objectContaining({
+              at: restoreBody.preview.generatedAt,
+              actor: "daily-work-agent",
+              label: "Generated restore preview.",
+              artifactId: "email-draft-artifact",
+              approvalRequestId: "read-customer-email-context"
+            })
+          })
+        );
+
+        const eventsResponse = await app.inject({
+          method: "GET",
+          url: "/api/daily/events"
+        });
+        const eventsBody = dailyActivityEventsResponseSchema.parse(
+          eventsResponse.json()
+        );
+        expect(eventsBody.events[0]).toEqual(
+          expect.objectContaining({
+            id: "daily-event-session-customer-follow-up-session-restore-preview",
+            eventType: "session.restored",
+            status: "completed",
+            relatedRefs: expect.objectContaining({
+              sessionIds: ["customer-follow-up-session"],
+              artifactIds: ["email-draft-artifact"],
+              approvalRequestIds: [
+                "read-customer-email-context",
+                "draft-external-reply"
+              ],
+              contextItemIds: ["customer-email", "meeting-notes"]
+            })
+          })
+        );
+
+        const sessionsFile = JSON.parse(
+          await readFile(join(dataDir, "sessions.json"), "utf8")
+        );
+        expect(sessionsFile.sessions).toEqual(
+          expect.arrayContaining([
+            expect.objectContaining({
+              id: "customer-follow-up-session",
+              updatedAt: restoreBody.preview.generatedAt,
+              lastAction: expect.objectContaining({
+                label: "Generated restore preview."
+              })
+            })
+          ])
+        );
+      } finally {
+        await app.close();
+      }
+    } finally {
+      await rm(dataDir, { force: true, recursive: true });
+    }
   });
 
   it("rejects coding-agent session restore previews as reserved", async () => {

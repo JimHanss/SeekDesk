@@ -33,10 +33,14 @@ import type { FastifyInstance } from "fastify";
 
 import type { DailyWorkRepository } from "../repositories/daily-work-repository.js";
 import {
+  createApprovalDecisionActivityEvent,
   createApprovalDecisionResponse,
   createConnectorActionPreviewResponse,
+  createContextUsePreviewActivityEvent,
   createDailyContextUsePreviewResponse,
   createDailyModelUsageSnapshot,
+  createSessionRestoreActivityEvent,
+  createSessionRestoreWriteback,
   createDailyWorkSessionRestorePreviewResponse,
   createDailyWorkTemplateApplyPreviewResponse,
   createDailyWorkWorkflowPreviewResponse,
@@ -209,12 +213,21 @@ export async function registerDailyWorkRoutes(
           return;
         }
 
-        return createDailyContextUsePreviewResponse({
+        const response = createDailyContextUsePreviewResponse({
           mode,
           contextItem,
           ...(parsed.data.prompt ? { prompt: parsed.data.prompt } : {}),
           ...(parsed.data.templateId ? { templateId: parsed.data.templateId } : {})
         });
+        await dailyWorkRepository.upsertActivityEvent(
+          createContextUsePreviewActivityEvent({
+            mode,
+            contextItem,
+            response
+          })
+        );
+
+        return response;
       }
     );
 
@@ -273,12 +286,21 @@ export async function registerDailyWorkRoutes(
           return;
         }
 
-        return createApprovalDecisionResponse({
+        const response = createApprovalDecisionResponse({
           mode,
           approvalRequest,
           decisionInput: parsed.data.decision,
           ...(parsed.data.reason ? { reason: parsed.data.reason } : {})
         });
+        await dailyWorkRepository.updateApprovalRequest(response.request);
+        await dailyWorkRepository.upsertActivityEvent(
+          createApprovalDecisionActivityEvent({
+            mode,
+            response
+          })
+        );
+
+        return response;
       }
     );
 
@@ -460,12 +482,26 @@ export async function registerDailyWorkRoutes(
           return;
         }
 
-        return createDailyWorkSessionRestorePreviewResponse({
+        const response = createDailyWorkSessionRestorePreviewResponse({
           mode,
           session,
           includeRecentMessages: parsed.data.includeRecentMessages,
           ...(parsed.data.prompt ? { prompt: parsed.data.prompt } : {})
         });
+        const updatedSession = createSessionRestoreWriteback({
+          session,
+          response
+        });
+        await dailyWorkRepository.updateSessionDetail(updatedSession);
+        await dailyWorkRepository.upsertActivityEvent(
+          createSessionRestoreActivityEvent({
+            mode,
+            session: updatedSession,
+            response
+          })
+        );
+
+        return response;
       }
     );
 

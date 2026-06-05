@@ -401,7 +401,11 @@ async function openPage(debugPort, url) {
   await client.send("Page.enable");
   await client.send("Runtime.enable");
   await client.send("Page.navigate", { url });
-  await waitForRuntime(client, "document.readyState === 'complete'", "page load");
+  await waitForRuntime(
+    client,
+    "document.readyState !== 'loading' || Boolean(document.querySelector('form input, form textarea'))",
+    "page shell"
+  );
   await waitForRuntime(
     client,
     "Boolean(document.querySelector('form input, form textarea'))",

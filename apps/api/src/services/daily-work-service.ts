@@ -7,6 +7,7 @@ import {
   type ApprovalDecisionInput,
   type ConnectorAction,
   type ConnectorActionPreviewResponse,
+  type DailyActivityEvent,
   type DailyApprovalDecisionResponse,
   type DailyApprovalRequest,
   type DailyContextItem,
@@ -94,6 +95,61 @@ export function createDailyContextUsePreviewResponse(input: {
           "Preview-only context use: SeekDesk uses stored daily_work context metadata to draft a prompt. It does not read real files, emails, notes, or private external data, and it performs no external effects such as sending, writing, scheduling, or task creation."
       },
       generatedAt: new Date().toISOString()
+    }
+  };
+}
+
+export function createContextUsePreviewActivityEvent(input: {
+  mode: AppMode;
+  contextItem: DailyContextItem;
+  response: DailyContextUsePreviewResponse;
+}): DailyActivityEvent {
+  const generatedAt = input.response.preview.generatedAt;
+  const approvalRequestIds = input.response.preview.requiredApprovalRequestIds;
+
+  return {
+    id: `daily-event-context-${input.contextItem.id}-use-preview`,
+    mode: input.mode,
+    eventType: "workflow.preview.completed",
+    status: "completed",
+    timestamp: generatedAt,
+    title: "Context preview generated",
+    summary:
+      `Generated a preview-only prompt draft for ${input.contextItem.title}; no real files, emails, notes, or private external data were read.`,
+    actor: "daily-work-agent",
+    relatedRefs: {
+      sessionIds: [],
+      templateIds: input.response.preview.templateId
+        ? [input.response.preview.templateId]
+        : [],
+      workflowIds: [],
+      actionQueueItemIds: [],
+      artifactIds: [],
+      approvalRequestIds,
+      connectorIds: [],
+      contextItemIds: [input.contextItem.id]
+    },
+    safetyBoundary: createPersistedActivitySafetyBoundary(
+      "Context preview write-back records metadata only and performs no external effects."
+    ),
+    nextAction: {
+      label: "Review context preview",
+      description:
+        approvalRequestIds.length > 0
+          ? `Review approval gates before using ${input.contextItem.title}.`
+          : `Use ${input.contextItem.title} metadata in the next safe daily-work response.`,
+      targetType: "context",
+      targetId: input.contextItem.id,
+      requiredStatus:
+        approvalRequestIds.length > 0 ? "waiting_for_approval" : "completed"
+    },
+    taskStatus: {
+      approvalStatus: approvalRequestIds.length > 0 ? "pending" : undefined
+    },
+    metadata: {
+      riskLevel: contextRiskLevel(input.contextItem),
+      permissionState: contextPermissionState(input.contextItem),
+      externalEffects: ["none"]
     }
   };
 }
@@ -551,6 +607,80 @@ export function createDailyWorkSessionRestorePreviewResponse(input: {
   };
 }
 
+export function createSessionRestoreWriteback(input: {
+  session: DailyWorkSessionDetail;
+  response: DailyWorkSessionRestorePreviewResponse;
+}): DailyWorkSessionDetail {
+  const generatedAt = input.response.preview.generatedAt;
+  const approvalRequestId = input.session.approvalRequestIds[0];
+  const artifactId = input.session.artifactIds[0];
+
+  return {
+    ...input.session,
+    updatedAt: generatedAt,
+    lastAction: {
+      at: generatedAt,
+      actor: "daily-work-agent",
+      label: "Generated restore preview.",
+      ...(artifactId ? { artifactId } : {}),
+      ...(approvalRequestId ? { approvalRequestId } : {})
+    }
+  };
+}
+
+export function createSessionRestoreActivityEvent(input: {
+  mode: AppMode;
+  session: DailyWorkSessionDetail;
+  response: DailyWorkSessionRestorePreviewResponse;
+}): DailyActivityEvent {
+  const generatedAt = input.response.preview.generatedAt;
+
+  return {
+    id: `daily-event-session-${input.session.id}-restore-preview`,
+    mode: input.mode,
+    eventType: "session.restored",
+    status: "completed",
+    timestamp: generatedAt,
+    title: "Session restore preview generated",
+    summary:
+      `Generated a preview-only restore prompt for ${input.session.title}; no execution was resumed and no external action was performed.`,
+    actor: "daily-work-agent",
+    relatedRefs: {
+      sessionIds: [input.session.id],
+      templateIds: [],
+      workflowIds: [],
+      actionQueueItemIds: [],
+      artifactIds: input.session.artifactIds,
+      approvalRequestIds: input.session.approvalRequestIds,
+      connectorIds: [],
+      contextItemIds: input.session.contextItemIds
+    },
+    safetyBoundary: createPersistedActivitySafetyBoundary(
+      "Session restore write-back records the generated preview state only and does not resume execution."
+    ),
+    nextAction: {
+      label: "Continue restored session",
+      description:
+        "Review the restore prompt and decide the next daily-work step manually.",
+      targetType: "session",
+      targetId: input.session.id,
+      requiredStatus: sessionStatusToActivityStatus(input.session.status)
+    },
+    taskStatus: {
+      workflowStatus: sessionStatusToWorkflowStatus(input.session.status)
+    },
+    metadata: {
+      riskLevel:
+        input.session.approvalRequestIds.length > 0 ? "high" : "medium",
+      permissionState:
+        input.session.approvalRequestIds.length > 0
+          ? "requires_review"
+          : "workspace_shared",
+      externalEffects: ["none"]
+    }
+  };
+}
+
 function createDailyWorkSessionRestorePrompt(input: {
   session: DailyWorkSessionDetail;
   prompt?: string;
@@ -703,6 +833,64 @@ export function createApprovalDecisionResponse(input: {
   };
 }
 
+export function createApprovalDecisionActivityEvent(input: {
+  mode: AppMode;
+  response: DailyApprovalDecisionResponse;
+}): DailyActivityEvent {
+  const request = input.response.request;
+  const status =
+    input.response.audit.status === "approved" ? "completed" : "blocked";
+
+  return {
+    id: `daily-event-approval-${request.id}-decision`,
+    mode: input.mode,
+    eventType: "approval.changed",
+    status,
+    timestamp: input.response.audit.decidedAt,
+    title:
+      input.response.audit.status === "approved"
+        ? "Approval allowed"
+        : "Approval denied",
+    summary:
+      `Recorded ${request.title} as ${input.response.audit.status} in preview-only mode; no external connector action was performed.`,
+    actor: "account-owner",
+    relatedRefs: {
+      sessionIds: [],
+      templateIds: [],
+      workflowIds: [],
+      actionQueueItemIds: [],
+      artifactIds: [],
+      approvalRequestIds: [request.id],
+      connectorIds: [],
+      contextItemIds: request.contextItemIds
+    },
+    safetyBoundary: createPersistedActivitySafetyBoundary(
+      "Approval decision write-back records simulated approval state only and performs no external connector action."
+    ),
+    nextAction: {
+      label:
+        input.response.audit.status === "approved"
+          ? "Continue preview workflow"
+          : "Revise or cancel preview workflow",
+      description:
+        input.response.audit.status === "approved"
+          ? "Proceed with preview-only drafting while keeping external actions disabled."
+          : "Keep the workflow blocked until the user revises the request.",
+      targetType: "approval",
+      targetId: request.id,
+      requiredStatus: status
+    },
+    taskStatus: {
+      approvalStatus: input.response.audit.status
+    },
+    metadata: {
+      riskLevel: request.riskLevel,
+      permissionState: approvalPermissionState(request),
+      externalEffects: ["none"]
+    }
+  };
+}
+
 function normalizeApprovalDecisionInput(decisionInput: ApprovalDecisionInput): {
   decision: ApprovalDecision;
   status: DailyApprovalRequest["status"];
@@ -737,6 +925,99 @@ function uniqueBy<T>(values: T[], createKey: (value: T) => string) {
     seen.add(key);
     return true;
   });
+}
+
+function createPersistedActivitySafetyBoundary(statement: string) {
+  return {
+    previewOnly: true as const,
+    externalEffects: ["none" as const],
+    prohibitedExternalActions: [
+      "send_email" as const,
+      "write_document" as const,
+      "schedule_calendar_event" as const,
+      "create_task" as const
+    ],
+    statement
+  };
+}
+
+function contextRiskLevel(contextItem: DailyContextItem) {
+  if (
+    contextItem.permissionState === "restricted" ||
+    contextItem.sourceType === "customer_email"
+  ) {
+    return "high" as const;
+  }
+
+  if (contextItem.permissionState === "requires_review") {
+    return "medium" as const;
+  }
+
+  return "low" as const;
+}
+
+function contextPermissionState(contextItem: DailyContextItem) {
+  if (contextItem.permissionState === "public") {
+    return "public" as const;
+  }
+
+  if (contextItem.permissionState === "workspace_shared") {
+    return "workspace_shared" as const;
+  }
+
+  if (contextItem.permissionState === "restricted") {
+    return "restricted" as const;
+  }
+
+  return "requires_review" as const;
+}
+
+function approvalPermissionState(request: DailyApprovalRequest) {
+  if (request.riskLevel === "critical" || request.riskLevel === "high") {
+    return "requires_explicit_approval" as const;
+  }
+
+  if (request.riskLevel === "medium") {
+    return "requires_review" as const;
+  }
+
+  return "workspace_shared" as const;
+}
+
+function sessionStatusToActivityStatus(
+  status: DailyWorkSessionDetail["status"]
+): DailyActivityEvent["status"] {
+  if (status === "completed") {
+    return "completed";
+  }
+
+  if (status === "waiting_for_approval") {
+    return "waiting_for_approval";
+  }
+
+  if (status === "archived") {
+    return "blocked";
+  }
+
+  return "in_progress";
+}
+
+function sessionStatusToWorkflowStatus(
+  status: DailyWorkSessionDetail["status"]
+): NonNullable<DailyActivityEvent["taskStatus"]>["workflowStatus"] {
+  if (status === "completed") {
+    return "ready";
+  }
+
+  if (status === "waiting_for_approval") {
+    return "waiting_for_approval";
+  }
+
+  if (status === "archived") {
+    return "blocked";
+  }
+
+  return "preview";
 }
 
 const connectorActionPreviewCopy: Record<
