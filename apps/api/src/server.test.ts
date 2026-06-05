@@ -63,10 +63,45 @@ describe("api server", () => {
     expect(response.json()).toEqual({
       status: "ok",
       service: "seekdesk-api",
-      version: "0.1.0"
+      version: "0.1.0",
+      currentLayer: "seed_mock",
+      dataDirConfigured: false,
+      jsonLocalReady: false,
+      futureDatabaseReady: false
     });
 
     await app.close();
+  });
+
+  it("returns configured JSON data layer status from health", async () => {
+    const dataDir = await mkdtemp(join(tmpdir(), "seekdesk-api-data-"));
+    process.env.SEEKDESK_DATA_DIR = dataDir;
+
+    try {
+      const app = await buildServer();
+
+      try {
+        const response = await app.inject({
+          method: "GET",
+          url: "/health"
+        });
+
+        expect(response.statusCode).toBe(200);
+        expect(response.json()).toEqual({
+          status: "ok",
+          service: "seekdesk-api",
+          version: "0.1.0",
+          currentLayer: "json_local",
+          dataDirConfigured: true,
+          jsonLocalReady: true,
+          futureDatabaseReady: false
+        });
+      } finally {
+        await app.close();
+      }
+    } finally {
+      await rm(dataDir, { force: true, recursive: true });
+    }
   });
 
   it("returns the default daily-work templates when no mode is provided", async () => {
@@ -145,6 +180,135 @@ describe("api server", () => {
             })
           ]
         });
+      } finally {
+        await app.close();
+      }
+    } finally {
+      await rm(dataDir, { force: true, recursive: true });
+    }
+  });
+
+  it("initializes missing daily-work JSON files from seed data", async () => {
+    const dataDir = await mkdtemp(join(tmpdir(), "seekdesk-api-data-"));
+    process.env.SEEKDESK_DATA_DIR = dataDir;
+
+    try {
+      const app = await buildServer();
+
+      try {
+        const response = await app.inject({
+          method: "GET",
+          url: "/api/daily/templates"
+        });
+
+        expect(response.statusCode).toBe(200);
+        expect(response.json().templates).toEqual(
+          expect.arrayContaining([
+            expect.objectContaining({
+              id: "email-draft",
+              mode: "daily_work"
+            })
+          ])
+        );
+        expect(response.json().templates).toHaveLength(6);
+
+        const templatesFile = JSON.parse(
+          await readFile(join(dataDir, "templates.json"), "utf8")
+        );
+        expect(templatesFile.templates).toEqual(
+          expect.arrayContaining([
+            expect.objectContaining({
+              id: "email-draft",
+              mode: "daily_work"
+            })
+          ])
+        );
+        expect(templatesFile.templates).toHaveLength(6);
+      } finally {
+        await app.close();
+      }
+    } finally {
+      await rm(dataDir, { force: true, recursive: true });
+    }
+  });
+
+  it("returns an explicit error for malformed daily-work JSON without replacing it", async () => {
+    const dataDir = await mkdtemp(join(tmpdir(), "seekdesk-api-data-"));
+    process.env.SEEKDESK_DATA_DIR = dataDir;
+    const templatesPath = join(dataDir, "templates.json");
+    const malformedJson = "{ not valid json";
+
+    await writeFile(templatesPath, malformedJson);
+
+    try {
+      const app = await buildServer();
+
+      try {
+        const response = await app.inject({
+          method: "GET",
+          url: "/api/daily/templates"
+        });
+
+        expect(response.statusCode).toBe(500);
+        expect(response.json()).toEqual(
+          expect.objectContaining({
+            statusCode: 500,
+            error: "Internal Server Error",
+            message: expect.stringContaining(
+              'Invalid daily-work JSON data file for collection "templates"'
+            )
+          })
+        );
+        expect(await readFile(templatesPath, "utf8")).toBe(malformedJson);
+      } finally {
+        await app.close();
+      }
+    } finally {
+      await rm(dataDir, { force: true, recursive: true });
+    }
+  });
+
+  it("does not overwrite schema-invalid daily-work JSON during writeback", async () => {
+    const dataDir = await mkdtemp(join(tmpdir(), "seekdesk-api-data-"));
+    process.env.SEEKDESK_DATA_DIR = dataDir;
+    const approvalsPath = join(dataDir, "approvals.json");
+    const invalidApprovals = JSON.stringify(
+      {
+        approvals: [
+          {
+            id: "draft-external-reply"
+          }
+        ]
+      },
+      null,
+      2
+    );
+
+    await writeFile(approvalsPath, invalidApprovals);
+
+    try {
+      const app = await buildServer();
+
+      try {
+        const response = await app.inject({
+          method: "POST",
+          url: "/api/daily/approvals/draft-external-reply/decision",
+          payload: {
+            decision: "approved"
+          }
+        });
+
+        expect(response.statusCode).toBe(500);
+        expect(response.json()).toEqual(
+          expect.objectContaining({
+            statusCode: 500,
+            error: "Internal Server Error",
+            message: expect.stringContaining(
+              'Invalid daily-work JSON schema for collection "approvals"'
+            )
+          })
+        );
+        expect(await readFile(approvalsPath, "utf8")).toBe(invalidApprovals);
       } finally {
         await app.close();
       }

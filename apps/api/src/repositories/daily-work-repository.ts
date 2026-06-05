@@ -44,6 +44,13 @@ type JsonArrayParser<T> = {
   parse(input: unknown): T[];
 };
 
+export type DailyWorkDataLayerStatus = {
+  currentLayer: "seed_mock" | "json_local" | "future_database";
+  dataDirConfigured: boolean;
+  jsonLocalReady: boolean;
+  futureDatabaseReady: false;
+};
+
 const jsonFileNames: Record<JsonCollectionKey, string> = {
   templates: "templates.json",
   context: "context.json",
@@ -68,6 +75,18 @@ export interface DailyWorkRepository {
   updateApprovalRequest(request: DailyApprovalRequest): Promise<DailyApprovalRequest>;
   updateSessionDetail(session: DailyWorkSessionDetail): Promise<DailyWorkSessionDetail>;
   upsertActivityEvent(event: DailyActivityEvent): Promise<DailyActivityEvent>;
+  getDataLayerStatus(): Promise<DailyWorkDataLayerStatus>;
+}
+
+export class DailyWorkRepositoryDataError extends Error {
+  constructor(message: string, cause?: unknown) {
+    super(message);
+    this.name = "DailyWorkRepositoryDataError";
+
+    if (cause !== undefined) {
+      (this as Error & { cause?: unknown }).cause = cause;
+    }
+  }
 }
 
 export class SeedDailyWorkRepository implements DailyWorkRepository {
@@ -137,6 +156,15 @@ export class SeedDailyWorkRepository implements DailyWorkRepository {
     const parsed = dailyActivityEventSchema.parse(event);
 
     return cloneJson(parsed);
+  }
+
+  async getDataLayerStatus(): Promise<DailyWorkDataLayerStatus> {
+    return {
+      currentLayer: "seed_mock",
+      dataDirConfigured: false,
+      jsonLocalReady: false,
+      futureDatabaseReady: false
+    };
   }
 }
 
@@ -256,25 +284,58 @@ export class JsonDailyWorkRepository implements DailyWorkRepository {
     return cloneJson(parsed);
   }
 
+  async getDataLayerStatus(): Promise<DailyWorkDataLayerStatus> {
+    let jsonLocalReady = true;
+
+    try {
+      await mkdir(this.dataDir, { recursive: true });
+    } catch {
+      jsonLocalReady = false;
+    }
+
+    return {
+      currentLayer: "json_local",
+      dataDirConfigured: true,
+      jsonLocalReady,
+      futureDatabaseReady: false
+    };
+  }
+
   private async readCollection<T>(
     key: JsonCollectionKey,
     parser: JsonArrayParser<T>,
     fallback: () => Promise<T[]>
   ): Promise<T[]> {
     const filePath = join(this.dataDir, jsonFileNames[key]);
+    let rawJson: string;
 
     try {
-      const rawJson = await readFile(filePath, "utf8");
-      const parsed = JSON.parse(rawJson) as unknown;
-      const collection = unwrapJsonCollection(parsed, key);
-
-      return parser.parse(collection);
+      rawJson = await readFile(filePath, "utf8");
     } catch (error) {
       if (isMissingFileError(error)) {
-        return fallback();
+        const seedValues = await fallback();
+        await this.writeCollection(key, parser, seedValues);
+
+        return seedValues;
       }
 
       throw error;
+    }
+
+    let parsed: unknown;
+
+    try {
+      parsed = JSON.parse(rawJson) as unknown;
+    } catch (error) {
+      throw createInvalidJsonFileError(key, filePath, error);
+    }
+
+    const collection = unwrapJsonCollection(parsed, key);
+
+    try {
+      return parser.parse(collection);
+    } catch (error) {
+      throw createInvalidSchemaFileError(key, filePath, error);
     }
   }
 
@@ -319,12 +380,64 @@ function unwrapJsonCollection(input: unknown, key: JsonCollectionKey): unknown {
   return input;
 }
 
+function createInvalidJsonFileError(
+  key: JsonCollectionKey,
+  filePath: string,
+  cause: unknown
+) {
+  return new DailyWorkRepositoryDataError(
+    `Invalid daily-work JSON data file for collection "${key}" at ${filePath}: ${formatErrorMessage(cause)}`,
+    cause
+  );
+}
+
+function createInvalidSchemaFileError(
+  key: JsonCollectionKey,
+  filePath: string,
+  cause: unknown
+) {
+  return new DailyWorkRepositoryDataError(
+    `Invalid daily-work JSON schema for collection "${key}" at ${filePath}: ${formatSchemaError(cause)}`,
+    cause
+  );
+}
+
 function isMissingFileError(error: unknown): boolean {
   return (
     error instanceof Error &&
     "code" in error &&
     (error as NodeJS.ErrnoException).code === "ENOENT"
   );
+}
+
+function formatSchemaError(error: unknown): string {
+  if (hasSchemaIssues(error)) {
+    return error.issues
+      .map((issue) => {
+        const path = issue.path.length > 0 ? issue.path.join(".") : "(root)";
+
+        return `${path}: ${issue.message}`;
+      })
+      .join("; ");
+  }
+
+  return formatErrorMessage(error);
+}
+
+function hasSchemaIssues(error: unknown): error is {
+  issues: Array<{ path: Array<string | number>; message: string }>;
+} {
+  if (!error || typeof error !== "object" || !("issues" in error)) {
+    return false;
+  }
+
+  const issues = (error as { issues: unknown }).issues;
+
+  return Array.isArray(issues);
+}
+
+function formatErrorMessage(error: unknown): string {
+  return error instanceof Error ? error.message : String(error);
 }
 
 function cloneJson<T>(value: T): T {
