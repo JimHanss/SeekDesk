@@ -45,6 +45,10 @@ interface UseDailyWorkActionsOptions {
   apiBaseUrl: string;
   applyPrompt: (prompt: string) => void;
   modelUsagePanel: ModelUsagePanelState;
+  refreshActivityFeed: () => Promise<void>;
+  refreshApprovalLedger: () => Promise<void>;
+  refreshSessionDetail: (sessionId: string) => Promise<void>;
+  refreshSessionHistory: () => Promise<void>;
   setApprovalPanel: Dispatch<SetStateAction<ApprovalPanelState>>;
   setConnectorPreviewPanel: Dispatch<SetStateAction<ConnectorPreviewPanelState>>;
   setContextPanel: Dispatch<SetStateAction<ContextPanelState>>;
@@ -63,6 +67,10 @@ export function useDailyWorkActions({
   apiBaseUrl,
   applyPrompt,
   modelUsagePanel,
+  refreshActivityFeed,
+  refreshApprovalLedger,
+  refreshSessionDetail,
+  refreshSessionHistory,
   setApprovalPanel,
   setConnectorPreviewPanel,
   setContextPanel,
@@ -120,6 +128,7 @@ export function useDailyWorkActions({
         ...current,
         preview
       }));
+      await refreshActivityFeed();
     } catch {
       const fallbackPreview: TemplatePreviewPanelState = {
         ...createLocalTemplatePreviewState(
@@ -186,6 +195,8 @@ export function useDailyWorkActions({
         ...current,
         restorePreview
       }));
+      await Promise.all([refreshActivityFeed(), refreshSessionHistory()]);
+      await refreshSessionDetail(item.id);
     } catch {
       const fallbackPreview: SessionRestorePreviewPanelState = {
         ...createLocalSessionRestorePreviewState(
@@ -243,6 +254,7 @@ export function useDailyWorkActions({
         ...current,
         preview
       }));
+      await refreshActivityFeed();
     } catch {
       const fallbackPreview: ContextPreviewPanelState = {
         ...createLocalContextPreviewState(
@@ -349,6 +361,7 @@ export function useDailyWorkActions({
         notice:
           "已从 /api/daily/approvals/:approvalRequestId/decision 返回 preview-only 决策；externalEffects=['none']。"
       }));
+      await Promise.all([refreshApprovalLedger(), refreshActivityFeed()]);
     } catch {
       applyLocalStatus();
       setApprovalPanel((current) => ({
@@ -445,6 +458,7 @@ export function useDailyWorkActions({
             }
           : current
       );
+      await Promise.all([refreshApprovalLedger(), refreshActivityFeed()]);
     } catch {
       applyLocalStatus();
       setConnectorPreviewPanel((current) =>

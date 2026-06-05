@@ -5,7 +5,8 @@ import type * as DailyWorkTypes from "../types";
 
 export function useConnectorPreview(
   apiBaseUrl: string,
-  selectedConnector: DailyWorkTypes.ConnectorItem | null
+  selectedConnector: DailyWorkTypes.ConnectorItem | null,
+  onPreviewSynced?: () => Promise<void> | void
 ) {
   const [connectorPreviewPanel, setConnectorPreviewPanel] =
     React.useState<DailyWorkTypes.ConnectorPreviewPanelState>(() =>
@@ -57,6 +58,7 @@ export function useConnectorPreview(
           setConnectorPreviewPanel(
             domain.mapConnectorPreviewResponse(connector, payload)
           );
+          void onPreviewSynced?.();
         }
       } catch {
         if (controller.signal.aborted || isDisposed) {
@@ -79,7 +81,7 @@ export function useConnectorPreview(
       isDisposed = true;
       controller.abort();
     };
-  }, [apiBaseUrl, selectedConnector])
+  }, [apiBaseUrl, onPreviewSynced, selectedConnector])
 
   return { connectorPreviewPanel, setConnectorPreviewPanel };
 }
