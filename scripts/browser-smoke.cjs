@@ -56,6 +56,7 @@ async function main() {
     await runDataLayerStateSmoke(client);
     await runApprovalPreviewSmoke(client, apiServer.url);
     await runWorkflowPreviewSmoke(client, apiServer.url);
+    await runPostActionRefreshSmoke(client, apiServer.url);
     await runPromptSmoke(client);
     await runChatSendSmoke(client);
     await runCodeBlockSmoke(client);
@@ -1154,6 +1155,78 @@ async function runWorkflowPreviewSmoke(client, apiUrl) {
     stepCount: panelState.stepCount,
     summaryLength: panelState.summaryLength,
     promptValueLength: promptState.valueLength
+  });
+}
+
+async function runPostActionRefreshSmoke(client, apiUrl) {
+  const activitySnapshot = await fetchActivityEventsSnapshot(apiUrl);
+  assertActivityEventsSnapshot(activitySnapshot, "post-action activity API response");
+  const expectedTitles = activitySnapshot.events.map((event) => event.title);
+
+  const activityState = await waitForValue(
+    client,
+    activityFeedExpression(expectedTitles),
+    (state) =>
+      state.present &&
+      state.count === activitySnapshot.events.length &&
+      state.eventButtonCount >= activitySnapshot.events.length &&
+      (state.source === "api" || state.source === "websocket") &&
+      state.connectionStatus !== "connecting" &&
+      state.includesExpectedTitles,
+    "post-action activity refresh state"
+  );
+
+  const sessionsSnapshot = await fetchDailyEndpointSnapshot(
+    apiUrl,
+    "/api/daily/sessions?mode=daily_work"
+  );
+  const trackedSessions = assertSessionListSnapshot(sessionsSnapshot);
+  const sessionState = await waitForValue(
+    client,
+    sessionHistoryPanelExpression(),
+    (state) =>
+      state.present &&
+      state.source === "api" &&
+      state.syncStatus === "live" &&
+      state.count >= sessionsSnapshot.sessions.length &&
+      state.hasCustomerSession &&
+      state.hasPlanningSession,
+    "post-action session refresh state"
+  );
+
+  const approvalsSnapshot = await fetchDailyEndpointSnapshot(
+    apiUrl,
+    "/api/daily/approvals?mode=daily_work"
+  );
+  const trackedRequests = assertApprovalRequestsSnapshot(approvalsSnapshot);
+  const approvalState = await waitForValue(
+    client,
+    approvalLedgerPanelExpression(),
+    (state) =>
+      state.present &&
+      state.source === "api" &&
+      state.syncStatus === "live" &&
+      state.count >= approvalsSnapshot.requests.length &&
+      state.hasReadCustomerEmail &&
+      state.hasDraftExternalReply,
+    "post-action approval refresh state"
+  );
+
+  checks.push({
+    name: "post-action activity/session/approval refresh",
+    status: "passed",
+    activityEvents: activitySnapshot.events.length,
+    activitySource: activityState.source,
+    activityConnectionStatus: activityState.connectionStatus,
+    sessions: sessionsSnapshot.sessions.length,
+    trackedSessions: trackedSessions.map((session) => session.id),
+    sessionSource: sessionState.source,
+    sessionSyncStatus: sessionState.syncStatus,
+    approvals: approvalsSnapshot.requests.length,
+    trackedApprovals: trackedRequests.map((request) => request.id),
+    approvalSource: approvalState.source,
+    approvalSyncStatus: approvalState.syncStatus,
+    seedRepositoryEventCount: activitySnapshot.events.length
   });
 }
 
