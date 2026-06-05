@@ -1,5 +1,6 @@
 import type { AppMode, ChatContext } from "@seekdesk/shared";
 import type { ModelMessage, ModelProvider, ModelStreamChunk } from "./provider.js";
+import type { ToolCallRequest } from "./tools.js";
 
 export type AgentLoopStatus = "idle" | "running" | "cancelled" | "completed";
 
@@ -11,11 +12,13 @@ export interface AgentLoopInput {
   sessionId?: string;
   context?: ChatContext;
   maxTurns?: number;
+  toolPlan?: ToolCallRequest[];
 }
 
 export interface AgentLoopResult {
   status: AgentLoopStatus;
   chunks: ModelStreamChunk[];
+  toolPlan?: ToolCallRequest[];
 }
 
 export async function runAgentLoop(input: AgentLoopInput): Promise<AgentLoopResult> {
@@ -25,10 +28,16 @@ export async function runAgentLoop(input: AgentLoopInput): Promise<AgentLoopResu
     chunks.push(chunk);
   }
 
-  return {
+  const result: AgentLoopResult = {
     status: "completed",
     chunks
   };
+
+  if (input.toolPlan?.length) {
+    result.toolPlan = [...input.toolPlan];
+  }
+
+  return result;
 }
 
 export async function* streamAgentLoop(
@@ -40,11 +49,20 @@ export async function* streamAgentLoop(
     throw new Error("Agent loop requires a prompt or at least one message.");
   }
 
-  for await (const chunk of input.provider.streamChat({
+  const request = {
     mode: input.mode ?? "daily_work",
     messages,
     maxTurns: input.maxTurns ?? 1
-  })) {
+  };
+
+  const chatRequest = input.toolPlan?.length
+    ? {
+        ...request,
+        toolPlan: [...input.toolPlan]
+      }
+    : request;
+
+  for await (const chunk of input.provider.streamChat(chatRequest)) {
     yield chunk;
   }
 }
@@ -55,12 +73,16 @@ export function createAgentLoopMessages(input: AgentLoopInput): ModelMessage[] {
     ? [...input.messages, ...promptMessages]
     : promptMessages;
   const orchestrationMessage = createDailyWorkOrchestrationMessage(input);
+  const toolPlanMessage = createToolPlanMessage(input.toolPlan);
+  const prefixMessages = [orchestrationMessage, toolPlanMessage].filter(
+    (message): message is ModelMessage => Boolean(message)
+  );
 
-  if (!orchestrationMessage) {
+  if (!prefixMessages.length) {
     return messages;
   }
 
-  return [orchestrationMessage, ...messages];
+  return [...prefixMessages, ...messages];
 }
 
 function createPromptMessages(prompt?: string): ModelMessage[] {
@@ -97,6 +119,27 @@ function createDailyWorkOrchestrationMessage(
   for (const line of summarizeContext(input.context)) {
     lines.push(line);
   }
+
+  return {
+    role: "system",
+    content: lines.join("\n")
+  };
+}
+
+function createToolPlanMessage(toolPlan?: ToolCallRequest[]): ModelMessage | null {
+  if (!toolPlan?.length) {
+    return null;
+  }
+
+  const lines = [
+    "Tool plan is advisory only.",
+    "Do not execute tools from this plan or claim side effects were performed."
+  ];
+
+  toolPlan.forEach((request, index) => {
+    const disposition = request.planOnly ? "planned" : "preview";
+    lines.push(`Tool plan ${index + 1}: ${request.name} (${disposition})`);
+  });
 
   return {
     role: "system",

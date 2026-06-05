@@ -57,6 +57,38 @@ describe("runAgentLoop", () => {
       "Do not execute tools"
     );
   });
+
+  it("carries tool plans without executing tools in the provider stream", async () => {
+    const provider = new CapturingProvider();
+    const toolPlan = [
+      {
+        name: "daily_work.plan",
+        inputJson: {
+          taskId: "task-123"
+        },
+        planOnly: true
+      }
+    ];
+
+    const result = await runAgentLoop({
+      provider,
+      prompt: "prepare the plan",
+      toolPlan
+    });
+
+    expect(result.toolPlan).toEqual(toolPlan);
+    expect(provider.request?.toolPlan).toEqual(toolPlan);
+    expect(provider.request?.messages[1]).toEqual(
+      expect.objectContaining({
+        role: "system",
+        content: expect.stringContaining("Tool plan is advisory only")
+      })
+    );
+    expect(result.chunks).toEqual([
+      { type: "text-delta", delta: "ok" },
+      { type: "done" }
+    ]);
+  });
 });
 
 class CapturingProvider implements ModelProvider {
