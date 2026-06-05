@@ -8,6 +8,26 @@ export interface DaemonCliResult {
   output: string;
 }
 
+const runtimeMode = "local-preview";
+const supportedCapabilities = [
+  "health",
+  "preview-runtime-status",
+  "workspace-root-resolution"
+] as const;
+const safetyBoundary = {
+  readsUserFiles: false,
+  writesUserFiles: false,
+  executesShell: false,
+  startsLongRunningServices: false,
+  opensNetworkListeners: false
+} as const;
+
+interface ParsedDaemonArgs {
+  command: string;
+  workspaceRoot: string;
+  error?: string;
+}
+
 function helpText() {
   return [
     "SeekDesk daemon",
@@ -17,59 +37,98 @@ function helpText() {
     "  seekdesk-daemon health [--workspace <path>]",
     "  seekdesk-daemon start [--workspace <path>]",
     "",
-    "The daemon is currently a scaffold. File and shell tools will be added after review."
+    "The daemon currently starts in preview-only mode and reports runtime status only."
   ].join("\n");
 }
 
-function readOption(args: string[], name: string) {
-  const index = args.indexOf(name);
-  if (index === -1) {
-    return undefined;
+function parseDaemonArgs(args: string[]): ParsedDaemonArgs {
+  let command: string | undefined;
+  let workspace = process.cwd();
+
+  for (let index = 0; index < args.length; index += 1) {
+    const arg = args[index];
+
+    if (arg === "--help") {
+      command = "--help";
+      continue;
+    }
+
+    if (arg === "--workspace") {
+      const workspaceArg = args[index + 1];
+      if (!workspaceArg || workspaceArg.startsWith("--")) {
+        return {
+          command: command ?? "--help",
+          workspaceRoot: path.resolve(workspace),
+          error: "Missing value for --workspace."
+        };
+      }
+
+      workspace = workspaceArg;
+      index += 1;
+      continue;
+    }
+
+    if (!command) {
+      command = arg;
+    }
   }
 
-  return args[index + 1];
+  return {
+    command: command ?? "--help",
+    workspaceRoot: path.resolve(workspace)
+  };
 }
 
-function resolveWorkspace(args: string[]) {
-  const provided = readOption(args, "--workspace");
-  return path.resolve(provided ?? process.cwd());
+function createRuntimeStatus(status: "ok" | "preview-ready", workspaceRoot: string) {
+  return {
+    status,
+    service: "seekdesk-daemon",
+    workspaceRoot,
+    pid: process.pid,
+    runtimeMode,
+    previewOnly: true,
+    supportedCapabilities,
+    safetyBoundary,
+    ipc: {
+      transport: "planned",
+      endpoint: null
+    },
+    webSocket: {
+      transport: "planned",
+      endpoint: null
+    }
+  };
 }
 
 export function runDaemonCli(args: string[]): DaemonCliResult {
-  const command = args.find((arg) => !arg.startsWith("--")) ?? "--help";
+  const parsed = parseDaemonArgs(args);
 
-  if (command === "--help" || command === "help") {
+  if (parsed.error) {
+    return {
+      exitCode: 1,
+      output: `${parsed.error}\n\n${helpText()}`
+    };
+  }
+
+  if (parsed.command === "--help" || parsed.command === "help") {
     return {
       exitCode: 0,
       output: helpText()
     };
   }
 
-  if (command === "health") {
+  if (parsed.command === "health") {
     return {
       exitCode: 0,
-      output: JSON.stringify(
-        {
-          status: "ok",
-          service: "seekdesk-daemon",
-          workspaceRoot: resolveWorkspace(args)
-        },
-        null,
-        2
-      )
+      output: JSON.stringify(createRuntimeStatus("ok", parsed.workspaceRoot), null, 2)
     };
   }
 
-  if (command === "start") {
+  if (parsed.command === "start") {
     return {
       exitCode: 0,
       output: JSON.stringify(
-        {
-          status: "planned",
-          service: "seekdesk-daemon",
-          workspaceRoot: resolveWorkspace(args),
-          message: "WebSocket daemon runtime will be implemented in Milestone 1."
-        },
+        createRuntimeStatus("preview-ready", parsed.workspaceRoot),
         null,
         2
       )
@@ -78,7 +137,7 @@ export function runDaemonCli(args: string[]): DaemonCliResult {
 
   return {
     exitCode: 1,
-    output: `Unknown command: ${command}\n\n${helpText()}`
+    output: `Unknown command: ${parsed.command}\n\n${helpText()}`
   };
 }
 
