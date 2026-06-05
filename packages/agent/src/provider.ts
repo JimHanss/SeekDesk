@@ -1,4 +1,5 @@
 import type { AppMode } from "@seekdesk/shared";
+import type { ToolCallRequest } from "./tools.js";
 
 export interface ModelMessage {
   role: "system" | "user" | "assistant" | "tool";
@@ -9,6 +10,7 @@ export interface ModelChatRequest {
   mode?: AppMode;
   messages: ModelMessage[];
   maxTurns: number;
+  toolPlan?: ToolCallRequest[];
 }
 
 export type ModelStreamChunk =
