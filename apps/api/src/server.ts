@@ -55,7 +55,8 @@ export async function buildServer(options?: {
   app.get("/health", async () => ({
     status: "ok",
     service: "seekdesk-api",
-    version: "0.1.0"
+    version: "0.1.0",
+    ...(await dailyWorkRepository.getDataLayerStatus())
   }));
 
   app.post<{ Body: unknown }>("/api/chat", async (request, reply) => {
