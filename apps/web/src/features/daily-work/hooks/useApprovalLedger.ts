@@ -3,13 +3,24 @@ import * as React from "react";
 import * as domain from "../domain";
 import type * as DailyWorkTypes from "../types";
 
+type ApprovalStatusOverrides = Partial<
+  Record<string, Exclude<DailyWorkTypes.ApprovalStatus, "waiting">>
+>;
+
+interface RefreshApprovalLedgerOptions {
+  signal?: AbortSignal;
+  statusOverrides?: ApprovalStatusOverrides;
+}
+
 export function useApprovalLedger(apiBaseUrl: string) {
   const [approvalPanel, setApprovalPanel] = React.useState<DailyWorkTypes.ApprovalPanelState>(
     domain.createFallbackApprovalPanelState
   );
 
   const refreshApprovalLedger = React.useCallback(
-    async (signal?: AbortSignal) => {
+    async (options: RefreshApprovalLedgerOptions = {}) => {
+      const { signal, statusOverrides = {} } = options;
+
       setApprovalPanel((current) => ({
         ...current,
         syncStatus: "syncing",
@@ -29,7 +40,11 @@ export function useApprovalLedger(apiBaseUrl: string) {
 
         const items = domain.mapApprovalRequestsResponse(
           (await response.json()) as DailyWorkTypes.DailyApprovalRequestsResponseDto
-        );
+        ).map((item) => {
+          const overrideStatus = statusOverrides[item.id];
+
+          return overrideStatus ? { ...item, status: overrideStatus } : item;
+        });
 
         setApprovalPanel({
           items,
@@ -58,7 +73,7 @@ export function useApprovalLedger(apiBaseUrl: string) {
   React.useEffect(() => {
     const controller = new AbortController();
 
-    void refreshApprovalLedger(controller.signal);
+    void refreshApprovalLedger({ signal: controller.signal });
 
     return () => {
       controller.abort();

@@ -41,12 +41,17 @@ import type {
   WorkflowPreviewPanelState
 } from "../types";
 
+type ConfirmedApprovalStatus = Exclude<ApprovalStatus, "waiting">;
+type ApprovalStatusOverrides = Partial<Record<string, ConfirmedApprovalStatus>>;
+
 interface UseDailyWorkActionsOptions {
   apiBaseUrl: string;
   applyPrompt: (prompt: string) => void;
   modelUsagePanel: ModelUsagePanelState;
   refreshActivityFeed: () => Promise<void>;
-  refreshApprovalLedger: () => Promise<void>;
+  refreshApprovalLedger: (options?: {
+    statusOverrides?: ApprovalStatusOverrides;
+  }) => Promise<void>;
   refreshSessionDetail: (sessionId: string) => Promise<void>;
   refreshSessionHistory: () => Promise<void>;
   setApprovalPanel: Dispatch<SetStateAction<ApprovalPanelState>>;
@@ -308,7 +313,7 @@ export function useDailyWorkActions({
 
   async function updateApprovalStatus(
     approvalId: string,
-    nextStatus: Exclude<ApprovalStatus, "waiting">
+    nextStatus: ConfirmedApprovalStatus
   ) {
     const applyLocalStatus = () => {
       setApprovalPanel((current) => ({
@@ -348,6 +353,10 @@ export function useDailyWorkActions({
       }
 
       const payload = (await response.json()) as DailyApprovalDecisionResponseDto;
+      const confirmedStatus = resolveApprovalDecisionStatus(
+        payload,
+        nextStatus
+      );
 
       setApprovalPanel((current) => ({
         ...current,
@@ -355,13 +364,20 @@ export function useDailyWorkActions({
         syncStatus: "live",
         items: current.items.map((item) =>
           item.id === approvalId
-            ? { ...item, status: mapApprovalDecisionStatus(payload) }
+            ? { ...item, status: confirmedStatus }
             : item
         ),
         notice:
           "已从 /api/daily/approvals/:approvalRequestId/decision 返回 preview-only 决策；externalEffects=['none']。"
       }));
-      await Promise.all([refreshApprovalLedger(), refreshActivityFeed()]);
+      await Promise.all([
+        refreshApprovalLedger({
+          statusOverrides: {
+            [approvalId]: confirmedStatus
+          }
+        }),
+        refreshActivityFeed()
+      ]);
     } catch {
       applyLocalStatus();
       setApprovalPanel((current) => ({
@@ -376,7 +392,7 @@ export function useDailyWorkActions({
 
   async function updateConnectorPreviewDecision(
     connector: ConnectorItem,
-    nextStatus: Exclude<ApprovalStatus, "waiting">
+    nextStatus: ConfirmedApprovalStatus
   ) {
     if (connector.requiredApprovalIds.length === 0) {
       return;
@@ -430,6 +446,20 @@ export function useDailyWorkActions({
           return (await response.json()) as DailyApprovalDecisionResponseDto;
         })
       );
+      const statusOverrides = connector.requiredApprovalIds.reduce<ApprovalStatusOverrides>(
+        (overrides, approvalId) => {
+          const response = responses.find(
+            (entry) => entry.request?.id === approvalId
+          );
+
+          overrides[approvalId] = response
+            ? resolveApprovalDecisionStatus(response, nextStatus)
+            : nextStatus;
+
+          return overrides;
+        },
+        {}
+      );
 
       setApprovalPanel((current) => ({
         ...current,
@@ -441,7 +471,7 @@ export function useDailyWorkActions({
           );
 
           return response
-            ? { ...item, status: mapApprovalDecisionStatus(response) }
+            ? { ...item, status: resolveApprovalDecisionStatus(response, nextStatus) }
             : item;
         }),
         notice:
@@ -458,7 +488,10 @@ export function useDailyWorkActions({
             }
           : current
       );
-      await Promise.all([refreshApprovalLedger(), refreshActivityFeed()]);
+      await Promise.all([
+        refreshApprovalLedger({ statusOverrides }),
+        refreshActivityFeed()
+      ]);
     } catch {
       applyLocalStatus();
       setConnectorPreviewPanel((current) =>
@@ -487,4 +520,13 @@ export function useDailyWorkActions({
     updateConnectorPreviewDecision,
     useContextItem
   };
+}
+
+function resolveApprovalDecisionStatus(
+  payload: DailyApprovalDecisionResponseDto,
+  fallbackStatus: ConfirmedApprovalStatus
+): ConfirmedApprovalStatus {
+  const mappedStatus = mapApprovalDecisionStatus(payload);
+
+  return mappedStatus === "waiting" ? fallbackStatus : mappedStatus;
 }
