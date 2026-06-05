@@ -157,8 +157,8 @@ export function createLocalConnectorPreviewState(
       "等待用户明确批准后再进入下一步规划。"
     ],
     safetyStatement:
-      "Preview only: 当前界面不会登录、读取、写入、发送或创建任何外部记录。",
-    notice: "当前展示本地 preview-only fallback；后端可用时会自动同步 API 预览。"
+      "仅预览：当前界面不会登录、读取、写入、发送或创建任何外部记录。",
+    notice: "当前展示本地仅预览方案；后端可用时会自动同步 API 预览。"
   };
 }
 
@@ -192,7 +192,7 @@ export function mapConnectorPreviewResponse(
     previewOnly: true,
     summary: nonEmptyText(
       preview.summary,
-      `已从后端同步 ${connector.name} 的 preview-only 动作计划。`
+      `已从后端同步 ${connector.name} 的仅预览动作计划。`
     ),
     relatedContextItemIds:
       preview.relatedContextItemIds && preview.relatedContextItemIds.length > 0
@@ -212,7 +212,7 @@ export function mapConnectorPreviewResponse(
       createLocalConnectorPreviewState(connector).safetyStatement
     ),
     notice:
-      "已从 /api/daily/connectors/:connectorId/preview 同步；响应声明 previewOnly=true 且 externalEffects=['none']。"
+      "已从 /api/daily/connectors/:connectorId/preview 同步；后端声明这是仅预览动作计划，不会产生外部效果。"
   };
 }
 
@@ -264,7 +264,7 @@ export function buildConnectorAccessPrompt(item: ConnectorItem) {
     "重要边界：当前 SeekDesk 只做连接器目录和权限预演，未接真实授权、登录或外部服务；不要读取真实文档、日历、邮件、笔记或团队知识库。",
     "",
     `类别：${item.category}`,
-    `Provider：${item.provider}`,
+    `服务商：${item.provider}`,
     `当前状态：${item.status}`,
     `权限状态：${item.permissionState}`,
     `风险等级：${item.riskLevel}`,

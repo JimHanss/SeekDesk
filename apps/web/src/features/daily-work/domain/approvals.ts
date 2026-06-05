@@ -75,7 +75,7 @@ export function createFallbackApprovalPanelState(): ApprovalPanelState {
     source: "fallback",
     syncStatus: "syncing",
     notice:
-      "正在从 /api/daily/approvals?mode=daily_work 同步审批台账；连接完成前保留前端 fallback。"
+      "正在从 /api/daily/approvals?mode=daily_work 同步审批台账；连接完成前先展示本地示例。"
   };
 }
 
@@ -170,7 +170,7 @@ export function approvalScopeLabel(
     case "confirm_private_context_and_actions":
       return `${contextText}；涉及私有上下文，使用前必须确认范围。`;
     case "confirm_writes_and_commands":
-      return `${contextText}；涉及外发、写入或行动建议，仅允许 preview-only 决策。`;
+      return `${contextText}；涉及外发、写入或行动建议，仅允许仅预览决策。`;
     default:
       return `${contextText}；权限模式待确认。`;
   }
@@ -192,7 +192,7 @@ export function approvalDetailLabel(input: {
       ? "已允许一次，但仍不会触发真实外部操作。"
       : input.status === "denied"
         ? "已拒绝，后续只保留手动建议。"
-        : "等待用户确认，当前只做 preview-only 预演。";
+        : "等待用户确认，当前只做仅预览预演。";
 
   return [boundary, decisionText, awarenessText, tagText]
     .filter(Boolean)

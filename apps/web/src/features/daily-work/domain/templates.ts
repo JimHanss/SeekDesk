@@ -99,7 +99,7 @@ export function createFallbackTemplatePanelState(): TemplatePanelState {
     source: "fallback",
     syncStatus: "syncing",
     notice:
-      "正在从 /api/daily/templates?mode=daily_work 同步模板库；连接完成前保留前端 fallback。",
+      "正在从 /api/daily/templates?mode=daily_work 同步模板库；连接完成前先展示本地示例。",
     preview: createLocalTemplatePreviewState(templates[0] ?? null)
   };
 }
@@ -107,7 +107,7 @@ export function createFallbackTemplatePanelState(): TemplatePanelState {
 export function createLocalTemplatePreviewState(
   template: TemplateItem | null,
   syncStatus: TemplatePreviewSyncStatus = "idle",
-  notice = "尚未调用 template apply-preview；点击模板后会优先生成 preview-only 输入框草稿。"
+  notice = "尚未调用模板预演；点击模板后会优先生成仅预览的输入框草稿。"
 ): TemplatePreviewPanelState {
   return {
     templateId: template?.id ?? "",
@@ -116,9 +116,9 @@ export function createLocalTemplatePreviewState(
     previewOnly: true,
     externalEffects: ["none"],
     safetyStatement:
-      "Preview only: 当前模板操作只把草稿填入输入框，不发送邮件、不写入文档、不创建日历或任务，也不触发任何外部工具。",
+      "仅预览：当前模板操作只把草稿填入输入框，不发送邮件、不写入文档、不创建日历或任务，也不触发任何外部工具。",
     promptDraft: template?.prompt ?? "",
-    generatedAt: "前端 fallback",
+    generatedAt: "本地示例",
     notice
   };
 }
@@ -194,14 +194,14 @@ export function mapTemplatePreviewResponse(
     externalEffects: normalizedExternalEffects,
     safetyStatement: nonEmptyText(
       preview.safetyBoundary?.statement,
-      "Preview only: 后端声明模板预演不会产生外部效果。"
+      "仅预览：后端声明模板预演不会产生外部效果。"
     ),
     promptDraft: nonEmptyText(preview.promptDraft, template.prompt),
     generatedAt:
       formatModelUsageTimestamp(preview.generatedAt) ??
       nonEmptyText(preview.generatedAt, "刚刚同步"),
     notice:
-      "已从 /api/daily/templates/:templateId/apply-preview 同步；响应声明 previewOnly=true 且 externalEffects=['none']。"
+      "已从 /api/daily/templates/:templateId/apply-preview 同步；后端声明这是仅预览草稿，不会产生外部效果。"
   };
 }
 

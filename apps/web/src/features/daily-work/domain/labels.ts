@@ -50,11 +50,11 @@ export function sessionHistoryStatusClass(status: SessionHistoryStatus) {
 export function sessionHistorySourceLabel(source: SessionHistoryPanelSource) {
   switch (source) {
     case "fallback":
-      return "前端 fallback";
+      return "本地示例";
     case "api":
       return "Sessions API";
     case "degraded":
-      return "降级 fallback";
+      return "已降级，保留本地快照";
   }
 }
 
@@ -98,11 +98,11 @@ export function sessionRestorePreviewSyncStatusLabel(
 export function templatePanelSourceLabel(source: TemplatePanelSource) {
   switch (source) {
     case "fallback":
-      return "前端 fallback";
+      return "本地示例";
     case "api":
       return "Templates API";
     case "degraded":
-      return "降级 fallback";
+      return "已降级，保留本地快照";
   }
 }
 
@@ -144,11 +144,11 @@ export function templatePreviewSyncStatusLabel(status: TemplatePreviewSyncStatus
 export function approvalPanelSourceLabel(source: ApprovalPanelSource) {
   switch (source) {
     case "fallback":
-      return "前端 fallback";
+      return "本地示例";
     case "api":
       return "Approvals API";
     case "degraded":
-      return "降级 fallback";
+      return "已降级，保留本地快照";
   }
 }
 
@@ -239,11 +239,11 @@ export function artifactStateClass(state: ArtifactState) {
 export function contextPanelSourceLabel(source: ContextPanelSource) {
   switch (source) {
     case "fallback":
-      return "前端 fallback";
+      return "本地示例";
     case "api":
       return "Context API";
     case "degraded":
-      return "降级 fallback";
+      return "已降级，保留本地快照";
   }
 }
 

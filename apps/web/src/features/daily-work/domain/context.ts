@@ -93,7 +93,7 @@ export function createFallbackContextPanelState(): ContextPanelState {
     source: "fallback",
     syncStatus: "syncing",
     notice:
-      "正在从 /api/daily/context?mode=daily_work 同步会话知识上下文；连接完成前保留前端 fallback 快照。",
+      "正在从 /api/daily/context?mode=daily_work 同步会话知识上下文；连接完成前先展示本地快照。",
     preview: createLocalContextPreviewState(null)
   };
 }
@@ -101,7 +101,7 @@ export function createFallbackContextPanelState(): ContextPanelState {
 export function createLocalContextPreviewState(
   item: ContextItem | null,
   syncStatus: ContextPreviewSyncStatus = "idle",
-  notice = "尚未调用 context use-preview；点击上下文后会生成 preview-only 输入框提示。"
+  notice = "尚未调用上下文预演；点击上下文后会生成仅预览的输入框提示。"
 ): ContextPreviewPanelState {
   return {
     contextItemId: item?.id ?? "",
@@ -110,9 +110,9 @@ export function createLocalContextPreviewState(
     previewOnly: true,
     externalEffects: ["none"],
     safetyStatement:
-      "Preview only: 当前上下文引用只填入输入框，不读取真实外部文件、不发送邮件、不写入文档或日历。",
+      "仅预览：当前上下文引用只填入输入框，不读取真实外部文件、不发送邮件、不写入文档或日历。",
     promptDraft: item ? item.prompt : "",
-    generatedAt: "前端 fallback",
+    generatedAt: "本地示例",
     notice
   };
 }
@@ -186,12 +186,12 @@ export function mapContextUsePreviewResponse(
     externalEffects: normalizedExternalEffects,
     safetyStatement: nonEmptyText(
       preview.safetyBoundary?.statement,
-      "Preview only: 后端声明上下文预演不会产生外部效果。"
+      "仅预览：后端声明上下文预演不会产生外部效果。"
     ),
     promptDraft: nonEmptyText(preview.promptDraft, item.prompt),
     generatedAt: formatSessionHistoryTimestamp(preview.generatedAt),
     notice:
-      "已从 /api/daily/context/:contextItemId/use-preview 同步；响应声明 previewOnly=true 且 externalEffects=['none']。"
+      "已从 /api/daily/context/:contextItemId/use-preview 同步；后端声明这是仅预览提示，不会产生外部效果。"
   };
 }
 

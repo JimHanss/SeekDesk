@@ -69,7 +69,7 @@ export function useDailyContext(
           source: "degraded",
           syncStatus: "degraded",
           notice:
-            "暂未从后端同步会话知识上下文，已保留本地 context fallback。"
+            "暂未从后端同步会话知识上下文，已保留本地上下文示例。"
         }));
       }
     }

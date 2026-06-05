@@ -70,7 +70,7 @@ export function useConnectorPreview(
           source: "degraded",
           syncStatus: "degraded",
           notice:
-            "暂未从后端同步连接器预览，已保留本地 preview-only fallback。"
+            "暂未从后端同步连接器预览，已保留本地仅预览方案。"
         });
       }
     }

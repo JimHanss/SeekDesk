@@ -18,7 +18,7 @@ export function ModeSnapshotPanel({ approvalCount }: ModeSnapshotPanelProps) {
         </div>
         <div className="space-y-2 text-sm text-teal-700">
           <StatusRow label="当前模式" value="daily_work" />
-          <StatusRow label="对话传输" value="Streaming" />
+          <StatusRow label="对话传输" value="流式传输" />
           <StatusRow label="上下文来源" value="会话级预览" />
           <StatusRow label="审批请求" value={`${approvalCount} 项`} />
         </div>
@@ -30,7 +30,7 @@ export function ModeSnapshotPanel({ approvalCount }: ModeSnapshotPanelProps) {
           编码模式兼容
         </div>
         <p className="text-xs leading-5">
-          当前分支没有开放文件、Shell 或 Git 工具；后续可在同一模式契约下扩展编码能力。
+          当前分支没有开放文件、命令行或 Git 工具；后续可在同一模式契约下扩展编码能力。
         </p>
       </div>
     </>

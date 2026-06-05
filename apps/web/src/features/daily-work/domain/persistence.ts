@@ -44,8 +44,8 @@ export function createFallbackPersistencePanelState(): PersistencePanelState {
     source: "fallback",
     syncStatus: "syncing",
     currentLayer: "seed_mock",
-    updatedAt: "前端 fallback",
-    notice: "正在读取 /health 的数据层状态；字段缺失时保持 seed/mock 快照。"
+    updatedAt: "本地示例",
+    notice: "正在读取 /health 的数据层状态；字段缺失时保留本地示例快照。"
   };
 }
 
@@ -71,7 +71,7 @@ export function mapHealthPersistenceResponse(payload: unknown): PersistencePanel
   const healthSource = snapshot ? "health" : "fallback";
   const updatedAt =
     formatModelUsageTimestamp(snapshot?.updatedAt) ??
-    (healthSource === "health" ? "刚刚同步" : "前端 fallback");
+    (healthSource === "health" ? "刚刚同步" : "本地示例");
 
   return {
     layers: [
@@ -82,8 +82,8 @@ export function mapHealthPersistenceResponse(payload: unknown): PersistencePanel
         status: currentLayer === "seed_mock" ? "active" : "available",
         detail:
           currentLayer === "seed_mock"
-            ? "当前工作台仍以 seed/mock 作为日常工作数据来源。"
-            : "保留为离线与 smoke fallback，不阻塞主流程。",
+            ? "当前工作台仍以本地示例作为日常工作数据来源。"
+            : "保留为离线与冒烟测试回退，不阻塞主流程。",
         icon: Sparkles
       },
       {
@@ -124,7 +124,7 @@ export function mapHealthPersistenceResponse(payload: unknown): PersistencePanel
     notice:
       healthSource === "health"
         ? `已从 /health 同步数据层状态${statusText ? `：${statusText}` : "。"}`
-        : "后端 health 暂未暴露数据层字段，界面使用 seed/mock fallback。"
+        : "后端 health 暂未暴露数据层字段，界面使用本地示例快照。"
   };
 }
 

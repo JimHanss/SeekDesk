@@ -136,7 +136,7 @@ export function createFallbackArtifactPanelState(): ArtifactPanelState {
     items: artifacts,
     source: "fallback",
     syncStatus: "syncing",
-    notice: "正在从 /api/daily/artifacts?mode=daily_work 同步产物；暂时展示本地 fallback。"
+    notice: "正在从 /api/daily/artifacts?mode=daily_work 同步产物；暂时展示本地产物示例。"
   };
 }
 

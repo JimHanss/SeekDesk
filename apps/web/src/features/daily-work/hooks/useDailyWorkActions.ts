@@ -97,7 +97,7 @@ export function useDailyWorkActions({
     const pendingPreview = createLocalTemplatePreviewState(
       template,
       "syncing",
-      "正在请求 /api/daily/templates/:templateId/apply-preview，成功后会把后端 promptDraft 填入输入框。"
+      "正在请求 /api/daily/templates/:templateId/apply-preview，成功后会把后端生成的草稿填入输入框。"
     );
 
     setTemplatePanel((current) => ({
@@ -139,7 +139,7 @@ export function useDailyWorkActions({
         ...createLocalTemplatePreviewState(
           template,
           "degraded",
-          "暂未从后端生成 template apply-preview，已回退到本地 preview-only 模板提示。"
+          "暂未从后端生成模板预演，已回退到本地仅预览模板提示。"
         ),
         source: "degraded"
       };
@@ -167,7 +167,7 @@ export function useDailyWorkActions({
       restorePreview: createLocalSessionRestorePreviewState(
         item,
         "syncing",
-        "正在请求 /api/daily/sessions/:sessionId/restore-preview，成功后会把后端 restorePrompt 填入输入框。"
+        "正在请求 /api/daily/sessions/:sessionId/restore-preview，成功后会把后端恢复提示填入输入框。"
       )
     }));
 
@@ -207,7 +207,7 @@ export function useDailyWorkActions({
         ...createLocalSessionRestorePreviewState(
           item,
           "degraded",
-          "暂未从后端生成 restore-preview，已回退到本地 preview-only 恢复提示。"
+          "暂未从后端生成恢复预演，已回退到本地仅预览恢复提示。"
         ),
         source: "degraded"
       };
@@ -227,7 +227,7 @@ export function useDailyWorkActions({
       preview: createLocalContextPreviewState(
         item,
         "syncing",
-        "正在请求 /api/daily/context/:contextItemId/use-preview，成功后会把后端 promptDraft 填入输入框。"
+        "正在请求 /api/daily/context/:contextItemId/use-preview，成功后会把后端生成的上下文提示填入输入框。"
       )
     }));
 
@@ -265,7 +265,7 @@ export function useDailyWorkActions({
         ...createLocalContextPreviewState(
           item,
           "degraded",
-          "暂未从后端生成 context use-preview，已回退到本地 preview-only 上下文提示。"
+          "暂未从后端生成上下文预演，已回退到本地仅预览上下文提示。"
         ),
         source: "degraded"
       };
@@ -329,7 +329,7 @@ export function useDailyWorkActions({
       ...current,
       syncStatus: "syncing",
       notice:
-        "正在向 /api/daily/approvals/:approvalRequestId/decision 写入 preview-only 审批决策。"
+        "正在向 /api/daily/approvals/:approvalRequestId/decision 写入仅预览审批决策。"
     }));
 
     try {
@@ -368,7 +368,7 @@ export function useDailyWorkActions({
             : item
         ),
         notice:
-          "已从 /api/daily/approvals/:approvalRequestId/decision 返回 preview-only 决策；externalEffects=['none']。"
+          "已从 /api/daily/approvals/:approvalRequestId/decision 返回仅预览决策；不会产生外部效果。"
       }));
       await Promise.all([
         refreshApprovalLedger({
@@ -385,7 +385,7 @@ export function useDailyWorkActions({
         source: "degraded",
         syncStatus: "degraded",
         notice:
-          "审批 decision API 暂不可用；已保留本地 preview-only 决策状态。"
+          "审批 decision API 暂不可用；已保留本地仅预览决策状态。"
       }));
     }
   }
@@ -415,7 +415,7 @@ export function useDailyWorkActions({
         ? {
             ...current,
             syncStatus: "syncing",
-            notice: "正在向审批 decision API 写入 preview-only 决策。"
+            notice: "正在向审批 decision API 写入仅预览决策。"
           }
         : current
     );
@@ -484,7 +484,7 @@ export function useDailyWorkActions({
               source: "api",
               syncStatus: "live",
               notice:
-                "已从 /api/daily/approvals/:approvalRequestId/decision 返回 preview-only 审批结果。"
+                "已从 /api/daily/approvals/:approvalRequestId/decision 返回仅预览审批结果。"
             }
           : current
       );
@@ -501,7 +501,7 @@ export function useDailyWorkActions({
               source: "degraded",
               syncStatus: "degraded",
               notice:
-                "审批 decision API 暂不可用；已保留本地 preview-only 决策状态。"
+                "审批 decision API 暂不可用；已保留本地仅预览决策状态。"
             }
           : current
       );

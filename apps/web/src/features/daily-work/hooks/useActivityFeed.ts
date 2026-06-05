@@ -14,9 +14,9 @@ export function useActivityFeed(
   const [activityConnectionStatus, setActivityConnectionStatus] =
     React.useState<DailyWorkTypes.ActivityConnectionStatus>("connecting");
   const [activityLastUpdated, setActivityLastUpdated] =
-    React.useState("前端 fallback 示例");
+    React.useState("本地示例");
   const [activityFeedNotice, setActivityFeedNotice] = React.useState(
-    "Connecting to the backend activity feed; showing frontend fallback data for now."
+    "正在连接后端活动流；连接完成前先展示本地示例。"
   );
 
   const applySnapshot = React.useCallback(
@@ -67,7 +67,7 @@ export function useActivityFeed(
 
         setActivityConnectionStatus("degraded");
         setActivityFeedNotice(
-          "暂未取到后端活动列表，页面会继续保留前端 fallback 示例。"
+          "暂未取到后端活动列表，页面会继续保留本地示例。"
         );
       }
     },

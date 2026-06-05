@@ -103,7 +103,7 @@ export function PersistenceStatusPanel({ state }: { state: PersistencePanelState
             <span className="min-w-0 break-words">数据层 / 同步状态</span>
           </div>
           <p className="mt-1 text-xs leading-5 text-slate-600">
-            日常工作数据当前状态从 /health 优先读取；缺少字段时保留安全 fallback。
+            优先从 /health 读取日常工作数据状态；字段缺失时保留安全回退。
           </p>
         </div>
 
