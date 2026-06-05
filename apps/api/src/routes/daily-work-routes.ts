@@ -35,6 +35,7 @@ import type { DailyWorkRepository } from "../repositories/daily-work-repository.
 import {
   createApprovalDecisionActivityEvent,
   createApprovalDecisionResponse,
+  createConnectorActionPreviewActivityEvent,
   createConnectorActionPreviewResponse,
   createContextUsePreviewActivityEvent,
   createDailyContextUsePreviewResponse,
@@ -42,8 +43,10 @@ import {
   createSessionRestoreActivityEvent,
   createSessionRestoreWriteback,
   createDailyWorkSessionRestorePreviewResponse,
+  createTemplateApplyPreviewActivityEvent,
   createDailyWorkTemplateApplyPreviewResponse,
   createDailyWorkWorkflowPreviewResponse,
+  createWorkflowPreviewActivityEvent,
   createValidationError,
   filterDailyActivityEvent,
   filterDailyActivityEvents,
@@ -363,12 +366,21 @@ export async function registerDailyWorkRoutes(
           return;
         }
 
-        return createDailyWorkTemplateApplyPreviewResponse({
+        const response = createDailyWorkTemplateApplyPreviewResponse({
           mode,
           template,
           contextItemIds: parsed.data.contextItemIds,
           ...(parsed.data.prompt ? { prompt: parsed.data.prompt } : {})
         });
+        await dailyWorkRepository.upsertActivityEvent(
+          createTemplateApplyPreviewActivityEvent({
+            mode,
+            template,
+            response
+          })
+        );
+
+        return response;
       }
     );
 
@@ -669,13 +681,22 @@ export async function registerDailyWorkRoutes(
           return;
         }
 
-        return createConnectorActionPreviewResponse({
+        const response = createConnectorActionPreviewResponse({
           mode,
           connector,
           action: parsed.data.action,
           contextItemIds: parsed.data.contextItemIds,
           ...(parsed.data.prompt ? { prompt: parsed.data.prompt } : {})
         });
+        await dailyWorkRepository.upsertActivityEvent(
+          createConnectorActionPreviewActivityEvent({
+            mode,
+            connector,
+            response
+          })
+        );
+
+        return response;
       }
     );
 
@@ -782,7 +803,7 @@ export async function registerDailyWorkRoutes(
           return;
         }
 
-        return createDailyWorkWorkflowPreviewResponse({
+        const response = createDailyWorkWorkflowPreviewResponse({
           mode,
           workflow,
           selectedAction,
@@ -794,6 +815,15 @@ export async function registerDailyWorkRoutes(
           contextItemIds: parsed.data.contextItemIds,
           ...(parsed.data.prompt ? { prompt: parsed.data.prompt } : {})
         });
+        await dailyWorkRepository.upsertActivityEvent(
+          createWorkflowPreviewActivityEvent({
+            mode,
+            workflow,
+            response
+          })
+        );
+
+        return response;
       }
     );
 }

@@ -311,6 +311,64 @@ export function createDailyWorkTemplateApplyPreviewResponse(input: {
   };
 }
 
+export function createTemplateApplyPreviewActivityEvent(input: {
+  mode: AppMode;
+  template: DailyWorkTemplate;
+  response: DailyWorkTemplateApplyPreviewResponse;
+}): DailyActivityEvent {
+  const preview = input.response.preview;
+  const approvalRequestIds = preview.requiredApprovalRequestIds;
+
+  return {
+    id: `daily-event-template-${input.template.id}-apply-preview`,
+    mode: input.mode,
+    eventType: "template.applied",
+    status: "completed",
+    timestamp: preview.generatedAt,
+    title: "Template preview generated",
+    summary:
+      `Generated a preview-only apply plan for ${input.template.title}; no artifact was created and no external action was performed.`,
+    actor: "daily-work-agent",
+    relatedRefs: {
+      sessionIds: [],
+      templateIds: [input.template.id],
+      workflowIds: [],
+      actionQueueItemIds: [],
+      artifactIds: [],
+      approvalRequestIds,
+      connectorIds: [],
+      contextItemIds: preview.requestedContextItemIds
+    },
+    safetyBoundary: createPersistedActivitySafetyBoundary(
+      "Template apply preview write-back records the generated plan only and does not create artifacts or perform external effects."
+    ),
+    nextAction: {
+      label: "Review template preview",
+      description:
+        approvalRequestIds.length > 0
+          ? `Review approval gates before applying ${input.template.title}.`
+          : `Review the ${preview.suggestedArtifactType} plan before drafting.`,
+      targetType: "template",
+      targetId: input.template.id,
+      requiredStatus:
+        approvalRequestIds.length > 0 ? "waiting_for_approval" : "completed"
+    },
+    taskStatus: {
+      workflowStatus: "preview",
+      approvalStatus: approvalRequestIds.length > 0 ? "pending" : undefined
+    },
+    metadata: {
+      riskLevel: approvalRequestIds.length > 0 ? "high" : "low",
+      permissionState:
+        approvalRequestIds.length > 0
+          ? "requires_explicit_approval"
+          : "workspace_shared",
+      externalEffects: ["none"],
+      artifactType: preview.suggestedArtifactType
+    }
+  };
+}
+
 function createDailyWorkTemplateApplyPrompt(input: {
   template: DailyWorkTemplate;
   suggestedArtifactType: ArtifactType;
@@ -472,6 +530,60 @@ export function createConnectorActionPreviewResponse(input: {
   };
 }
 
+export function createConnectorActionPreviewActivityEvent(input: {
+  mode: AppMode;
+  connector: DailyWorkConnector;
+  response: ConnectorActionPreviewResponse;
+}): DailyActivityEvent {
+  const preview = input.response.preview;
+  const approvalRequestIds = preview.requiredApprovalRequestIds;
+
+  return {
+    id: `daily-event-connector-${input.connector.id}-${preview.action}-preview`,
+    mode: input.mode,
+    eventType: "workflow.preview.completed",
+    status: "completed",
+    timestamp: new Date().toISOString(),
+    title: "Connector preview generated",
+    summary:
+      `Generated a preview-only ${preview.action} plan for ${input.connector.displayName}; no connector call, external read, send, write, schedule, or task creation was performed.`,
+    actor: "daily-work-agent",
+    relatedRefs: {
+      sessionIds: [],
+      templateIds: [],
+      workflowIds: [],
+      actionQueueItemIds: [],
+      artifactIds: [],
+      approvalRequestIds,
+      connectorIds: [input.connector.id],
+      contextItemIds: preview.relatedContextItemIds
+    },
+    safetyBoundary: createPersistedActivitySafetyBoundary(
+      "Connector preview write-back records the simulated connector plan only and performs no external connector action."
+    ),
+    nextAction: {
+      label: "Review connector preview",
+      description:
+        approvalRequestIds.length > 0
+          ? `Review approval gates before using ${input.connector.displayName}.`
+          : `Use the ${input.connector.displayName} preview plan in the next daily-work step.`,
+      targetType: "connector",
+      targetId: input.connector.id,
+      requiredStatus:
+        approvalRequestIds.length > 0 ? "waiting_for_approval" : "completed"
+    },
+    taskStatus: {
+      workflowStatus: "preview",
+      approvalStatus: approvalRequestIds.length > 0 ? "pending" : undefined
+    },
+    metadata: {
+      riskLevel: input.connector.riskLevel,
+      permissionState: input.connector.permissionState,
+      externalEffects: ["none"]
+    }
+  };
+}
+
 export function createDailyWorkWorkflowPreviewResponse(input: {
   mode: AppMode;
   workflow: DailyWorkWorkflow;
@@ -552,6 +664,80 @@ export function createDailyWorkWorkflowPreviewResponse(input: {
         previewOnly: true,
         externalEffects: ["none"]
       }
+    }
+  };
+}
+
+export function createWorkflowPreviewActivityEvent(input: {
+  mode: AppMode;
+  workflow: DailyWorkWorkflow;
+  response: DailyWorkWorkflowPreviewResponse;
+}): DailyActivityEvent {
+  const preview = input.response.preview;
+  const selectedStep = preview.steps.find(
+    (step) => step.actionId === preview.selectedActionId
+  );
+  const artifactType = preview.artifactLinks[0]?.artifactType;
+  const approvalStatus = workflowPreviewApprovalStatus(preview.approvalLinks);
+  const approvalRequestIds = uniqueStrings(
+    preview.approvalLinks.map((link) => link.approvalRequestId)
+  );
+  const actionQueueItemIds = uniqueStrings(
+    preview.steps.map((step) => step.actionId)
+  );
+
+  return {
+    id: `daily-event-workflow-${input.workflow.id}-${preview.selectedActionId}-preview`,
+    mode: input.mode,
+    eventType: "workflow.preview.completed",
+    status: "completed",
+    timestamp: new Date().toISOString(),
+    title: "Workflow preview generated",
+    summary:
+      `${preview.summary} Preview write-back recorded workflow, action, context, artifact, and approval references only.`,
+    actor: "daily-work-agent",
+    relatedRefs: {
+      sessionIds: [],
+      templateIds: [],
+      workflowIds: [preview.workflowId],
+      actionQueueItemIds,
+      artifactIds: uniqueStrings(
+        preview.artifactLinks.map((link) => link.artifactId)
+      ),
+      approvalRequestIds,
+      connectorIds: uniqueStrings(
+        preview.connectorLinks.map((link) => link.connectorId)
+      ),
+      contextItemIds: uniqueStrings([
+        ...preview.contextLinks.map((link) => link.contextItemId),
+        ...preview.requestedContextItemIds
+      ])
+    },
+    safetyBoundary: createPersistedActivitySafetyBoundary(
+      "Workflow preview write-back records local preview references only and performs no external workflow action."
+    ),
+    nextAction: {
+      label: "Review workflow preview",
+      description:
+        approvalStatus === "pending"
+          ? "Review approval gates before continuing the preview workflow."
+          : "Review the workflow preview and decide the next local daily-work step.",
+      targetType: "workflow",
+      targetId: preview.workflowId,
+      requiredStatus:
+        approvalStatus === "pending" ? "waiting_for_approval" : "completed"
+    },
+    taskStatus: {
+      workflowStatus: input.workflow.status,
+      actionQueueStatus: preview.selectedActionStatus,
+      artifactStatus: preview.artifactLinks[0]?.status,
+      approvalStatus
+    },
+    metadata: {
+      riskLevel: selectedStep?.riskLevel ?? "low",
+      permissionState: selectedStep?.permissionState ?? "workspace_shared",
+      externalEffects: ["none"],
+      ...(artifactType ? { artifactType } : {})
     }
   };
 }
@@ -925,6 +1111,24 @@ function uniqueBy<T>(values: T[], createKey: (value: T) => string) {
     seen.add(key);
     return true;
   });
+}
+
+function workflowPreviewApprovalStatus(
+  approvalLinks: DailyWorkWorkflowPreviewResponse["preview"]["approvalLinks"]
+): NonNullable<DailyActivityEvent["taskStatus"]>["approvalStatus"] {
+  if (approvalLinks.some((link) => link.status === "pending")) {
+    return "pending";
+  }
+
+  if (approvalLinks.some((link) => link.status === "denied")) {
+    return "denied";
+  }
+
+  if (approvalLinks.some((link) => link.status === "approved")) {
+    return "approved";
+  }
+
+  return undefined;
 }
 
 function createPersistedActivitySafetyBoundary(statement: string) {
