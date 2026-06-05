@@ -22,11 +22,11 @@ import {
   createDailyWorkRepositoryFromEnv,
   type DailyWorkRepository
 } from "./repositories/daily-work-repository.js";
+import { registerDailyWorkRoutes } from "./routes/daily-work-routes.js";
 import {
   createDailyModelUsageSnapshot,
-  filterDailyActivityEvents,
-  registerDailyWorkRoutes
-} from "./routes/daily-work-routes.js";
+  filterDailyActivityEvents
+} from "./services/daily-work-service.js";
 
 const allowedOrigins = new Set([
   "http://localhost:3000",
