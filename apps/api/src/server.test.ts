@@ -231,6 +231,90 @@ describe("api server", () => {
     await app.close();
   });
 
+  it("persists daily-work template apply preview activity in the configured JSON data directory", async () => {
+    const dataDir = await mkdtemp(join(tmpdir(), "seekdesk-api-data-"));
+    process.env.SEEKDESK_DATA_DIR = dataDir;
+
+    try {
+      const app = await buildServer();
+
+      try {
+        const response = await app.inject({
+          method: "POST",
+          url: "/api/daily/templates/email-draft/apply-preview",
+          payload: {
+            prompt: "Persist this template apply preview.",
+            contextItemIds: ["customer-email", "meeting-notes"]
+          }
+        });
+        const body = dailyWorkTemplateApplyPreviewResponseSchema.parse(
+          response.json()
+        );
+
+        expect(response.statusCode).toBe(200);
+        expect(body.preview).toEqual(
+          expect.objectContaining({
+            templateId: "email-draft",
+            previewOnly: true,
+            externalEffects: ["none"]
+          })
+        );
+
+        const eventsResponse = await app.inject({
+          method: "GET",
+          url: "/api/daily/events"
+        });
+        const eventsBody = dailyActivityEventsResponseSchema.parse(
+          eventsResponse.json()
+        );
+        const event = findEventByIdPattern(
+          eventsBody.events,
+          /template.*email-draft.*apply-preview/,
+          "template apply preview event"
+        );
+
+        expect(event).toEqual(
+          expect.objectContaining({
+            mode: "daily_work",
+            status: "completed",
+            relatedRefs: expect.objectContaining({
+              templateIds: ["email-draft"],
+              approvalRequestIds: ["draft-external-reply"],
+              contextItemIds: ["customer-email", "meeting-notes"]
+            }),
+            safetyBoundary: expect.objectContaining({
+              previewOnly: true,
+              externalEffects: ["none"]
+            }),
+            metadata: expect.objectContaining({
+              externalEffects: ["none"],
+              artifactType: "email_draft"
+            })
+          })
+        );
+        expect([
+          "workflow.preview.completed",
+          "template.applied"
+        ]).toContain(event.eventType);
+
+        const eventsFile = JSON.parse(
+          await readFile(join(dataDir, "events.json"), "utf8")
+        );
+        expect(eventsFile.events).toEqual(
+          expect.arrayContaining([
+            expect.objectContaining({
+              id: event.id
+            })
+          ])
+        );
+      } finally {
+        await app.close();
+      }
+    } finally {
+      await rm(dataDir, { force: true, recursive: true });
+    }
+  });
+
   it("refuses template apply previews for the reserved coding-agent mode", async () => {
     const app = await buildServer();
     const response = await app.inject({
@@ -1084,6 +1168,92 @@ describe("api server", () => {
     await app.close();
   });
 
+  it("persists daily-work connector preview activity in the configured JSON data directory", async () => {
+    const dataDir = await mkdtemp(join(tmpdir(), "seekdesk-api-data-"));
+    process.env.SEEKDESK_DATA_DIR = dataDir;
+
+    try {
+      const app = await buildServer();
+
+      try {
+        const response = await app.inject({
+          method: "POST",
+          url: "/api/daily/connectors/customer-email/preview",
+          payload: {
+            action: "prepare_email_draft",
+            contextItemIds: ["meeting-notes"],
+            prompt: "Persist this connector preview."
+          }
+        });
+        const body = connectorActionPreviewResponseSchema.parse(
+          response.json()
+        );
+
+        expect(response.statusCode).toBe(200);
+        expect(body.preview).toEqual(
+          expect.objectContaining({
+            connectorId: "customer-email",
+            action: "prepare_email_draft",
+            previewOnly: true
+          })
+        );
+
+        const eventsResponse = await app.inject({
+          method: "GET",
+          url: "/api/daily/events"
+        });
+        const eventsBody = dailyActivityEventsResponseSchema.parse(
+          eventsResponse.json()
+        );
+        const event = findEventByIdPattern(
+          eventsBody.events,
+          /connector.*customer-email.*prepare_email_draft.*preview/,
+          "connector preview event"
+        );
+
+        expect(event).toEqual(
+          expect.objectContaining({
+            mode: "daily_work",
+            eventType: "workflow.preview.completed",
+            status: "completed",
+            relatedRefs: expect.objectContaining({
+              approvalRequestIds: [
+                "read-customer-email-context",
+                "draft-external-reply"
+              ],
+              connectorIds: ["customer-email"],
+              contextItemIds: ["customer-email", "meeting-notes"]
+            }),
+            safetyBoundary: expect.objectContaining({
+              previewOnly: true,
+              externalEffects: ["none"]
+            }),
+            metadata: expect.objectContaining({
+              riskLevel: "high",
+              permissionState: "requires_review",
+              externalEffects: ["none"]
+            })
+          })
+        );
+
+        const eventsFile = JSON.parse(
+          await readFile(join(dataDir, "events.json"), "utf8")
+        );
+        expect(eventsFile.events).toEqual(
+          expect.arrayContaining([
+            expect.objectContaining({
+              id: event.id
+            })
+          ])
+        );
+      } finally {
+        await app.close();
+      }
+    } finally {
+      await rm(dataDir, { force: true, recursive: true });
+    }
+  });
+
   it("returns 400 when a connector preview action is not available", async () => {
     const app = await buildServer();
     const response = await app.inject({
@@ -1457,6 +1627,96 @@ describe("api server", () => {
     );
 
     await app.close();
+  });
+
+  it("persists daily-work workflow preview activity in the configured JSON data directory", async () => {
+    const dataDir = await mkdtemp(join(tmpdir(), "seekdesk-api-data-"));
+    process.env.SEEKDESK_DATA_DIR = dataDir;
+
+    try {
+      const app = await buildServer();
+
+      try {
+        const response = await app.inject({
+          method: "POST",
+          url: "/api/daily/workflows/weekly-report-task-plan-workflow/preview",
+          payload: {
+            actionId: "queue-weekly-report",
+            contextItemIds: ["project-brief", "team-notes"],
+            prompt: "Persist this workflow preview."
+          }
+        });
+        const body = dailyWorkWorkflowPreviewResponseSchema.parse(
+          response.json()
+        );
+
+        expect(response.statusCode).toBe(200);
+        expect(body.preview).toEqual(
+          expect.objectContaining({
+            workflowId: "weekly-report-task-plan-workflow",
+            selectedActionId: "queue-weekly-report",
+            previewOnly: true,
+            externalEffects: ["none"]
+          })
+        );
+
+        const eventsResponse = await app.inject({
+          method: "GET",
+          url: "/api/daily/events"
+        });
+        const eventsBody = dailyActivityEventsResponseSchema.parse(
+          eventsResponse.json()
+        );
+        const event = findEventByIdPattern(
+          eventsBody.events,
+          /workflow.*weekly-report-task-plan-workflow.*queue-weekly-report.*preview/,
+          "workflow preview event"
+        );
+
+        expect(event).toEqual(
+          expect.objectContaining({
+            mode: "daily_work",
+            eventType: "workflow.preview.completed",
+            status: "completed",
+            relatedRefs: expect.objectContaining({
+              workflowIds: ["weekly-report-task-plan-workflow"],
+              actionQueueItemIds: ["queue-weekly-report"],
+              connectorIds: ["workspace-documents"],
+              contextItemIds: expect.arrayContaining([
+                "project-brief",
+                "team-notes"
+              ])
+            }),
+            safetyBoundary: expect.objectContaining({
+              previewOnly: true,
+              externalEffects: ["none"]
+            }),
+            taskStatus: expect.objectContaining({
+              workflowStatus: "preview",
+              actionQueueStatus: "preview_ready"
+            }),
+            metadata: expect.objectContaining({
+              externalEffects: ["none"]
+            })
+          })
+        );
+
+        const eventsFile = JSON.parse(
+          await readFile(join(dataDir, "events.json"), "utf8")
+        );
+        expect(eventsFile.events).toEqual(
+          expect.arrayContaining([
+            expect.objectContaining({
+              id: event.id
+            })
+          ])
+        );
+      } finally {
+        await app.close();
+      }
+    } finally {
+      await rm(dataDir, { force: true, recursive: true });
+    }
   });
 
   it("returns 400 when a workflow preview action is not available", async () => {
@@ -2643,4 +2903,16 @@ function createDeepSeekStreamResponse(chunks: string[]) {
       status: 200
     }
   );
+}
+
+function findEventByIdPattern<T extends { id: string }>(
+  events: T[],
+  pattern: RegExp,
+  label: string
+) {
+  const event = events.find((candidate) => pattern.test(candidate.id));
+
+  expect(event, `Expected ${label} to be visible in /api/daily/events.`).toBeDefined();
+
+  return event as T;
 }
