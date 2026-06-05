@@ -1,5 +1,5 @@
 "use client";
-import { useMemo, useState } from "react";
+import { useMemo } from "react";
 import {
   Loader2,
   Mail,
@@ -15,23 +15,9 @@ import {
 } from "lucide-react";
 
 import { Button } from "@/components/ui/button";
-import type {
-  SessionHistoryFilter,
-  ArtifactFilter,
-  ConnectorFilter,
-  WorkflowActionFilter,
-  ModelRouteMode
-} from "../types";
 import {
-  sessionHistoryItems,
-  connectorItems,
-  workflowActions,
-  activityEvents,
-  artifacts,
   getRuntimeApiBaseUrl,
   statusLabel,
-  connectorPreviewApprovalStatus,
-  connectorMatchesFilter,
   selectedContextLabel
 } from "../domain";
 
@@ -51,6 +37,10 @@ import {
 } from "../hooks/useDailyWorkPanels";
 import { useDailyWorkActions } from "../hooks/useDailyWorkActions";
 import {
+  useDailyWorkDerivedSelections,
+  useDailyWorkSelectionState
+} from "../hooks/useDailyWorkSelectionState";
+import {
   PanelHeader,
   PromptCard,
   PersistenceStatusPanel
@@ -67,29 +57,28 @@ import { TemplateLibraryPanel } from "./panels/TemplateLibraryPanel";
 import { WorkflowPreviewPanel } from "./panels/WorkflowPreviewPanel";
 
 export function DailyWorkDashboard() {
-  const [sessionHistoryFilter, setSessionHistoryFilter] =
-    useState<SessionHistoryFilter>("全部");
-  const [selectedSessionHistoryId, setSelectedSessionHistoryId] = useState<
-    string | null
-  >(sessionHistoryItems[0]?.id ?? null);
-  const [selectedContextId, setSelectedContextId] = useState<string | null>(null);
-  const [connectorFilter, setConnectorFilter] = useState<ConnectorFilter>("全部");
-  const [selectedConnectorId, setSelectedConnectorId] = useState<string | null>(
-    connectorItems[0]?.id ?? null
-  );
-  const [workflowActionFilter, setWorkflowActionFilter] =
-    useState<WorkflowActionFilter>("全部");
-  const [selectedWorkflowActionId, setSelectedWorkflowActionId] = useState<
-    string | null
-  >(workflowActions[0]?.id ?? null);
-  const [selectedActivityEventId, setSelectedActivityEventId] = useState<
-    string | null
-  >(activityEvents[0]?.id ?? null);
-  const [selectedArtifactId, setSelectedArtifactId] = useState<string | null>(
-    artifacts[0]?.id ?? null
-  );
-  const [artifactFilter, setArtifactFilter] = useState<ArtifactFilter>("全部");
-  const [modelRouteMode, setModelRouteMode] = useState<ModelRouteMode>("fast");
+  const selectionState = useDailyWorkSelectionState();
+  const {
+    artifactFilter,
+    connectorFilter,
+    modelRouteMode,
+    selectedArtifactId,
+    selectedContextId,
+    selectedSessionHistoryId,
+    sessionHistoryFilter,
+    setArtifactFilter,
+    setConnectorFilter,
+    setModelRouteMode,
+    setSelectedActivityEventId,
+    setSelectedArtifactId,
+    setSelectedConnectorId,
+    setSelectedContextId,
+    setSelectedSessionHistoryId,
+    setSelectedWorkflowActionId,
+    setSessionHistoryFilter,
+    setWorkflowActionFilter,
+    workflowActionFilter
+  } = selectionState;
 
   const apiBaseUrl = useMemo(() => getRuntimeApiBaseUrl().replace(/\/$/, ""), []);
   const {
@@ -143,63 +132,31 @@ export function DailyWorkDashboard() {
   const templateItems = templatePanel.items;
   const contextPanelItems = contextPanel.items;
   const approvalRequests = approvalPanel.items;
-  const selectedContextItem = useMemo(
-    () =>
-      contextPanelItems.find((item) => item.id === selectedContextId) ?? null,
-    [contextPanelItems, selectedContextId]
-  );
-  const filteredConnectors = useMemo(
-    () =>
-      connectorFilter === "全部"
-        ? connectorItems
-        : connectorItems.filter((item) =>
-            connectorMatchesFilter(item, connectorFilter)
-          ),
-    [connectorFilter]
-  );
-  const selectedConnector = useMemo(() => {
-    const selectedInFilter = filteredConnectors.find(
-      (connector) => connector.id === selectedConnectorId
-    );
-
-    return selectedInFilter ?? filteredConnectors[0] ?? connectorItems[0] ?? null;
-  }, [filteredConnectors, selectedConnectorId]);
-  const selectedConnectorApprovalRequests = useMemo(() => {
-    if (!selectedConnector) {
-      return [];
-    }
-
-    return approvalRequests.filter((request) =>
-      selectedConnector.requiredApprovalIds.includes(request.id)
-    );
-  }, [approvalRequests, selectedConnector]);
+  const artifactItems = artifactPanel.items;
+  const sessionHistoryPanelItems = sessionHistoryPanel.items;
+  const {
+    filteredArtifacts,
+    filteredConnectors,
+    filteredSessionHistory,
+    filteredWorkflowActions,
+    selectedActivityEvent,
+    selectedArtifact,
+    selectedConnector,
+    selectedConnectorApprovalRequests,
+    selectedConnectorPreviewStatus,
+    selectedContextItem,
+    selectedSessionHistory,
+    selectedWorkflowAction
+  } = useDailyWorkDerivedSelections({
+    ...selectionState,
+    activityFeedEvents,
+    approvalRequests,
+    artifactItems,
+    contextPanelItems,
+    sessionHistoryPanelItems
+  });
   const { connectorPreviewPanel, setConnectorPreviewPanel } =
     useConnectorPreview(apiBaseUrl, selectedConnector);
-
-  const selectedConnectorPreviewStatus = useMemo(
-    () =>
-      connectorPreviewApprovalStatus(
-        selectedConnector,
-        selectedConnectorApprovalRequests
-      ),
-    [selectedConnector, selectedConnectorApprovalRequests]
-  );
-  const filteredWorkflowActions = useMemo(
-    () =>
-      workflowActionFilter === "全部"
-        ? workflowActions
-        : workflowActions.filter(
-            (item) => item.approvalStatus === workflowActionFilter
-          ),
-    [workflowActionFilter]
-  );
-  const selectedWorkflowAction = useMemo(() => {
-    const selectedInFilter = filteredWorkflowActions.find(
-      (item) => item.id === selectedWorkflowActionId
-    );
-
-    return selectedInFilter ?? filteredWorkflowActions[0] ?? workflowActions[0] ?? null;
-  }, [filteredWorkflowActions, selectedWorkflowActionId]);
   const { workflowPreviewPanel } = useWorkflowPreview(
     apiBaseUrl,
     selectedWorkflowAction
@@ -232,46 +189,6 @@ export function DailyWorkDashboard() {
     setTemplatePanel,
     workflowPreviewPanel
   });
-
-  const selectedActivityEvent = useMemo(
-    () =>
-      activityFeedEvents.find((event) => event.id === selectedActivityEventId) ??
-      activityFeedEvents[0] ??
-      null,
-    [activityFeedEvents, selectedActivityEventId]
-  );
-  const artifactItems = artifactPanel.items;
-  const filteredArtifacts = useMemo(
-    () =>
-      artifactFilter === "全部"
-        ? artifactItems
-        : artifactItems.filter((artifact) => artifact.state === artifactFilter),
-    [artifactFilter, artifactItems]
-  );
-  const selectedArtifact = useMemo(() => {
-    const selectedInFilter = filteredArtifacts.find(
-      (artifact) => artifact.id === selectedArtifactId
-    );
-
-    return selectedInFilter ?? filteredArtifacts[0] ?? artifactItems[0] ?? null;
-  }, [artifactItems, filteredArtifacts, selectedArtifactId]);
-  const sessionHistoryPanelItems = sessionHistoryPanel.items;
-  const filteredSessionHistory = useMemo(
-    () =>
-      sessionHistoryFilter === "全部"
-        ? sessionHistoryPanelItems
-        : sessionHistoryPanelItems.filter(
-            (item) => item.status === sessionHistoryFilter
-          ),
-    [sessionHistoryFilter, sessionHistoryPanelItems]
-  );
-  const selectedSessionHistory = useMemo(() => {
-    const selectedInFilter = filteredSessionHistory.find(
-      (item) => item.id === selectedSessionHistoryId
-    );
-
-    return selectedInFilter ?? filteredSessionHistory[0] ?? sessionHistoryPanelItems[0] ?? null;
-  }, [filteredSessionHistory, selectedSessionHistoryId, sessionHistoryPanelItems]);
 
   return (
     <main className="min-h-screen overflow-x-hidden px-4 py-4 text-teal-950 md:px-6">
