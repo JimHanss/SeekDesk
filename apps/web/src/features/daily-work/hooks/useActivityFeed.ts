@@ -19,17 +19,14 @@ export function useActivityFeed(
     "Connecting to the backend activity feed; showing frontend fallback data for now."
   );
 
-  React.useEffect(() => {
-    let isDisposed = false;
-    const controller = new AbortController();
-
-    const applySnapshot = (
+  const applySnapshot = React.useCallback(
+    (
       payload: DailyWorkTypes.DailyActivitySnapshotDto,
       source: Exclude<DailyWorkTypes.ActivityFeedSource, "fallback">
     ) => {
       const nextEvents = domain.mapDailyActivitySnapshot(payload);
 
-      if (isDisposed || nextEvents.length === 0) {
+      if (nextEvents.length === 0) {
         return;
       }
 
@@ -46,15 +43,16 @@ export function useActivityFeed(
           ? currentId
           : nextEvents[0]?.id ?? null
       );
-    };
+    },
+    [setSelectedActivityEventId]
+  );
 
-    async function fetchActivityEvents() {
+  const refreshActivityFeed = React.useCallback(
+    async (signal?: AbortSignal) => {
       try {
         const response = await fetch(
           `${apiBaseUrl}/api/daily/events?mode=${domain.activeMode}`,
-          {
-            signal: controller.signal
-          }
+          signal ? { signal } : undefined
         );
 
         if (!response.ok) {
@@ -63,7 +61,7 @@ export function useActivityFeed(
 
         applySnapshot((await response.json()) as DailyWorkTypes.DailyActivitySnapshotDto, "api");
       } catch {
-        if (controller.signal.aborted || isDisposed) {
+        if (signal?.aborted) {
           return;
         }
 
@@ -72,7 +70,13 @@ export function useActivityFeed(
           "暂未取到后端活动列表，页面会继续保留前端 fallback 示例。"
         );
       }
-    }
+    },
+    [apiBaseUrl, applySnapshot]
+  );
+
+  React.useEffect(() => {
+    let isDisposed = false;
+    const controller = new AbortController();
 
     function connectActivitySocket() {
       const socketUrl = domain.getRuntimeWebSocketUrl(apiBaseUrl);
@@ -94,7 +98,7 @@ export function useActivityFeed(
       socket.addEventListener("message", (event) => {
         const payload = domain.parseDailyActivitySnapshot(event.data);
 
-        if (payload?.type === "daily.activity.snapshot") {
+        if (!isDisposed && payload?.type === "daily.activity.snapshot") {
           applySnapshot(payload, "websocket");
         }
       });
@@ -118,7 +122,7 @@ export function useActivityFeed(
     }
 
     setActivityConnectionStatus("connecting");
-    void fetchActivityEvents();
+    void refreshActivityFeed(controller.signal);
     const socket = connectActivitySocket();
 
     return () => {
@@ -126,13 +130,14 @@ export function useActivityFeed(
       controller.abort();
       socket?.close();
     };
-  }, [apiBaseUrl])
+  }, [apiBaseUrl, applySnapshot, refreshActivityFeed]);
 
   return {
     activityConnectionStatus,
     activityFeedEvents,
     activityFeedNotice,
     activityFeedSource,
-    activityLastUpdated
+    activityLastUpdated,
+    refreshActivityFeed
   };
 }

@@ -103,8 +103,14 @@ export default function Page() {
     apiBaseUrl,
     setSelectedContextId
   );
-  const { approvalPanel, setApprovalPanel } = useApprovalLedger(apiBaseUrl);
-  const { sessionHistoryPanel, setSessionHistoryPanel } = useSessionHistory(
+  const { approvalPanel, refreshApprovalLedger, setApprovalPanel } =
+    useApprovalLedger(apiBaseUrl);
+  const {
+    refreshSessionDetail,
+    refreshSessionHistory,
+    sessionHistoryPanel,
+    setSessionHistoryPanel
+  } = useSessionHistory(
     apiBaseUrl,
     selectedSessionHistoryId,
     setSelectedSessionHistoryId
@@ -121,7 +127,8 @@ export default function Page() {
     activityFeedEvents,
     activityFeedNotice,
     activityFeedSource,
-    activityLastUpdated
+    activityLastUpdated,
+    refreshActivityFeed
   } = useActivityFeed(apiBaseUrl, setSelectedActivityEventId);
 
   const activeModelSnapshot = modelUsagePanel.modelSnapshots[modelRouteMode];
@@ -156,10 +163,11 @@ export default function Page() {
     sessionHistoryPanelItems
   });
   const { connectorPreviewPanel, setConnectorPreviewPanel } =
-    useConnectorPreview(apiBaseUrl, selectedConnector);
+    useConnectorPreview(apiBaseUrl, selectedConnector, refreshActivityFeed);
   const { workflowPreviewPanel } = useWorkflowPreview(
     apiBaseUrl,
-    selectedWorkflowAction
+    selectedWorkflowAction,
+    refreshActivityFeed
   );
   const {
     applyActivityEventPrompt,
@@ -176,6 +184,10 @@ export default function Page() {
     apiBaseUrl,
     applyPrompt,
     modelUsagePanel,
+    refreshActivityFeed,
+    refreshApprovalLedger,
+    refreshSessionDetail,
+    refreshSessionHistory,
     setApprovalPanel,
     setConnectorPreviewPanel,
     setContextPanel,

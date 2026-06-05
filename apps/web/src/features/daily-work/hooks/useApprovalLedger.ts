@@ -8,23 +8,19 @@ export function useApprovalLedger(apiBaseUrl: string) {
     domain.createFallbackApprovalPanelState
   );
 
-  React.useEffect(() => {
-    let isDisposed = false;
-    const controller = new AbortController();
-
-    async function fetchApprovalRequests() {
+  const refreshApprovalLedger = React.useCallback(
+    async (signal?: AbortSignal) => {
       setApprovalPanel((current) => ({
         ...current,
         syncStatus: "syncing",
-        notice: "正在从 /api/daily/approvals?mode=daily_work 同步审批台账。"
+        notice:
+          "正在从 /api/daily/approvals?mode=daily_work 刷新审批台账，确认最新持久化决策。"
       }));
 
       try {
         const response = await fetch(
           `${apiBaseUrl}/api/daily/approvals?mode=${domain.activeMode}`,
-          {
-            signal: controller.signal
-          }
+          signal ? { signal } : undefined
         );
 
         if (!response.ok) {
@@ -35,17 +31,15 @@ export function useApprovalLedger(apiBaseUrl: string) {
           (await response.json()) as DailyWorkTypes.DailyApprovalRequestsResponseDto
         );
 
-        if (!isDisposed) {
-          setApprovalPanel({
-            items,
-            source: "api",
-            syncStatus: "live",
-            notice:
-              "已从 /api/daily/approvals?mode=daily_work 同步审批请求、风险等级、权限模式和上下文链路。"
-          });
-        }
+        setApprovalPanel({
+          items,
+          source: "api",
+          syncStatus: "live",
+          notice:
+            "已从 /api/daily/approvals?mode=daily_work 刷新审批请求、风险等级、权限模式和上下文链路。"
+        });
       } catch {
-        if (controller.signal.aborted || isDisposed) {
+        if (signal?.aborted) {
           return;
         }
 
@@ -54,18 +48,22 @@ export function useApprovalLedger(apiBaseUrl: string) {
           source: "degraded",
           syncStatus: "degraded",
           notice:
-            "暂未从后端同步审批台账，已保留本地 approval fallback。"
+            "暂未从后端刷新审批台账，页面保留当前 approval 快照。"
         }));
       }
-    }
+    },
+    [apiBaseUrl]
+  );
 
-    void fetchApprovalRequests();
+  React.useEffect(() => {
+    const controller = new AbortController();
+
+    void refreshApprovalLedger(controller.signal);
 
     return () => {
-      isDisposed = true;
       controller.abort();
     };
-  }, [apiBaseUrl])
+  }, [refreshApprovalLedger]);
 
-  return { approvalPanel, setApprovalPanel };
+  return { approvalPanel, refreshApprovalLedger, setApprovalPanel };
 }

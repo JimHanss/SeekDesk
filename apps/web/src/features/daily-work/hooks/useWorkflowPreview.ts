@@ -5,7 +5,8 @@ import type * as DailyWorkTypes from "../types";
 
 export function useWorkflowPreview(
   apiBaseUrl: string,
-  selectedWorkflowAction: DailyWorkTypes.WorkflowActionItem | null
+  selectedWorkflowAction: DailyWorkTypes.WorkflowActionItem | null,
+  onPreviewSynced?: () => Promise<void> | void
 ) {
   const [workflowPreviewPanel, setWorkflowPreviewPanel] =
     React.useState<DailyWorkTypes.WorkflowPreviewPanelState>(() =>
@@ -55,6 +56,7 @@ export function useWorkflowPreview(
 
         if (!isDisposed) {
           setWorkflowPreviewPanel(domain.mapWorkflowPreviewResponse(action, payload));
+          void onPreviewSynced?.();
         }
       } catch {
         if (controller.signal.aborted || isDisposed) {
@@ -77,7 +79,7 @@ export function useWorkflowPreview(
       isDisposed = true;
       controller.abort();
     };
-  }, [apiBaseUrl, selectedWorkflowAction])
+  }, [apiBaseUrl, onPreviewSynced, selectedWorkflowAction])
 
   return { workflowPreviewPanel, setWorkflowPreviewPanel };
 }
