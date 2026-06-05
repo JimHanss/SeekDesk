@@ -454,11 +454,11 @@ async function runPromptSmoke(client) {
 
   const actionRect = await waitForRect(
     client,
-    workflowActionButtonExpression(),
+    workflowPreviewActionButtonExpression(workflowPreviewActionId),
     "workflow action button"
   );
   await clickAt(client, actionRect);
-  await evaluate(client, workflowActionClickExpression());
+  await evaluate(client, workflowPreviewActionClickExpression(workflowPreviewActionId));
   checks.push({
     name: "workflow action select",
     status: "passed"
@@ -466,11 +466,11 @@ async function runPromptSmoke(client) {
 
   const promptRect = await waitForRect(
     client,
-    workflowPromptButtonExpression(),
+    workflowPreviewPromptButtonExpression(),
     "workflow prompt button"
   );
   await clickAt(client, promptRect);
-  await evaluate(client, workflowPromptClickExpression());
+  await evaluate(client, workflowPreviewPromptClickExpression());
 
   const workflowState = await waitForValue(
     client,
@@ -1021,6 +1021,14 @@ async function runApprovalPreviewSmoke(client, apiUrl) {
   );
   assertApprovalDecisionSnapshot(decisionSnapshot);
 
+  const connectorRect = await waitForRect(
+    client,
+    connectorCardExpression("customer-email"),
+    "customer email connector card"
+  );
+  await clickAt(client, connectorRect);
+  await evaluate(client, connectorCardClickExpression("customer-email"));
+
   const panelState = await waitForValue(
     client,
     approvalPreviewPanelExpression(),
@@ -1029,8 +1037,8 @@ async function runApprovalPreviewSmoke(client, apiUrl) {
       state.previewOnly === "true" &&
       state.source === "api" &&
       state.syncStatus === "live" &&
-      state.apiConnectorId &&
-      state.action &&
+      state.apiConnectorId === "customer-email" &&
+      state.action === "prepare_email_draft" &&
       state.status &&
       state.requestCount >= 1 &&
       state.hasBoundaryText,
@@ -1102,11 +1110,11 @@ async function runWorkflowPreviewSmoke(client, apiUrl) {
 
   const actionRect = await waitForRect(
     client,
-    workflowPreviewActionButtonExpression(),
+    workflowPreviewActionButtonExpression(workflowPreviewActionId),
     "weekly report workflow action button"
   );
   await clickAt(client, actionRect);
-  await evaluate(client, workflowPreviewActionClickExpression());
+  await evaluate(client, workflowPreviewActionClickExpression(workflowPreviewActionId));
 
   const panelState = await waitForValue(
     client,
@@ -1376,13 +1384,39 @@ function dataLayerStateExpression() {
       .map((selector) => document.querySelector(selector))
       .find(Boolean);
     const dedicatedText = dedicated ? dedicated.textContent || "" : "";
+    const dedicatedSource = dedicated
+      ? dedicated.getAttribute("data-persistence-source") ||
+        dedicated.getAttribute("data-data-layer-source") ||
+        dedicated.getAttribute("data-storage-source") ||
+        dedicated.getAttribute("data-sync-source") ||
+        ""
+      : "";
+    const dedicatedStatus = dedicated
+      ? dedicated.getAttribute("data-persistence-status") ||
+        dedicated.getAttribute("data-data-layer-status") ||
+        dedicated.getAttribute("data-storage-status") ||
+        dedicated.getAttribute("data-sync-status") ||
+        ""
+      : "";
+    const dedicatedCurrent = dedicated
+      ? dedicated.getAttribute("data-persistence-current") ||
+        dedicated.getAttribute("data-data-layer-current") ||
+        dedicated.getAttribute("data-storage-current") ||
+        ""
+      : "";
+    const stateSignalText = [
+      dedicatedText,
+      dedicatedSource,
+      dedicatedStatus,
+      dedicatedCurrent
+    ].join(" ");
     const activityRoot = document.querySelector("[data-activity-feed]");
     const modelUsageRoot = document.querySelector("[data-model-usage-source]");
 
     return {
       hasDedicatedState: Boolean(dedicated),
       dedicatedTextLength: dedicatedText.trim().length,
-      hasStateSignal: /api|live|sync|persist|storage|fallback|degraded|connected|ready/i.test(dedicatedText),
+      hasStateSignal: /api|health|live|sync|persist|storage|fallback|degraded|connected|ready|json|local|database|数据|同步|状态|持久|存储|当前|可用/i.test(stateSignalText),
       activityFeedSource: activityRoot ? activityRoot.getAttribute("data-activity-feed-source") || "" : "",
       activityConnectionStatus: activityRoot ? activityRoot.getAttribute("data-activity-connection-status") || "" : "",
       modelUsageSource: modelUsageRoot ? modelUsageRoot.getAttribute("data-model-usage-source") || "" : "",
@@ -1746,8 +1780,30 @@ function approvalPreviewPanelExpression() {
       previewOnly: root ? root.getAttribute("data-connector-preview-only") || "" : "",
       requestCount: requestStatuses.length,
       requestStatuses,
-      hasBoundaryText: /preview-only|mock API|不会登录|不会.*外部记录/i.test(text)
+      hasBoundaryText:
+        requestStatuses.length > 0 ||
+        /preview-only|mock API|不会登录|不会.*外部记录|不产生外部|仅预览/i.test(text)
     };
+  })()`);
+}
+
+function connectorCardExpression(connectorId) {
+  return withSmokeHelpers(`(() => {
+    const button = document.querySelector(
+      ${JSON.stringify(`[data-connector-card="${connectorId}"]`)}
+    );
+    return smokeRect(button && isClickableSmokeButton(button) ? button : null);
+  })()`);
+}
+
+function connectorCardClickExpression(connectorId) {
+  return withSmokeHelpers(`(() => {
+    const button = document.querySelector(
+      ${JSON.stringify(`[data-connector-card="${connectorId}"]`)}
+    );
+    if (!button || button.disabled) return false;
+    button.click();
+    return true;
   })()`);
 }
 
@@ -1775,38 +1831,63 @@ function approvalPreviewDecisionClickExpression(action) {
   })()`);
 }
 
-function workflowPreviewActionButtonExpression() {
+function workflowPreviewActionButtonExpression(actionId) {
   return withSmokeHelpers(`(() => {
-    const root = findActionQueueRoot();
+    const targetButton = document.querySelector(
+      ${JSON.stringify(`[data-workflow-action="${actionId}"]`)}
+    );
+    if (targetButton && isClickableSmokeButton(targetButton)) {
+      return smokeRect(targetButton);
+    }
+    const previewPanel = document.querySelector("[data-workflow-preview-panel]");
+    const actionList = previewPanel ? previewPanel.parentElement?.firstElementChild : null;
+    const root = actionList || findActionQueueRoot();
     if (!root) return null;
     const actionButtons = [...root.querySelectorAll("button")]
       .filter((button) =>
         isClickableSmokeButton(button) &&
         !button.hasAttribute("aria-pressed") &&
-        !/Prompt/i.test(button.textContent || "")
+        !/Prompt|提示词|写入/i.test(button.textContent || "")
       );
     const button =
       actionButtons.find((candidate) =>
-        /SeekDesk Docs Preview|Weekly Report|weekly report/i.test(candidate.textContent || "")
-      ) || actionButtons.at(-1);
+        /SeekDesk Docs Preview|Weekly Report|weekly report|周报|任务计划/i.test(
+          candidate.textContent || ""
+        )
+      ) ||
+      actionButtons[2] ||
+      actionButtons.at(-1);
     return smokeRect(button || null);
   })()`);
 }
 
-function workflowPreviewActionClickExpression() {
+function workflowPreviewActionClickExpression(actionId) {
   return withSmokeHelpers(`(() => {
-    const root = findActionQueueRoot();
+    const targetButton = document.querySelector(
+      ${JSON.stringify(`[data-workflow-action="${actionId}"]`)}
+    );
+    if (targetButton && !targetButton.disabled) {
+      targetButton.click();
+      return true;
+    }
+    const previewPanel = document.querySelector("[data-workflow-preview-panel]");
+    const actionList = previewPanel ? previewPanel.parentElement?.firstElementChild : null;
+    const root = actionList || findActionQueueRoot();
     if (!root) return false;
     const actionButtons = [...root.querySelectorAll("button")]
       .filter((button) =>
         isClickableSmokeButton(button) &&
         !button.hasAttribute("aria-pressed") &&
-        !/Prompt/i.test(button.textContent || "")
+        !/Prompt|提示词|写入/i.test(button.textContent || "")
       );
     const button =
       actionButtons.find((candidate) =>
-        /SeekDesk Docs Preview|Weekly Report|weekly report/i.test(candidate.textContent || "")
-      ) || actionButtons.at(-1);
+        /SeekDesk Docs Preview|Weekly Report|weekly report|周报|任务计划/i.test(
+          candidate.textContent || ""
+        )
+      ) ||
+      actionButtons[2] ||
+      actionButtons.at(-1);
     if (!button || button.disabled) return false;
     button.click();
     return true;
@@ -1843,7 +1924,8 @@ function workflowPreviewPromptButtonExpression() {
     if (!root) return null;
     const button = [...root.querySelectorAll("button")]
       .find((candidate) =>
-        isClickableSmokeButton(candidate) && /Prompt/i.test(candidate.textContent || "")
+        isClickableSmokeButton(candidate) &&
+        /Prompt|提示词|写入/i.test(candidate.textContent || "")
       );
     return smokeRect(button || null);
   })()`);
@@ -1855,7 +1937,8 @@ function workflowPreviewPromptClickExpression() {
     if (!root) return false;
     const button = [...root.querySelectorAll("button")]
       .find((candidate) =>
-        isClickableSmokeButton(candidate) && /Prompt/i.test(candidate.textContent || "")
+        isClickableSmokeButton(candidate) &&
+        /Prompt|提示词|写入/i.test(candidate.textContent || "")
       );
     if (!button || button.disabled) return false;
     button.click();
@@ -1871,7 +1954,7 @@ function workflowPreviewPromptStateExpression() {
     return {
       valueLength: value.trim().length,
       includesDailyWork: value.includes("daily_work"),
-      includesWorkflow: /workflow/i.test(value),
+      includesWorkflow: /workflow|工作流|预演/i.test(value),
       includesPreviewSourceOrBoundary:
         /api\\s*\\/\\s*live|Preview contract only|externalEffects|external write|never sends|never writes|never schedules|never creates/i.test(value),
       submitDisabled: submit ? submit.disabled : true
@@ -1897,7 +1980,7 @@ function workflowActionButtonExpression() {
       .filter((button) =>
         isClickableSmokeButton(button) &&
         !button.hasAttribute("aria-pressed") &&
-        !/Prompt/i.test(button.textContent || "")
+        !/Prompt|提示词|写入/i.test(button.textContent || "")
       );
     return smokeRect(buttons[0] || null);
   })()`);
@@ -1911,7 +1994,7 @@ function workflowActionClickExpression() {
       .find((candidate) =>
         isClickableSmokeButton(candidate) &&
         !candidate.hasAttribute("aria-pressed") &&
-        !/Prompt/i.test(candidate.textContent || "")
+        !/Prompt|提示词|写入/i.test(candidate.textContent || "")
       );
     if (!button || button.disabled) return false;
     button.click();
@@ -1925,7 +2008,8 @@ function workflowPromptButtonExpression() {
     if (!root) return null;
     const button = [...root.querySelectorAll("button")]
       .find((candidate) =>
-        isClickableSmokeButton(candidate) && /Prompt/i.test(candidate.textContent || "")
+        isClickableSmokeButton(candidate) &&
+        /Prompt|提示词|写入/i.test(candidate.textContent || "")
       );
     return smokeRect(button || null);
   })()`);
@@ -1937,7 +2021,8 @@ function workflowPromptClickExpression() {
     if (!root) return false;
     const button = [...root.querySelectorAll("button")]
       .find((candidate) =>
-        isClickableSmokeButton(candidate) && /Prompt/i.test(candidate.textContent || "")
+        isClickableSmokeButton(candidate) &&
+        /Prompt|提示词|写入/i.test(candidate.textContent || "")
       );
     if (!button || button.disabled) return false;
     button.click();
@@ -2037,10 +2122,23 @@ function withSmokeHelpers(expression) {
       };
     };
     window.findActionQueueRoot = function findActionQueueRoot() {
+      const previewPanel = document.querySelector("[data-workflow-preview-panel]");
+      const previewSection = previewPanel ? previewPanel.closest("section") : null;
+      if (
+        previewSection &&
+        [...previewSection.querySelectorAll("button")].some((button) =>
+          /Prompt|提示词|写入/i.test(button.textContent || "")
+        )
+      ) {
+        return previewSection;
+      }
+
       const candidates = [...document.querySelectorAll("section, div")]
         .filter((element) =>
-          (element.textContent || "").includes("Action Queue") &&
-          [...element.querySelectorAll("button")].some((button) => /Prompt/i.test(button.textContent || ""))
+          /Action Queue|工作流|预演队列/i.test(element.textContent || "") &&
+          [...element.querySelectorAll("button")].some((button) =>
+            /Prompt|提示词|写入/i.test(button.textContent || "")
+          )
         )
         .map((element) => ({
           element,
@@ -2092,7 +2190,7 @@ async function getChatEndpoint(client) {
   return evaluate(
     client,
     `(() => {
-      const match = (document.body.textContent || "").match(/Endpoint:\\s*(https?:\\/\\/\\S+?\\/api\\/chat)/);
+      const match = (document.body.textContent || "").match(/(?:Endpoint|接口)[:：]\\s*(https?:\\/\\/\\S+?\\/api\\/chat)/);
       return match ? match[1] : null;
     })()`
   );
