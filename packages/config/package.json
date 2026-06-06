@@ -10,6 +10,6 @@
     "build": "node -e \"console.log('config package: nothing to build')\"",
     "typecheck": "node -e \"console.log('config package: nothing to typecheck')\"",
     "lint": "eslint . --max-warnings=0",
-    "test": "vitest run --passWithNoTests --exclude dist/**"
+    "test": "vitest run --passWithNoTests"
   }
 }
