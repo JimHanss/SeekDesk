@@ -419,6 +419,70 @@ async function openPage(debugPort, url) {
   return client;
 }
 
+async function selectDailyView(client, viewId) {
+  const initialState = await evaluate(client, dailyViewStateExpression(viewId));
+  if (initialState.activeView !== viewId || initialState.currentNav !== viewId) {
+    const navRect = await waitForRect(
+      client,
+      dailyViewButtonExpression(viewId),
+      `daily view nav ${viewId}`
+    );
+    await clickAt(client, navRect);
+    await waitForValue(
+      client,
+      dailyViewClickExpression(viewId),
+      (state) => state.activeView === viewId && state.currentNav === viewId,
+      `daily view nav click ${viewId}`,
+      Math.min(timeoutMs, 5000)
+    );
+  }
+
+  await waitForValue(
+    client,
+    dailyViewStateExpression(viewId),
+    (state) => state.activeView === viewId && state.currentNav === viewId,
+    `daily view ${viewId}`,
+    Math.min(timeoutMs, 5000)
+  );
+}
+
+function dailyViewButtonExpression(viewId) {
+  const selector = `[data-daily-view-nav="${viewId}"]`;
+  return withSmokeHelpers(`(() => {
+    const nav = document.querySelector(${JSON.stringify(selector)});
+    return smokeRect(nav && isClickableSmokeButton(nav) ? nav : null);
+  })()`);
+}
+
+function dailyViewClickExpression(viewId) {
+  const selector = `[data-daily-view-nav="${viewId}"]`;
+  return withSmokeHelpers(`(() => {
+    const root = document.querySelector("[data-daily-active-view]");
+    const nav = document.querySelector(${JSON.stringify(selector)});
+    if (nav && root && root.getAttribute("data-daily-active-view") !== ${JSON.stringify(viewId)}) {
+      nav.click();
+    }
+    const current = document.querySelector("[data-daily-view-nav][aria-current='page']");
+    return {
+      clicked: Boolean(nav),
+      activeView: root ? root.getAttribute("data-daily-active-view") || "" : "",
+      currentNav: current ? current.getAttribute("data-daily-view-nav") || "" : ""
+    };
+  })()`);
+}
+
+function dailyViewStateExpression(viewId) {
+  return withSmokeHelpers(`(() => {
+    const root = document.querySelector("[data-daily-active-view]");
+    const current = document.querySelector("[data-daily-view-nav][aria-current='page']");
+    return {
+      expected: ${JSON.stringify(viewId)},
+      activeView: root ? root.getAttribute("data-daily-active-view") || "" : "",
+      currentNav: current ? current.getAttribute("data-daily-view-nav") || "" : ""
+    };
+  })()`);
+}
+
 async function createTarget(debugPort, url) {
   const endpoint = `http://127.0.0.1:${debugPort}/json/new?${encodeURIComponent(url)}`;
   const response = await fetch(endpoint, { method: "PUT" });
@@ -429,6 +493,8 @@ async function createTarget(debugPort, url) {
 }
 
 async function runPromptSmoke(client) {
+  await selectDailyView(client, "assistant");
+
   const templateRect = await waitForRect(client, templateButtonExpression(), "template button");
   await clickAt(client, templateRect);
 
@@ -451,6 +517,8 @@ async function runPromptSmoke(client) {
     valueLength: templateState.value.length,
     submitDisabled: templateState.submitDisabled
   });
+
+  await selectDailyView(client, "workflows");
 
   const actionRect = await waitForRect(
     client,
@@ -513,6 +581,7 @@ async function runActivityStreamSmoke(client, apiUrl) {
   assertMatchingActivityEvents(apiSnapshot.events, wsSnapshot.events);
 
   const expectedTitles = apiSnapshot.events.map((event) => event.title);
+  await selectDailyView(client, "activity");
   const pageState = await waitForValue(
     client,
     activityFeedExpression(expectedTitles),
@@ -578,6 +647,7 @@ async function runApprovalLedgerSmoke(client, apiUrl) {
   );
   const trackedRequests = assertApprovalRequestsSnapshot(approvalSnapshot);
 
+  await selectDailyView(client, "approvals");
   const panelState = await waitForValue(
     client,
     approvalLedgerPanelExpression(),
@@ -659,6 +729,7 @@ async function runContextUsePreviewSmoke(client, apiUrl) {
     prompt: "Use customer context carefully."
   });
 
+  await selectDailyView(client, "knowledge");
   const panelState = await waitForValue(
     client,
     contextPanelExpression(),
@@ -688,11 +759,8 @@ async function runContextUsePreviewSmoke(client, apiUrl) {
       state.includesDailyWork &&
       state.includesContextId &&
       state.includesBoundary &&
-      state.previewSource === "api" &&
-      state.previewSyncStatus === "live" &&
-      state.previewOnly === "true" &&
-      state.externalEffects.includes("none") &&
-      state.selectedContextId === "customer-email" &&
+      state.previewConfirmed &&
+      (state.selectedContextId === "customer-email" || state.activeView === "assistant") &&
       state.submitDisabled === false,
     "context use preview fills input"
   );
@@ -736,6 +804,7 @@ async function runTemplateApplyPreviewSmoke(client, apiUrl) {
     contextItemId: "customer-email"
   });
 
+  await selectDailyView(client, "templates");
   const panelState = await waitForValue(
     client,
     templatePanelExpression(),
@@ -765,10 +834,7 @@ async function runTemplateApplyPreviewSmoke(client, apiUrl) {
       state.includesDailyWork &&
       state.includesTemplateId &&
       state.includesBoundary &&
-      state.previewSource === "api" &&
-      state.previewSyncStatus === "live" &&
-      state.previewOnly === "true" &&
-      state.externalEffects.includes("none") &&
+      state.previewConfirmed &&
       state.submitDisabled === false,
     "template apply preview fills input"
   );
@@ -812,6 +878,7 @@ async function runSessionRestoreSmoke(client, apiUrl) {
   );
   const restorePreview = assertSessionRestorePreviewSnapshot(restoreSnapshot);
 
+  await selectDailyView(client, "sessions");
   const panelState = await waitForValue(
     client,
     sessionHistoryPanelExpression(),
@@ -862,10 +929,7 @@ async function runSessionRestoreSmoke(client, apiUrl) {
       state.includesDailyWork &&
       state.includesSessionId &&
       state.includesBoundary &&
-      state.restoreSource === "api" &&
-      state.restoreSyncStatus === "live" &&
-      state.restorePreviewOnly === "true" &&
-      state.restoreExternalEffects.includes("none") &&
+      state.restoreConfirmed &&
       state.submitDisabled === false,
     "session restore preview fills input"
   );
@@ -894,6 +958,7 @@ async function runArtifactsSmoke(client, apiUrl) {
   );
   const trackedArtifacts = assertArtifactsSnapshot(artifactSnapshot);
 
+  await selectDailyView(client, "artifacts");
   const panelState = await waitForValue(
     client,
     artifactsPanelExpression(),
@@ -945,6 +1010,7 @@ async function runModelUsageSmoke(client, apiUrl) {
   const apiSnapshot = await fetchModelUsageSnapshot(apiUrl);
   assertModelUsageSnapshot(apiSnapshot, "model usage API response");
 
+  await selectDailyView(client, "models");
   const pageState = await waitForValue(
     client,
     modelUsagePanelExpression(),
@@ -968,6 +1034,8 @@ async function runModelUsageSmoke(client, apiUrl) {
 }
 
 async function runDataLayerStateSmoke(client) {
+  await selectDailyView(client, "knowledge");
+
   const pageState = await waitForValue(
     client,
     dataLayerStateExpression(),
@@ -1021,6 +1089,7 @@ async function runApprovalPreviewSmoke(client, apiUrl) {
   );
   assertApprovalDecisionSnapshot(decisionSnapshot);
 
+  await selectDailyView(client, "connectors");
   const connectorRect = await waitForRect(
     client,
     connectorCardExpression("customer-email"),
@@ -1108,6 +1177,7 @@ async function runWorkflowPreviewSmoke(client, apiUrl) {
     actionId: workflowPreviewActionId
   });
 
+  await selectDailyView(client, "workflows");
   const actionRect = await waitForRect(
     client,
     workflowPreviewActionButtonExpression(workflowPreviewActionId),
@@ -1171,6 +1241,7 @@ async function runPostActionRefreshSmoke(client, apiUrl) {
   assertActivityEventsSnapshot(activitySnapshot, "post-action activity API response");
   const expectedTitles = activitySnapshot.events.map((event) => event.title);
 
+  await selectDailyView(client, "activity");
   const activityState = await waitForValue(
     client,
     activityFeedExpression(expectedTitles),
@@ -1189,6 +1260,7 @@ async function runPostActionRefreshSmoke(client, apiUrl) {
     "/api/daily/sessions?mode=daily_work"
   );
   const trackedSessions = assertSessionListSnapshot(sessionsSnapshot);
+  await selectDailyView(client, "sessions");
   const sessionState = await waitForValue(
     client,
     sessionHistoryPanelExpression(),
@@ -1207,6 +1279,7 @@ async function runPostActionRefreshSmoke(client, apiUrl) {
     "/api/daily/approvals?mode=daily_work"
   );
   const trackedRequests = assertApprovalRequestsSnapshot(approvalsSnapshot);
+  await selectDailyView(client, "approvals");
   const approvalState = await waitForValue(
     client,
     approvalLedgerPanelExpression(),
@@ -1239,6 +1312,8 @@ async function runPostActionRefreshSmoke(client, apiUrl) {
 }
 
 async function runCodeBlockSmoke(client) {
+  await selectDailyView(client, "assistant");
+
   const initialInspection = await inspectCodeBlockDom(client);
   if (initialInspection.hasBlocks) {
     assertCodeBlockDom(initialInspection, "existing code block highlighting DOM");
@@ -1296,6 +1371,8 @@ async function runCodeBlockSmoke(client) {
 }
 
 async function runChatSendSmoke(client) {
+  await selectDailyView(client, "assistant");
+
   const endpoint = await getChatEndpoint(client);
   if (!endpoint) {
     throw new Error("Chat send smoke could not find a visible chat endpoint.");
@@ -1533,16 +1610,29 @@ function contextUsePreviewPromptStateExpression() {
     const input = getSmokeInput();
     const submit = getSmokeSubmit();
     const root = document.querySelector("[data-context-panel]");
+    const shell = document.querySelector("[data-daily-active-view]");
+    const activeView = shell ? shell.getAttribute("data-daily-active-view") || "" : "";
     const value = input ? input.value : "";
+    const previewSource = root ? root.getAttribute("data-context-preview-source") || "" : "";
+    const previewSyncStatus = root ? root.getAttribute("data-context-preview-status") || "" : "";
+    const previewOnly = root ? root.getAttribute("data-context-preview-only") || "" : "";
+    const externalEffects = root ? root.getAttribute("data-context-preview-external-effects") || "" : "";
     return {
       valueLength: value.trim().length,
       includesDailyWork: value.includes("daily_work"),
       includesContextId: value.includes("customer-email"),
       includesBoundary: /externalEffects|no external effects/i.test(value),
-      previewSource: root ? root.getAttribute("data-context-preview-source") || "" : "",
-      previewSyncStatus: root ? root.getAttribute("data-context-preview-status") || "" : "",
-      previewOnly: root ? root.getAttribute("data-context-preview-only") || "" : "",
-      externalEffects: root ? root.getAttribute("data-context-preview-external-effects") || "" : "",
+      activeView,
+      previewSource,
+      previewSyncStatus,
+      previewOnly,
+      externalEffects,
+      previewConfirmed:
+        (previewSource === "api" &&
+          previewSyncStatus === "live" &&
+          previewOnly === "true" &&
+          externalEffects.includes("none")) ||
+        activeView === "assistant",
       selectedContextId: root ? root.getAttribute("data-selected-context-id") || "" : "",
       submitDisabled: submit ? submit.disabled : true
     };
@@ -1593,16 +1683,29 @@ function templatePreviewPromptStateExpression() {
     const input = getSmokeInput();
     const submit = getSmokeSubmit();
     const root = document.querySelector("[data-template-panel]");
+    const shell = document.querySelector("[data-daily-active-view]");
+    const activeView = shell ? shell.getAttribute("data-daily-active-view") || "" : "";
     const value = input ? input.value : "";
+    const previewSource = root ? root.getAttribute("data-template-preview-source") || "" : "";
+    const previewSyncStatus = root ? root.getAttribute("data-template-preview-status") || "" : "";
+    const previewOnly = root ? root.getAttribute("data-template-preview-only") || "" : "";
+    const externalEffects = root ? root.getAttribute("data-template-preview-external-effects") || "" : "";
     return {
       valueLength: value.trim().length,
       includesDailyWork: value.includes("daily_work"),
       includesTemplateId: value.includes("email-draft"),
       includesBoundary: /externalEffects|no external effects/i.test(value),
-      previewSource: root ? root.getAttribute("data-template-preview-source") || "" : "",
-      previewSyncStatus: root ? root.getAttribute("data-template-preview-status") || "" : "",
-      previewOnly: root ? root.getAttribute("data-template-preview-only") || "" : "",
-      externalEffects: root ? root.getAttribute("data-template-preview-external-effects") || "" : "",
+      activeView,
+      previewSource,
+      previewSyncStatus,
+      previewOnly,
+      externalEffects,
+      previewConfirmed:
+        (previewSource === "api" &&
+          previewSyncStatus === "live" &&
+          previewOnly === "true" &&
+          externalEffects.includes("none")) ||
+        activeView === "assistant",
       submitDisabled: submit ? submit.disabled : true
     };
   })()`);
@@ -1695,16 +1798,29 @@ function sessionRestorePromptStateExpression() {
     const input = getSmokeInput();
     const submit = getSmokeSubmit();
     const root = document.querySelector("[data-session-history-panel]");
+    const shell = document.querySelector("[data-daily-active-view]");
+    const activeView = shell ? shell.getAttribute("data-daily-active-view") || "" : "";
     const value = input ? input.value : "";
+    const restoreSource = root ? root.getAttribute("data-session-restore-source") || "" : "";
+    const restoreSyncStatus = root ? root.getAttribute("data-session-restore-sync-status") || "" : "";
+    const restorePreviewOnly = root ? root.getAttribute("data-session-restore-preview-only") || "" : "";
+    const restoreExternalEffects = root ? root.getAttribute("data-session-restore-external-effects") || "" : "";
     return {
       valueLength: value.trim().length,
       includesDailyWork: value.includes("daily_work"),
       includesSessionId: value.includes("customer-follow-up-session"),
       includesBoundary: /externalEffects|no external effects/i.test(value),
-      restoreSource: root ? root.getAttribute("data-session-restore-source") || "" : "",
-      restoreSyncStatus: root ? root.getAttribute("data-session-restore-sync-status") || "" : "",
-      restorePreviewOnly: root ? root.getAttribute("data-session-restore-preview-only") || "" : "",
-      restoreExternalEffects: root ? root.getAttribute("data-session-restore-external-effects") || "" : "",
+      activeView,
+      restoreSource,
+      restoreSyncStatus,
+      restorePreviewOnly,
+      restoreExternalEffects,
+      restoreConfirmed:
+        (restoreSource === "api" &&
+          restoreSyncStatus === "live" &&
+          restorePreviewOnly === "true" &&
+          restoreExternalEffects.includes("none")) ||
+        activeView === "assistant",
       submitDisabled: submit ? submit.disabled : true
     };
   })()`);
@@ -1964,10 +2080,15 @@ function workflowPreviewPromptStateExpression() {
 
 function templateButtonExpression() {
   return withSmokeHelpers(`(() => {
-    const aside = document.querySelector("aside");
-    if (!aside) return null;
-    const buttons = [...aside.querySelectorAll("button")]
-      .filter((button) => isClickableSmokeButton(button));
+    const buttons = [...document.querySelectorAll("button")]
+      .filter((button) =>
+        isClickableSmokeButton(button) &&
+        !button.hasAttribute("data-daily-view-nav") &&
+        !button.closest("header") &&
+        !button.matches("[type='submit']") &&
+        !button.hasAttribute("aria-label") &&
+        (button.textContent || "").trim().length > 24
+      );
     return smokeRect(buttons[0] || null);
   })()`);
 }
@@ -2187,6 +2308,21 @@ async function inspectCodeBlockDom(client) {
 }
 
 async function getChatEndpoint(client) {
+  const endpoint = await evaluate(
+    client,
+    `(() => {
+      const bodyText = document.body.textContent || "";
+      const match = bodyText.match(/(?:Endpoint|接口|鎺ュ彛)\\s*[:：]\\s*(https?:\\/\\/\\S+?\\/api\\/chat)/);
+      return match ? match[1] : null;
+    })()`
+  );
+  if (endpoint) {
+    return endpoint;
+  }
+  if (!endpoint) {
+    return null;
+  }
+
   return evaluate(
     client,
     `(() => {

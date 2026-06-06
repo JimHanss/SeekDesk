@@ -27,7 +27,7 @@ export function TemplateLibraryPanel({
   onApplyTemplate
 }: TemplateLibraryPanelProps) {
   return (
-    <aside className="border-b border-teal-100 bg-white lg:border-b-0 lg:border-r">
+    <section className="overflow-hidden rounded-[8px] border border-teal-100 bg-white">
       <PanelHeader
         icon={<Wand2 className="size-4" aria-hidden="true" />}
         title="模板库"
@@ -190,6 +190,6 @@ export function TemplateLibraryPanel({
           </p>
         </div>
       </div>
-    </aside>
+    </section>
   );
 }
