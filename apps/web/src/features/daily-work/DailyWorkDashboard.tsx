@@ -7,29 +7,25 @@ import {
   Database,
   FileText,
   Globe,
-  Mail,
   MessageSquare,
   PanelLeft,
-  Play,
-  Presentation,
-  Search,
-  Send,
   ShieldCheck,
-  Square,
-  Sparkles,
   Wand2,
   Workflow
 } from "lucide-react";
 
-import { Button } from "@/components/ui/button";
-import { cn } from "@/lib/utils";
 import {
   getRuntimeApiBaseUrl,
   selectedContextLabel,
   statusLabel
 } from "@/features/daily-work/domain";
 
-import { ChatThread } from "@/features/daily-work/chat/components/ChatThread";
+import { AssistantWorkspacePanel } from "@/features/daily-work/components/AssistantWorkspacePanel";
+import {
+  DailyWorkShell,
+  type DailyWorkView,
+  type DailyWorkViewConfig
+} from "@/features/daily-work/components/DailyWorkShell";
 import { useChatController } from "@/features/daily-work/chat/hooks/useChatController";
 import {
   useActivityFeed,
@@ -48,11 +44,7 @@ import {
   useDailyWorkDerivedSelections,
   useDailyWorkSelectionState
 } from "@/features/daily-work/hooks/useDailyWorkSelectionState";
-import {
-  PanelHeader,
-  PromptCard,
-  PersistenceStatusPanel
-} from "@/features/daily-work/components/DailyWorkPrimitives";
+import { PersistenceStatusPanel } from "@/features/daily-work/components/DailyWorkPrimitives";
 import { ActivityFeedPanel } from "@/features/daily-work/components/panels/ActivityFeedPanel";
 import { ApprovalLedgerPanel } from "@/features/daily-work/components/panels/ApprovalLedgerPanel";
 import { ArtifactPanel } from "@/features/daily-work/components/panels/ArtifactPanel";
@@ -63,26 +55,6 @@ import { ModelUsagePanel } from "@/features/daily-work/components/panels/ModelUs
 import { SessionHistoryPanel } from "@/features/daily-work/components/panels/SessionHistoryPanel";
 import { TemplateLibraryPanel } from "@/features/daily-work/components/panels/TemplateLibraryPanel";
 import { WorkflowPreviewPanel } from "@/features/daily-work/components/panels/WorkflowPreviewPanel";
-
-type DailyWorkView =
-  | "assistant"
-  | "templates"
-  | "knowledge"
-  | "workflows"
-  | "connectors"
-  | "artifacts"
-  | "approvals"
-  | "activity"
-  | "sessions"
-  | "models";
-
-interface ViewConfig {
-  id: DailyWorkView;
-  label: string;
-  description: string;
-  icon: ReactNode;
-  badge?: string;
-}
 
 export function DailyWorkDashboard() {
   const [activeView, setActiveView] = useState<DailyWorkView>("assistant");
@@ -245,7 +217,7 @@ export function DailyWorkDashboard() {
   const restoreSessionAndOpenAssistant = openAssistantAfter(restoreSessionHistory);
   const useContextAndOpenAssistant = openAssistantAfter(useContextItem);
 
-  const views: ViewConfig[] = [
+  const views: DailyWorkViewConfig[] = [
     {
       id: "assistant",
       label: "对话工作台",
@@ -320,239 +292,39 @@ export function DailyWorkDashboard() {
 
   const currentView = views.find((view) => view.id === activeView) ?? views[0]!;
 
+  const selectedContextText = selectedContextId
+    ? selectedContextItem?.title ??
+      selectedContextLabel(selectedContextId, contextPanelItems)
+    : null;
+
   return (
-    <main
-      className="min-h-screen overflow-x-hidden bg-slate-100 px-3 py-3 text-slate-950 md:px-4"
-      data-daily-active-view={activeView}
+    <DailyWorkShell
+      activeView={activeView}
+      currentView={currentView}
+      views={views}
+      onViewChange={setActiveView}
     >
-      <div className="mx-auto grid min-h-[calc(100vh-1.5rem)] w-full max-w-[1440px] overflow-hidden rounded-[8px] border border-slate-200 bg-white shadow-[0_18px_70px_rgba(15,23,42,0.12)] lg:grid-cols-[248px_minmax(0,1fr)]">
-        <aside className="flex min-h-0 flex-col border-b border-slate-200 bg-slate-950 text-white lg:border-b-0 lg:border-r">
-          <div className="flex items-center gap-3 px-4 py-4">
-            <div className="grid size-10 shrink-0 place-items-center rounded-[8px] bg-teal-500 text-white shadow-sm">
-              <Sparkles className="size-5" aria-hidden="true" />
-            </div>
-            <div className="min-w-0">
-              <h1 className="truncate font-heading text-lg font-semibold tracking-normal">
-                SeekDesk
-              </h1>
-              <p className="truncate text-xs text-slate-300">Daily AI workspace</p>
-            </div>
-          </div>
-
-          <nav className="flex gap-2 overflow-x-auto border-t border-white/10 px-3 py-3 lg:flex-1 lg:flex-col lg:overflow-y-auto lg:border-t-0">
-            {views.map((view) => {
-              const isActive = activeView === view.id;
-
-              return (
-                <button
-                  key={view.id}
-                  type="button"
-                  data-daily-view-nav={view.id}
-                  aria-current={isActive ? "page" : undefined}
-                  onClick={() => setActiveView(view.id)}
-                  className={cn(
-                    "flex min-w-[148px] cursor-pointer items-center gap-3 rounded-[8px] px-3 py-2.5 text-left text-sm transition-colors duration-200 focus-visible:outline focus-visible:outline-2 focus-visible:outline-teal-300 lg:min-w-0",
-                    isActive
-                      ? "bg-white text-slate-950 shadow-sm"
-                      : "text-slate-300 hover:bg-white/10 hover:text-white"
-                  )}
-                >
-                  <span
-                    className={cn(
-                      "grid size-8 shrink-0 place-items-center rounded-[8px]",
-                      isActive ? "bg-teal-50 text-teal-700" : "bg-white/10"
-                    )}
-                  >
-                    {view.icon}
-                  </span>
-                  <span className="min-w-0 flex-1">
-                    <span className="block truncate font-medium">{view.label}</span>
-                    <span
-                      className={cn(
-                        "mt-0.5 block truncate text-[11px]",
-                        isActive ? "text-slate-500" : "text-slate-400"
-                      )}
-                    >
-                      {view.description}
-                    </span>
-                  </span>
-                  {view.badge ? (
-                    <span
-                      className={cn(
-                        "shrink-0 rounded-[999px] px-2 py-0.5 text-[11px] font-medium",
-                        isActive
-                          ? "bg-slate-100 text-slate-600"
-                          : "bg-white/10 text-slate-300"
-                      )}
-                    >
-                      {view.badge}
-                    </span>
-                  ) : null}
-                </button>
-              );
-            })}
-          </nav>
-        </aside>
-
-        <section className="flex min-h-0 flex-col bg-slate-50">
-          <header className="border-b border-slate-200 bg-white px-4 py-4 md:px-5">
-            <div className="flex flex-col gap-4 xl:flex-row xl:items-center xl:justify-between">
-              <div className="min-w-0">
-                <div className="flex min-w-0 items-center gap-2 text-xs font-medium text-teal-700">
-                  <span className="grid size-7 shrink-0 place-items-center rounded-[8px] bg-teal-50">
-                    {currentView.icon}
-                  </span>
-                  <span>daily_work</span>
-                </div>
-                <h2 className="mt-2 break-words font-heading text-2xl font-semibold tracking-normal text-slate-950">
-                  {currentView.label}
-                </h2>
-                <p className="mt-1 max-w-3xl text-sm leading-6 text-slate-600">
-                  {currentView.description}
-                </p>
-              </div>
-
-              <div className="flex flex-wrap items-center gap-2">
-                <Button
-                  type="button"
-                  variant="secondary"
-                  size="sm"
-                  onClick={() => setActiveView("knowledge")}
-                >
-                  <Search className="size-4" aria-hidden="true" />
-                  上下文
-                </Button>
-                <Button
-                  type="button"
-                  variant="secondary"
-                  size="sm"
-                  onClick={() => setActiveView("templates")}
-                >
-                  <Wand2 className="size-4" aria-hidden="true" />
-                  模板
-                </Button>
-                <Button
-                  type="button"
-                  size="sm"
-                  className="bg-orange-500 hover:bg-orange-600"
-                  onClick={() => setActiveView("workflows")}
-                >
-                  <Play className="size-4" aria-hidden="true" />
-                  新建流程
-                </Button>
-              </div>
-            </div>
-          </header>
-
-          <div className="min-h-0 flex-1 overflow-y-auto px-3 py-3 md:px-5 md:py-4">
             {activeView === "assistant" ? (
-              <div className="mx-auto flex min-h-full max-w-5xl flex-col gap-4">
-                <div className="grid gap-3 md:grid-cols-3">
-                  <PromptCard
-                    icon={<Mail className="size-4" aria-hidden="true" />}
-                    title="客户更新"
-                    text="帮我写一封客户更新邮件，交代当前结果、时间线、风险和下一步。"
-                    onClick={applyPrompt}
-                  />
-                  <PromptCard
-                    icon={<Presentation className="size-4" aria-hidden="true" />}
-                    title="会议纪要"
-                    text="把这些会议记录整理成可分享的纪要，标出决策、负责人、风险和待补信息。"
-                    onClick={applyPrompt}
-                  />
-                  <PromptCard
-                    icon={<Search className="size-4" aria-hidden="true" />}
-                    title="研究简报"
-                    text="把最新资料整理成一页简报，区分已知信息、信息缺口和建议下一步。"
-                    onClick={applyPrompt}
-                  />
-                </div>
-
-                <section className="flex min-h-[520px] flex-1 flex-col overflow-hidden rounded-[8px] border border-slate-200 bg-white">
-                  <PanelHeader
-                    icon={<MessageSquare className="size-4" aria-hidden="true" />}
-                    title="日常工作助手"
-                    action={
-                      <Button
-                        variant="ghost"
-                        size="icon"
-                        aria-label="停止当前回复"
-                        disabled={!isBusy}
-                        onClick={cancelRequest}
-                      >
-                        <Square className="size-4" aria-hidden="true" />
-                      </Button>
-                    }
-                  />
-
-                  <div className="min-h-0 flex-1 overflow-y-auto px-3 py-3 md:px-4">
-                    <ChatThread
-                      endpoint={endpoint}
-                      error={error}
-                      lastSubmittedPrompt={lastSubmittedPrompt}
-                      messages={messages}
-                      messagesEndRef={messagesEndRef}
-                      modelName={activeModelSnapshot.selectedModel}
-                      onDismissError={() => setError(null)}
-                      onRetry={retryLastPrompt}
-                      status={status}
-                    />
-                  </div>
-
-                  <form
-                    className="border-t border-slate-200 bg-white p-3 md:p-4"
-                    onSubmit={handleSubmit}
-                  >
-                    <div className="flex min-h-16 items-end gap-3 rounded-[8px] border border-slate-200 bg-white px-3 py-2 shadow-inner focus-within:border-teal-500 focus-within:ring-2 focus-within:ring-teal-100">
-                      <textarea
-                        ref={inputRef}
-                        className="max-h-40 min-h-10 min-w-0 flex-1 resize-none bg-transparent py-2 text-sm leading-5 text-slate-950 outline-none placeholder:text-slate-400"
-                        placeholder={modelInputPlaceholder}
-                        aria-label="输入日常工作请求"
-                        value={input}
-                        onChange={(event) => setInput(event.target.value)}
-                        disabled={isBusy}
-                        rows={1}
-                      />
-                      <Button
-                        size="sm"
-                        type="submit"
-                        disabled={!input.trim() || isBusy}
-                        className="bg-orange-500 hover:bg-orange-600"
-                      >
-                        {isBusy ? (
-                          <Sparkles
-                            className="size-4 animate-pulse"
-                            aria-hidden="true"
-                          />
-                        ) : (
-                          <Send className="size-4" aria-hidden="true" />
-                        )}
-                        {status === "submitting"
-                          ? "连接中"
-                          : status === "streaming"
-                            ? "接收中"
-                            : "发送"}
-                      </Button>
-                    </div>
-                    <div className="mt-2 flex flex-wrap items-center gap-x-3 gap-y-1 text-xs text-slate-500">
-                      <span>接口: {endpoint}</span>
-                      <span>模型: {activeModelSnapshot.selectedModel}</span>
-                      <span>状态: {statusLabel(status)}</span>
-                      {selectedContextId ? (
-                        <span>
-                          上下文:{" "}
-                          {selectedContextItem?.title ??
-                            selectedContextLabel(
-                              selectedContextId,
-                              contextPanelItems
-                            )}
-                        </span>
-                      ) : null}
-                    </div>
-                  </form>
-                </section>
-              </div>
+              <AssistantWorkspacePanel
+                activeModelName={activeModelSnapshot.selectedModel}
+                endpoint={endpoint}
+                error={error}
+                handleSubmit={handleSubmit}
+                input={input}
+                inputRef={inputRef}
+                isBusy={isBusy}
+                lastSubmittedPrompt={lastSubmittedPrompt}
+                messages={messages}
+                messagesEndRef={messagesEndRef}
+                modelInputPlaceholder={modelInputPlaceholder}
+                selectedContextLabel={selectedContextText}
+                status={status}
+                onApplyPrompt={applyPrompt}
+                onCancelRequest={cancelRequest}
+                onDismissError={() => setError(null)}
+                onInputChange={setInput}
+                onRetry={retryLastPrompt}
+              />
             ) : null}
 
             {activeView === "templates" ? (
@@ -672,10 +444,7 @@ export function DailyWorkDashboard() {
                 />
               </ModuleStack>
             ) : null}
-          </div>
-        </section>
-      </div>
-    </main>
+    </DailyWorkShell>
   );
 }
 
