@@ -1442,7 +1442,7 @@ async function runChatSendSmoke(client) {
     throw new Error("Chat send smoke could not find a visible chat endpoint.");
   }
 
-  const prompt = `daily_work browser smoke chat send ${Date.now()}`;
+  const prompt = `daily_work browser smoke agent tool trace ${Date.now()}`;
   const apiResponse = await fetchChatTextResponse(endpoint, prompt);
   assertChatTextApiResponse(apiResponse, prompt, "chat API response");
   const responseSignature = apiResponse.body.includes("Mock daily-work AI response")
@@ -1474,7 +1474,13 @@ async function runChatSendSmoke(client) {
       state.status === "live" &&
       state.hasSession &&
       state.boundary === "preview-only" &&
-      state.hasToolTraceSelectors,
+      state.hasToolTraceSelectors &&
+      state.usageRecords > 0 &&
+      state.toolRows > 0 &&
+      state.planRows === state.toolRows &&
+      state.executionRows === state.toolRows &&
+      state.resultRows === state.toolRows &&
+      state.referenceRows === state.toolRows,
     "agent trace panel after chat"
   );
 
