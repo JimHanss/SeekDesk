@@ -159,8 +159,10 @@ checks:
 - Google status is reported clearly.
 
 When Google is connected, the same script asks DeepSeek to autonomously plan
-`gmail.search_threads` and `calendar.list_events`, then verifies both completed
-tool results are present in the session trace:
+`gmail.search_threads` and `calendar.list_events`. If Gmail returns a thread id,
+the verifier also expects DeepSeek to continue with `gmail.read_thread` for that
+thread. The script checks that each real read tool stays preview-only, records
+the provider-specific result payload, and persists plan/result activity records:
 
 ```bash
 npm run verify:real-agent -- --require-google

@@ -126,7 +126,7 @@ async function verifyArtifactTool() {
 async function verifyGoogleReadTools() {
   const response = await sendChat({
     prompt:
-      `Use the available preview-only tools to search Gmail threads with query "${gmailQuery}" and maxResults 1, then list Google Calendar events from calendar "${calendarId}" between ${timeMin} and ${timeMax} with maxResults 3. Return only a concise summary of what the tools found. Do not send email, create drafts externally, or create calendar events.`,
+      `Use the available preview-only tools to search Gmail threads with query "${gmailQuery}" and maxResults 1, then list Google Calendar events from calendar "${calendarId}" between ${timeMin} and ${timeMax} with maxResults 3. If Gmail search returns a thread id, call gmail.read_thread for that first thread id before answering. Return only a concise summary of what the tools found. Do not send email, create drafts externally, or create calendar events.`,
     context: {
       workspaceId: "workspace-seekdesk",
       connectorIds: ["google"],
@@ -143,13 +143,47 @@ async function verifyGoogleReadTools() {
     (tool) => tool.name === "calendar.list_events" && tool.status === "completed"
   );
 
+  assert(
+    response.provider === "deepseek",
+    `Expected DeepSeek provider for Google read verification, received ${response.provider ?? "unknown"}.`
+  );
   assert(gmailTool, "DeepSeek did not complete gmail.search_threads.");
   assert(calendarTool, "DeepSeek did not complete calendar.list_events.");
+  assertPreviewOnlyTool(gmailTool, {
+    provider: "gmail",
+    expectedOutputKeys: ["threads"]
+  });
+  assertPreviewOnlyTool(calendarTool, {
+    provider: "google_calendar",
+    expectedOutputKeys: ["events"]
+  });
   assert(
     trace.modelUsageSummary?.recordCount > 0,
     "Model usage was not recorded for the Google read verification."
   );
-  const [gmailPersistence, calendarPersistence] = await Promise.all([
+  const threadId = findFirstGmailThreadId(gmailTool.outputJson);
+  const threadTool = threadId
+    ? toolCalls.find(
+        (tool) =>
+          tool.name === "gmail.read_thread" &&
+          tool.status === "completed" &&
+          tool.inputJson?.threadId === threadId
+      )
+    : null;
+
+  if (threadId) {
+    assert(
+      threadTool,
+      `DeepSeek found Gmail thread ${threadId} but did not complete gmail.read_thread for it.`
+    );
+    assertPreviewOnlyTool(threadTool, {
+      provider: "gmail",
+      expectedOutputKeys: ["messages", "threadId"]
+    });
+  }
+
+  const [gmailPersistence, calendarPersistence, threadPersistence] =
+    await Promise.all([
     verifyToolPersistence({
       sessionId: response.sessionId,
       trace,
@@ -161,7 +195,15 @@ async function verifyGoogleReadTools() {
       trace,
       toolCall: calendarTool,
       expectedOutputKeys: ["events"]
-    })
+    }),
+    threadTool
+      ? verifyToolPersistence({
+          sessionId: response.sessionId,
+          trace,
+          toolCall: threadTool,
+          expectedOutputKeys: ["messages", "threadId"]
+        })
+      : Promise.resolve(null)
   ]);
 
   return {
@@ -173,9 +215,47 @@ async function verifyGoogleReadTools() {
     usageSummary: trace.modelUsageSummary,
     persistence: {
       gmail: gmailPersistence,
-      calendar: calendarPersistence
+      calendar: calendarPersistence,
+      gmailThread: threadPersistence
     }
   };
+}
+
+function assertPreviewOnlyTool(toolCall, input) {
+  assert(
+    toolCall.previewOnly === true,
+    `${toolCall.name} was not recorded as preview-only.`
+  );
+  assert(
+    toolCall.permissionRequired === false,
+    `${toolCall.name} unexpectedly required permission during real read verification.`
+  );
+  assert(
+    toolCall.outputJson?.provider === input.provider,
+    `${toolCall.name} outputJson provider was ${toolCall.outputJson?.provider ?? "missing"} instead of ${input.provider}.`
+  );
+  assert(
+    toolCall.outputJson?.previewOnly === true,
+    `${toolCall.name} outputJson did not preserve previewOnly:true.`
+  );
+
+  for (const key of input.expectedOutputKeys) {
+    assert(
+      toolCall.outputJson &&
+        typeof toolCall.outputJson === "object" &&
+        key in toolCall.outputJson,
+      `${toolCall.name} outputJson did not include ${key}.`
+    );
+  }
+}
+
+function findFirstGmailThreadId(outputJson) {
+  const threads = Array.isArray(outputJson?.threads) ? outputJson.threads : [];
+  const firstThread = threads.find(
+    (thread) => thread && typeof thread.id === "string" && thread.id.trim()
+  );
+
+  return firstThread?.id ?? null;
 }
 
 async function verifyToolPersistence(input) {
