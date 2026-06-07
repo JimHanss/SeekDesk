@@ -2,6 +2,7 @@ import { getModeSystemMessage } from "./provider.js";
 import type {
   DeepSeekModelConfig,
   ModelChatRequest,
+  ModelMessage,
   ModelProvider,
   ModelStreamChunk
 } from "./provider.js";
@@ -58,7 +59,9 @@ export class DeepSeekModelProvider implements ModelProvider {
         },
         body: JSON.stringify({
           model: this.config.model,
-          messages: [getModeSystemMessage(request.mode), ...request.messages],
+          messages: [getModeSystemMessage(request.mode), ...request.messages].map(
+            toDeepSeekMessage
+          ),
           stream: true,
           ...(request.tools?.length
             ? {
@@ -115,6 +118,16 @@ export class DeepSeekModelProvider implements ModelProvider {
     yield* toolCalls.flush();
     yield { type: "done" };
   }
+}
+
+function toDeepSeekMessage(message: ModelMessage) {
+  return {
+    role: message.role,
+    content: message.content,
+    ...(message.name ? { name: message.name } : {}),
+    ...(message.toolCallId ? { tool_call_id: message.toolCallId } : {}),
+    ...(message.toolCalls?.length ? { tool_calls: message.toolCalls } : {})
+  };
 }
 
 function processSseLine(

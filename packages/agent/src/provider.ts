@@ -6,6 +6,16 @@ export interface ModelMessage {
   content: string;
   name?: string;
   toolCallId?: string;
+  toolCalls?: ModelAssistantToolCall[];
+}
+
+export interface ModelAssistantToolCall {
+  id: string;
+  type: "function";
+  function: {
+    name: string;
+    arguments: string;
+  };
 }
 
 export interface ModelToolDefinition {

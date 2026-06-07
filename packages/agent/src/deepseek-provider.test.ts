@@ -64,6 +64,73 @@ describe("DeepSeekModelProvider", () => {
     ]);
   });
 
+  it("serializes tool messages with DeepSeek snake_case fields", async () => {
+    const fetchMock = stubFetch(
+      streamResponse([
+        `data: ${JSON.stringify({
+          choices: [{ delta: { content: "Done" } }]
+        })}\n\n`,
+        "data: [DONE]\n\n"
+      ])
+    );
+    const provider = createProvider();
+
+    await collectChunks(
+      provider.streamChat({
+        mode: "daily_work",
+        messages: [
+          {
+            role: "assistant",
+            content: "",
+            toolCalls: [
+              {
+                id: "call-1",
+                type: "function",
+                function: {
+                  name: "daily_persist_artifact",
+                  arguments: "{\"title\":\"Trace\"}"
+                }
+              }
+            ]
+          },
+          {
+            role: "tool",
+            toolCallId: "call-1",
+            name: "daily_persist_artifact",
+            content: "{\"status\":\"completed\"}"
+          }
+        ],
+        maxTurns: 2
+      })
+    );
+
+    const [, init] =
+      (fetchMock.mock.calls[0] as [RequestInfo | URL, RequestInit]) ?? [];
+    const body = JSON.parse(String(init?.body));
+
+    expect(body.messages[1]).toEqual({
+      role: "assistant",
+      content: "",
+      tool_calls: [
+        {
+          id: "call-1",
+          type: "function",
+          function: {
+            name: "daily_persist_artifact",
+            arguments: "{\"title\":\"Trace\"}"
+          }
+        }
+      ]
+    });
+    expect(body.messages[2]).toEqual({
+      role: "tool",
+      content: "{\"status\":\"completed\"}",
+      name: "daily_persist_artifact",
+      tool_call_id: "call-1"
+    });
+    expect(body.messages[2]).not.toHaveProperty("toolCallId");
+  });
+
   it("parses content and reasoning deltas across split SSE chunks", async () => {
     const splitJson = `data: ${JSON.stringify({
       choices: [{ delta: { content: " split" } }]

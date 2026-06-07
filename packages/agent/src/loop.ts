@@ -1,5 +1,6 @@
 import type { AppMode, ChatContext } from "@seekdesk/shared";
 import type {
+  ModelAssistantToolCall,
   ModelMessage,
   ModelProvider,
   ModelStreamChunk,
@@ -119,7 +120,8 @@ export async function* streamAgentLoop(
       ...currentMessages,
       {
         role: "assistant",
-        content: assistantText.trim() || createToolCallSummary(toolCalls)
+        content: assistantText.trim(),
+        toolCalls: toolTurn.assistantToolCalls
       },
       ...toolTurn.messages
     ];
@@ -195,21 +197,34 @@ async function orchestrateToolCalls(input: {
 }): Promise<{
   messages: ModelMessage[];
   results: ToolCallResult[];
+  assistantToolCalls: ModelAssistantToolCall[];
 }> {
   const messages: ModelMessage[] = [];
   const results: ToolCallResult[] = [];
+  const assistantToolCalls: ModelAssistantToolCall[] = [];
 
-  for (const toolCall of input.toolCalls) {
+  for (const [index, toolCall] of input.toolCalls.entries()) {
+    const toolCallId = toolCall.id ?? `tool-call-${index + 1}`;
+    const rawArguments =
+      toolCall.rawArguments ?? JSON.stringify(toolCall.inputJson ?? {});
     const result = await input.orchestrator.orchestrate({
-      ...(toolCall.id ? { id: toolCall.id } : {}),
+      id: toolCallId,
       name: toolCall.name,
       inputJson: toolCall.inputJson
     });
 
     results.push(result);
+    assistantToolCalls.push({
+      id: toolCallId,
+      type: "function",
+      function: {
+        name: toolCall.name,
+        arguments: rawArguments
+      }
+    });
     messages.push({
       role: "tool",
-      ...(toolCall.id ? { toolCallId: toolCall.id } : {}),
+      toolCallId,
       name: toolCall.name,
       content: JSON.stringify({
         status: result.status,
@@ -223,14 +238,9 @@ async function orchestrateToolCalls(input: {
 
   return {
     messages,
-    results
+    results,
+    assistantToolCalls
   };
-}
-
-function createToolCallSummary(
-  toolCalls: Extract<ModelStreamChunk, { type: "tool-call" }>[]
-) {
-  return `Tool calls requested: ${toolCalls.map((toolCall) => toolCall.name).join(", ")}`;
 }
 
 function createToolPlanMessage(toolPlan?: ToolCallRequest[]): ModelMessage | null {
