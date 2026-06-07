@@ -803,6 +803,13 @@ export interface GoogleConnectorStatusState {
   notice: string;
 }
 
+export type GoogleOAuthStartStatus =
+  | "idle"
+  | "starting"
+  | "opened"
+  | "requires_setup"
+  | "failed";
+
 export type WorkflowPreviewPanelSource = "local" | "api" | "degraded";
 export type WorkflowPreviewPanelSyncStatus = "idle" | "syncing" | "live" | "degraded";
 

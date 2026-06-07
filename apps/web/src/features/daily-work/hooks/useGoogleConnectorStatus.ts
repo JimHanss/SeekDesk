@@ -1,6 +1,9 @@
 import * as React from "react";
 
-import type { GoogleConnectorStatusState } from "../types";
+import type {
+  GoogleConnectorStatusState,
+  GoogleOAuthStartStatus
+} from "../types";
 
 const fallbackStatus: GoogleConnectorStatusState = {
   connected: false,
@@ -21,49 +24,88 @@ interface GoogleConnectorStatusDto {
   missingConfig?: string[];
 }
 
+interface GoogleOAuthStartDto {
+  authorizationUrl?: string;
+  error?: string;
+  missingConfig?: string[];
+}
+
 export function useGoogleConnectorStatus(apiBaseUrl: string) {
   const [googleConnectorStatus, setGoogleConnectorStatus] =
     React.useState<GoogleConnectorStatusState>(fallbackStatus);
+  const [googleOAuthStartStatus, setGoogleOAuthStartStatus] =
+    React.useState<GoogleOAuthStartStatus>("idle");
+  const [googleOAuthStartNotice, setGoogleOAuthStartNotice] = React.useState(
+    "Configure Google OAuth, then open the consent screen from this panel."
+  );
 
-  React.useEffect(() => {
-    let isDisposed = false;
-    const controller = new AbortController();
-
-    async function fetchGoogleConnectorStatus() {
+  const refreshGoogleConnectorStatus = React.useCallback(
+    async (signal?: AbortSignal) => {
       setGoogleConnectorStatus((current) => ({
         ...current,
         syncStatus: "syncing",
         notice: "Reading Google connector status from /api/connectors/google/status."
       }));
 
+      const response = await fetch(
+        `${apiBaseUrl}/api/connectors/google/status`,
+        signal ? { signal } : undefined
+      );
+
+      if (!response.ok) {
+        throw new Error(`Google connector status failed: ${response.status}`);
+      }
+
+      const payload = (await response.json()) as GoogleConnectorStatusDto;
+      const connected = payload.connected === true;
+      const requiresSetup = payload.requiresSetup === true || !connected;
+      const missingConfig = payload.missingConfig ?? [];
+
+      setGoogleConnectorStatus({
+        connected,
+        requiresSetup,
+        accountEmail: payload.accountEmail ?? null,
+        scopes: payload.scopes ?? [],
+        missingConfig,
+        source: "api",
+        syncStatus: "live",
+        notice: connected
+          ? `Google connected${payload.accountEmail ? ` as ${payload.accountEmail}` : ""}.`
+          : missingConfig.length > 0
+            ? `Google OAuth is missing ${missingConfig.join(", ")}.`
+            : "Google OAuth is configured; connect an account before Gmail or Calendar reads can run."
+      });
+
+      if (connected) {
+        setGoogleOAuthStartStatus("idle");
+        setGoogleOAuthStartNotice(
+          "Google is connected. Real Gmail and Calendar read tools can run in preview-only mode."
+        );
+      } else if (missingConfig.length > 0) {
+        setGoogleOAuthStartStatus("requires_setup");
+        setGoogleOAuthStartNotice(
+          `Add ${missingConfig.join(", ")} to .env.local, restart the API, then start OAuth.`
+        );
+      } else {
+        setGoogleOAuthStartStatus("idle");
+        setGoogleOAuthStartNotice(
+          "Google OAuth is configured. Open the consent screen to connect an account."
+        );
+      }
+    },
+    [apiBaseUrl]
+  );
+
+  React.useEffect(() => {
+    let isDisposed = false;
+    const controller = new AbortController();
+
+    async function fetchGoogleConnectorStatus() {
       try {
-        const response = await fetch(`${apiBaseUrl}/api/connectors/google/status`, {
-          signal: controller.signal
-        });
-
-        if (!response.ok) {
-          throw new Error(`Google connector status failed: ${response.status}`);
-        }
-
-        const payload = (await response.json()) as GoogleConnectorStatusDto;
+        await refreshGoogleConnectorStatus(controller.signal);
         if (isDisposed) {
           return;
         }
-
-        const connected = payload.connected === true;
-        const requiresSetup = payload.requiresSetup === true || !connected;
-        setGoogleConnectorStatus({
-          connected,
-          requiresSetup,
-          accountEmail: payload.accountEmail ?? null,
-          scopes: payload.scopes ?? [],
-          missingConfig: payload.missingConfig ?? [],
-          source: "api",
-          syncStatus: "live",
-          notice: connected
-            ? `Google connected${payload.accountEmail ? ` as ${payload.accountEmail}` : ""}.`
-            : "Google connector requires setup before Gmail or Calendar reads can run."
-        });
       } catch {
         if (controller.signal.aborted || isDisposed) {
           return;
@@ -85,7 +127,55 @@ export function useGoogleConnectorStatus(apiBaseUrl: string) {
       isDisposed = true;
       controller.abort();
     };
+  }, [refreshGoogleConnectorStatus]);
+
+  const startGoogleOAuth = React.useCallback(async () => {
+    setGoogleOAuthStartStatus("starting");
+    setGoogleOAuthStartNotice("Requesting a Google OAuth consent URL.");
+
+    try {
+      const response = await fetch(
+        `${apiBaseUrl}/api/connectors/google/oauth/start?workspaceId=workspace-seekdesk`
+      );
+      const payload = (await response.json()) as GoogleOAuthStartDto;
+
+      if (!response.ok) {
+        const missingConfig = payload.missingConfig ?? [];
+        setGoogleOAuthStartStatus(
+          missingConfig.length > 0 ? "requires_setup" : "failed"
+        );
+        setGoogleOAuthStartNotice(
+          missingConfig.length > 0
+            ? `Add ${missingConfig.join(", ")} to .env.local and restart the API.`
+            : payload.error ?? `Google OAuth start failed: ${response.status}`
+        );
+        return;
+      }
+
+      if (!payload.authorizationUrl) {
+        throw new Error("Google OAuth start did not return an authorization URL.");
+      }
+
+      window.open(payload.authorizationUrl, "_blank", "noopener,noreferrer");
+      setGoogleOAuthStartStatus("opened");
+      setGoogleOAuthStartNotice(
+        "Google consent opened in a new tab. After approving access, return here and refresh connector status."
+      );
+    } catch (error) {
+      setGoogleOAuthStartStatus("failed");
+      setGoogleOAuthStartNotice(
+        error instanceof Error
+          ? error.message
+          : "Google OAuth start failed unexpectedly."
+      );
+    }
   }, [apiBaseUrl]);
 
-  return { googleConnectorStatus };
+  return {
+    googleConnectorStatus,
+    googleOAuthStartNotice,
+    googleOAuthStartStatus,
+    refreshGoogleConnectorStatus,
+    startGoogleOAuth
+  };
 }

@@ -153,7 +153,12 @@ export default function Page() {
   );
   const { modelUsagePanel } = useModelUsagePanel(apiBaseUrl);
   const { persistencePanel } = usePersistencePanel(apiBaseUrl);
-  const { googleConnectorStatus } = useGoogleConnectorStatus(apiBaseUrl);
+  const {
+    googleConnectorStatus,
+    googleOAuthStartNotice,
+    googleOAuthStartStatus,
+    startGoogleOAuth
+  } = useGoogleConnectorStatus(apiBaseUrl);
   const {
     activityConnectionStatus,
     activityFeedEvents,
@@ -602,12 +607,15 @@ export default function Page() {
                   connectorPreviewPanel={connectorPreviewPanel}
                   filteredConnectors={filteredConnectors}
                   googleConnectorStatus={googleConnectorStatus}
+                  googleOAuthStartNotice={googleOAuthStartNotice}
+                  googleOAuthStartStatus={googleOAuthStartStatus}
                   selectedConnector={selectedConnector}
                   selectedConnectorApprovalRequests={selectedConnectorApprovalRequests}
                   selectedConnectorPreviewStatus={selectedConnectorPreviewStatus}
                   onApplyConnectorPrompt={applyConnectorAndOpenAssistant}
                   onFilterChange={setConnectorFilter}
                   onSelectConnector={setSelectedConnectorId}
+                  onStartGoogleOAuth={startGoogleOAuth}
                   onUpdateConnectorPreviewDecision={updateConnectorPreviewDecision}
                 />
               </ModuleStack>
