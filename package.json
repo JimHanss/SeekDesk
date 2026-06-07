@@ -27,6 +27,7 @@
     "verify:google-oauth": "node scripts/google-oauth-readiness.mjs",
     "verify:remote-real-agent": "node scripts/verify-remote-real-agent.mjs",
     "verify:real-agent": "node scripts/verify-real-agent.mjs",
+    "verify:secrets": "node scripts/verify-secret-hygiene.mjs",
     "db:generate": "drizzle-kit generate",
     "db:migrate": "drizzle-kit migrate",
     "db:studio": "drizzle-kit studio"
