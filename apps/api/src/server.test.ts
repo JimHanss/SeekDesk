@@ -3494,6 +3494,15 @@ describe("api server", () => {
               ),
               relatedRefs: expect.objectContaining({
                 sessionIds: [sessionId]
+              }),
+              metadata: expect.objectContaining({
+                toolName: "daily.persist_artifact",
+                toolPhase: "completed",
+                provider: "seekdesk",
+                externalDataSummary:
+                  "Local SeekDesk artifact persisted for review; no external provider write.",
+                resultCount: 1,
+                reference: expect.stringMatching(/^artifact:ai-artifact-/)
               })
             }),
             expect.objectContaining({
@@ -3887,6 +3896,13 @@ describe("api server", () => {
             title: "Agent tool planned",
             relatedRefs: expect.objectContaining({
               sessionIds: ["google-read-agent-session"]
+            }),
+            metadata: expect.objectContaining({
+              toolName: "gmail.search_threads",
+              toolPhase: "requested",
+              connectorId: "customer-email",
+              inputFields: ["query", "maxResults"],
+              externalDataSummary: "Tool result is pending."
             })
           }),
           expect.objectContaining({
@@ -3894,6 +3910,16 @@ describe("api server", () => {
             title: "Agent tool completed",
             relatedRefs: expect.objectContaining({
               sessionIds: ["google-read-agent-session"]
+            }),
+            metadata: expect.objectContaining({
+              toolName: "calendar.list_events",
+              toolPhase: "completed",
+              provider: "google_calendar",
+              connectorId: "team-calendar",
+              externalDataSummary:
+                "1 Google Calendar event metadata result(s).",
+              resultCount: 1,
+              reference: "calendar-event:calendar-event-1"
             })
           }),
           expect.objectContaining({
@@ -3901,6 +3927,16 @@ describe("api server", () => {
             title: "Agent tool completed",
             relatedRefs: expect.objectContaining({
               sessionIds: ["google-read-agent-session"]
+            }),
+            metadata: expect.objectContaining({
+              toolName: "gmail.read_thread",
+              toolPhase: "completed",
+              provider: "gmail",
+              connectorId: "customer-email",
+              externalDataSummary:
+                "1 Gmail message metadata record(s).",
+              resultCount: 1,
+              reference: "gmail-thread:thread-1"
             })
           })
         ])

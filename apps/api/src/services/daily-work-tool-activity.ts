@@ -17,6 +17,14 @@ export function createToolActivityEvent(input: {
   const summary = isCompleted
     ? summarizeToolResult(input.toolName, input.outputJson, input.error)
     : summarizeToolRequest(input.toolName, input.inputJson);
+  const metadata = createToolActivityMetadata({
+    toolName: input.toolName,
+    phase: input.phase,
+    inputJson: input.inputJson,
+    outputJson: input.outputJson,
+    connectorIds,
+    ...(input.error ? { error: input.error } : {})
+  });
 
   return {
     id:
@@ -54,7 +62,8 @@ export function createToolActivityEvent(input: {
     metadata: {
       riskLevel: connectorIds.length > 0 ? "medium" : "low",
       permissionState: connectorIds.length > 0 ? "requires_review" : "workspace_shared",
-      externalEffects: ["none"]
+      externalEffects: ["none"],
+      ...metadata
     }
   };
 }
@@ -138,4 +147,139 @@ function summarizeJsonShape(value: unknown) {
   const keys = Object.keys(value as Record<string, unknown>);
 
   return keys.length ? `input fields: ${keys.join(", ")}` : "empty input";
+}
+
+function createToolActivityMetadata(input: {
+  toolName: ToolCallRecord["name"];
+  phase: "requested" | "completed";
+  inputJson?: unknown;
+  outputJson?: unknown;
+  connectorIds: string[];
+  error?: string;
+}) {
+  const outputSummary = summarizeOutputForMetadata(input.outputJson, input.error);
+
+  return {
+    toolName: input.toolName,
+    toolPhase: input.phase,
+    inputFields: listJsonKeys(input.inputJson),
+    ...(outputSummary.provider ? { provider: outputSummary.provider } : {}),
+    externalDataSummary: outputSummary.externalDataSummary,
+    ...(outputSummary.resultCount !== undefined
+      ? { resultCount: outputSummary.resultCount }
+      : {}),
+    ...(outputSummary.reference ? { reference: outputSummary.reference } : {}),
+    ...(input.connectorIds.length > 0
+      ? { connectorId: input.connectorIds[0] }
+      : {})
+  };
+}
+
+function summarizeOutputForMetadata(outputJson: unknown, error: string | undefined) {
+  if (error) {
+    return {
+      externalDataSummary: `Tool failed with ${error}; no external write was performed.`
+    };
+  }
+
+  if (!outputJson || typeof outputJson !== "object") {
+    return {
+      externalDataSummary:
+        outputJson === undefined
+          ? "Tool result is pending."
+          : "Tool completed with a structured preview result."
+    };
+  }
+
+  const output = outputJson as Record<string, unknown>;
+  const provider = typeof output.provider === "string" ? output.provider : undefined;
+
+  if (Array.isArray(output.threads)) {
+    return {
+      provider,
+      externalDataSummary: `${output.threads.length} Gmail thread metadata result(s).`,
+      resultCount: output.threads.length,
+      reference: firstReference(output.threads, "gmail-thread")
+    };
+  }
+
+  if (Array.isArray(output.messages)) {
+    return {
+      provider,
+      externalDataSummary: `${output.messages.length} Gmail message metadata record(s).`,
+      resultCount: output.messages.length,
+      reference:
+        typeof output.threadId === "string" && output.threadId.trim()
+          ? `gmail-thread:${output.threadId}`
+          : undefined
+    };
+  }
+
+  if (Array.isArray(output.events)) {
+    return {
+      provider,
+      externalDataSummary: `${output.events.length} Google Calendar event metadata result(s).`,
+      resultCount: output.events.length,
+      reference: firstReference(output.events, "calendar-event")
+    };
+  }
+
+  if (output.draftPayloadPreview) {
+    return {
+      provider,
+      externalDataSummary:
+        "Local Gmail draft payload preview; no Gmail drafts.create or send call.",
+      reference:
+        typeof output.threadId === "string" && output.threadId.trim()
+          ? `gmail-thread:${output.threadId}`
+          : undefined
+    };
+  }
+
+  if (output.eventPayloadPreview) {
+    return {
+      provider,
+      externalDataSummary:
+        "Local Calendar event JSON preview; no Calendar events.insert call.",
+      reference:
+        typeof output.calendarId === "string" && output.calendarId.trim()
+          ? `calendar:${output.calendarId}`
+          : undefined
+    };
+  }
+
+  if (typeof output.artifactId === "string" && output.artifactId.trim()) {
+    return {
+      provider,
+      externalDataSummary:
+        "Local SeekDesk artifact persisted for review; no external provider write.",
+      resultCount: 1,
+      reference: `artifact:${output.artifactId}`
+    };
+  }
+
+  return {
+    provider,
+    externalDataSummary: `Structured tool result fields: ${listJsonKeys(output).join(", ") || "none"}.`
+  };
+}
+
+function listJsonKeys(value: unknown) {
+  if (!value || typeof value !== "object" || Array.isArray(value)) {
+    return [];
+  }
+
+  return Object.keys(value as Record<string, unknown>);
+}
+
+function firstReference(values: unknown[], prefix: string) {
+  const first = values
+    .map((value) =>
+      value && typeof value === "object"
+        ? (value as { id?: unknown }).id
+        : undefined
+    )
+    .find((id): id is string => typeof id === "string" && Boolean(id.trim()));
+
+  return first ? `${prefix}:${first}` : undefined;
 }
