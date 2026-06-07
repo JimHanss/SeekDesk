@@ -147,6 +147,28 @@ After the browser OAuth flow succeeds, use the stricter connected gate:
 npm run verify:google-oauth -- --require-connected
 ```
 
+For the SSH remote checkout, the full Postgres + API + DeepSeek verification can
+be run as one remote session:
+
+```bash
+npm run verify:remote-real-agent
+```
+
+That command runs the remote migration, starts a temporary API using the remote
+`.env.postgres` and `.env.local`, runs Google readiness, runs the real-agent
+verifier, and then cleans up the temporary API. To keep the remote API running
+while completing browser OAuth, use:
+
+```bash
+npm run verify:remote-real-agent -- --keep-running --show-authorization-url
+```
+
+When Google is connected, the final strict gate is:
+
+```bash
+npm run verify:remote-real-agent -- --require-google
+```
+
 For SSH-based remote development, use a loopback redirect URI that matches the
 forwarded API port, for example:
 
