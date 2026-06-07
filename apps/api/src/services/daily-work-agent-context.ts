@@ -10,6 +10,7 @@ import type {
 } from "@seekdesk/shared";
 
 import type { DailyWorkRepository } from "../repositories/daily-work-repository.js";
+import { getGoogleConnectionStatus } from "./google-connector-service.js";
 
 export interface DailyWorkAgentContext {
   context: ChatContext;
@@ -28,14 +29,16 @@ export async function createDailyWorkAgentContext(input: {
     approvalRequests,
     connectors,
     workflows,
-    sessionDetails
+    sessionDetails,
+    googleStatus
   ] = await Promise.all([
     input.repository.listContextItems(),
     input.repository.listArtifacts(),
     input.repository.listApprovalRequests(),
     input.repository.listConnectors(),
     input.repository.listWorkflows(),
-    input.repository.listSessionDetails()
+    input.repository.listSessionDetails(),
+    getGoogleConnectionStatus({ repository: input.repository })
   ]);
   const activeSession = sessionDetails.find(
     (session) => session.id === input.sessionId
@@ -50,6 +53,7 @@ export async function createDailyWorkAgentContext(input: {
       ...summarizeArtifacts(artifacts, context.artifactIds),
       ...summarizeApprovals(approvalRequests, context.approvalRequestIds),
       ...summarizeConnectors(connectors, context.connectorIds),
+      ...summarizeGoogleAuthorization(googleStatus),
       ...summarizeWorkflows(workflows, context.workflowIds),
       "Tool execution boundary: Gmail and Calendar read tools may use an authorized Google connector. Draft email and calendar event tools only create local payload previews; they must not send email or insert events."
     ]
@@ -184,6 +188,26 @@ function summarizeConnectors(
       (connector) =>
         `Connector ${connector.id}: ${connector.displayName}; provider=${connector.provider}; status=${connector.status}; permission=${connector.permissionState}; actions=${connector.availableActions.join(", ") || "none"}; approvals=${connector.requiredApprovalRequestIds.join(", ") || "none"}; notes=${truncateText(connector.notes.join(" "), 220)}`
     )
+  ];
+}
+
+function summarizeGoogleAuthorization(
+  status: Awaited<ReturnType<typeof getGoogleConnectionStatus>>
+) {
+  if (status.connected) {
+    return [
+      `Google authorization: connected${status.accountEmail ? ` as ${status.accountEmail}` : ""}; scopes=${status.scopes.join(", ") || "unknown"}.`,
+      "Google tool availability: gmail.search_threads, gmail.read_thread, and calendar.list_events may read authorized metadata. Gmail draft and calendar event tools remain local previews only."
+    ];
+  }
+
+  const missingConfig = status.missingConfig?.length
+    ? ` Missing config: ${status.missingConfig.join(", ")}.`
+    : "";
+
+  return [
+    `Google authorization: not connected.${missingConfig}`,
+    "Google tool availability: do not claim Gmail or Calendar data was read until OAuth is connected. If the user asks for Google data, explain that authorization is required or attempt the tool only when the request explicitly asks for connector verification."
   ];
 }
 

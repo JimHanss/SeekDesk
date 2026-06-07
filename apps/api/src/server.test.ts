@@ -15,6 +15,7 @@ import {
 } from "@seekdesk/shared";
 
 import { buildServer } from "./server.js";
+import { SeedDailyWorkRepository } from "./repositories/daily-work-repository.js";
 
 const deepSeekEnvKeys = [
   "DEEPSEEK_API_KEY",
@@ -3131,6 +3132,79 @@ describe("api server", () => {
     expect(body.messages[1].content).toContain("Connector customer-email");
     expect(body.messages[1].content).toContain("Connector team-calendar");
     expect(body.messages[1].content).toContain("Approval gates:");
+    expect(body.messages[1].content).toContain("Google authorization: not connected.");
+    expect(body.messages[1].content).toContain("GOOGLE_CLIENT_ID");
+    expect(body.messages[1].content).toContain(
+      "do not claim Gmail or Calendar data was read"
+    );
+
+    await app.close();
+  });
+
+  it("adds connected Google authorization state to the daily-work agent context", async () => {
+    process.env.DEEPSEEK_API_KEY = "sk-test-secret-value";
+    process.env.DEEPSEEK_BASE_URL = "https://api.deepseek.example";
+    process.env.GOOGLE_CLIENT_ID = "google-client-id";
+    process.env.GOOGLE_CLIENT_SECRET = "google-client-secret";
+    process.env.GOOGLE_REDIRECT_URI =
+      "http://127.0.0.1:4000/api/connectors/google/oauth/callback";
+    process.env.GOOGLE_TOKEN_ENCRYPTION_KEY = "test-token-encryption-key";
+
+    const repository = new SeedDailyWorkRepository();
+    await repository.upsertConnectorAccount({
+      id: "google:person@example.com",
+      provider: "google",
+      accountEmail: "person@example.com",
+      encryptedTokens: "encrypted-token-payload",
+      scopes: [
+        "https://www.googleapis.com/auth/gmail.readonly",
+        "https://www.googleapis.com/auth/calendar.readonly"
+      ],
+      connectedAt: "2026-06-01T00:00:00.000Z",
+      updatedAt: "2026-06-01T00:00:00.000Z"
+    });
+
+    const fetchMock = vi.fn(
+      async (input: RequestInfo | URL, init?: RequestInit) => {
+        void input;
+        void init;
+
+        return createDeepSeekStreamResponse([
+          `data: ${JSON.stringify({
+            choices: [{ delta: { content: "Connected Google context ready." } }]
+          })}\n\n`,
+          "data: [DONE]\n\n"
+        ]);
+      }
+    );
+    vi.stubGlobal("fetch", fetchMock);
+
+    const app = await buildServer({ dailyWorkRepository: repository });
+    const response = await app.inject({
+      method: "POST",
+      url: "/api/chat",
+      payload: {
+        mode: "daily_work",
+        sessionId: "google-connected-session",
+        prompt: "summarize Google connector availability"
+      }
+    });
+
+    expect(response.statusCode).toBe(200);
+    expect(fetchMock).toHaveBeenCalledOnce();
+
+    const [, init] = fetchMock.mock.calls[0] ?? [];
+    const body = JSON.parse(String(init?.body));
+    const contextMessage = String(body.messages[1].content);
+
+    expect(contextMessage).toContain(
+      "Google authorization: connected as person@example.com"
+    );
+    expect(contextMessage).toContain("gmail.search_threads");
+    expect(contextMessage).toContain("calendar.list_events");
+    expect(contextMessage).toContain(
+      "Gmail draft and calendar event tools remain local previews only"
+    );
 
     await app.close();
   });
