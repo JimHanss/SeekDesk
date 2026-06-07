@@ -105,12 +105,21 @@ export interface DailyWorkRepository {
   upsertArtifact(artifact: DailyWorkArtifact): Promise<DailyWorkArtifact>;
   recordChatMessage(message: PersistedChatMessage): Promise<PersistedChatMessage>;
   recordToolCall(record: ToolCallRecord): Promise<ToolCallRecord>;
+  listToolCalls(query?: DailyWorkTraceQuery): Promise<ToolCallRecord[]>;
   recordModelUsage(record: ToolModelUsageRecord): Promise<ToolModelUsageRecord>;
+  listModelUsageRecords(
+    query?: DailyWorkTraceQuery
+  ): Promise<ToolModelUsageRecord[]>;
   getConnectorAccount(provider: string): Promise<DailyWorkConnectorAccount | null>;
   upsertConnectorAccount(
     account: DailyWorkConnectorAccount
   ): Promise<DailyWorkConnectorAccount>;
   getDataLayerStatus(): Promise<DailyWorkDataLayerStatus>;
+}
+
+export interface DailyWorkTraceQuery {
+  sessionId?: string;
+  limit?: number;
 }
 
 export class DailyWorkRepositoryDataError extends Error {
@@ -134,6 +143,8 @@ export class SeedDailyWorkRepository implements DailyWorkRepository {
   private readonly connectors = cloneJson(defaultDailyWorkConnectors);
   private readonly workflows = cloneJson(defaultDailyWorkflows);
   private readonly connectorAccounts = new Map<string, DailyWorkConnectorAccount>();
+  private readonly toolCalls: ToolCallRecord[] = [];
+  private readonly modelUsageRecords: ToolModelUsageRecord[] = [];
 
   async listTemplates() {
     return cloneJson(this.templates);
@@ -209,11 +220,23 @@ export class SeedDailyWorkRepository implements DailyWorkRepository {
   }
 
   async recordToolCall(record: ToolCallRecord) {
+    upsertFirstById(this.toolCalls, record);
+
     return cloneJson(record);
   }
 
+  async listToolCalls(query: DailyWorkTraceQuery = {}) {
+    return cloneJson(filterTraceRecords(this.toolCalls, query));
+  }
+
   async recordModelUsage(record: ToolModelUsageRecord) {
+    upsertFirstById(this.modelUsageRecords, record);
+
     return cloneJson(record);
+  }
+
+  async listModelUsageRecords(query: DailyWorkTraceQuery = {}) {
+    return cloneJson(filterTraceRecords(this.modelUsageRecords, query));
   }
 
   async getConnectorAccount(provider: string) {
@@ -241,6 +264,9 @@ export class SeedDailyWorkRepository implements DailyWorkRepository {
 }
 
 export class JsonDailyWorkRepository implements DailyWorkRepository {
+  private readonly toolCalls: ToolCallRecord[] = [];
+  private readonly modelUsageRecords: ToolModelUsageRecord[] = [];
+
   constructor(
     private readonly dataDir: string,
     private readonly seedRepository: DailyWorkRepository = new SeedDailyWorkRepository()
@@ -382,11 +408,23 @@ export class JsonDailyWorkRepository implements DailyWorkRepository {
   }
 
   async recordToolCall(record: ToolCallRecord) {
+    upsertFirstById(this.toolCalls, record);
+
     return cloneJson(record);
   }
 
+  async listToolCalls(query: DailyWorkTraceQuery = {}) {
+    return cloneJson(filterTraceRecords(this.toolCalls, query));
+  }
+
   async recordModelUsage(record: ToolModelUsageRecord) {
+    upsertFirstById(this.modelUsageRecords, record);
+
     return cloneJson(record);
+  }
+
+  async listModelUsageRecords(query: DailyWorkTraceQuery = {}) {
+    return cloneJson(filterTraceRecords(this.modelUsageRecords, query));
   }
 
   async getConnectorAccount(_provider: string) {
@@ -659,4 +697,36 @@ function createSessionTitle(content: string) {
 
 function uniqueStrings(values: string[]) {
   return [...new Set(values)];
+}
+
+function filterTraceRecords<T extends { createdAt: string }>(
+  records: T[],
+  query: DailyWorkTraceQuery
+): T[] {
+  const limit = normalizeTraceLimit(query.limit);
+
+  return records
+    .filter(
+      (record) => !query.sessionId || getTraceSessionId(record) === query.sessionId
+    )
+    .sort((a, b) => a.createdAt.localeCompare(b.createdAt))
+    .slice(0, limit);
+}
+
+function getTraceSessionId(record: unknown) {
+  if (record && typeof record === "object" && "sessionId" in record) {
+    const value = (record as { sessionId?: unknown }).sessionId;
+
+    return typeof value === "string" ? value : undefined;
+  }
+
+  return undefined;
+}
+
+function normalizeTraceLimit(limit: number | undefined) {
+  if (!Number.isFinite(limit)) {
+    return 50;
+  }
+
+  return Math.min(Math.max(Math.trunc(limit ?? 50), 1), 200);
 }

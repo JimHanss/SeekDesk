@@ -1,4 +1,5 @@
 export * from "./domain/activity";
+export * from "./domain/agent-trace";
 export * from "./domain/approvals";
 export * from "./domain/assistant-stream";
 export * from "./domain/artifacts";

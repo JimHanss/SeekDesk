@@ -4,6 +4,7 @@ import {
   activeMode,
   connectorItems,
   createLocalConnectorPreviewState,
+  mapAgentTraceResponse,
   mapApprovalDecisionStatus,
   mapTemplatePreviewResponse,
   mapTemplatesResponse,
@@ -114,6 +115,67 @@ describe("daily-work domain mappers", () => {
     expect(preview.requiredApprovalRequestIds).toEqual(
       connector.requiredApprovalIds
     );
+  });
+
+  it("maps agent trace responses into visible tool and usage state", () => {
+    const trace = mapAgentTraceResponse(
+      {
+        mode: activeMode,
+        sessionId: "session-1",
+        toolCalls: [
+          {
+            id: "call-1",
+            name: "gmail.search_threads",
+            status: "completed",
+            inputJson: { query: "from:customer" },
+            outputJson: { threads: [] },
+            previewOnly: true,
+            permissionRequired: false,
+            createdAt: "2026-06-08T00:00:00.000Z",
+            completedAt: "2026-06-08T00:00:01.000Z"
+          }
+        ],
+        modelUsageRecords: [
+          {
+            id: "usage-1",
+            provider: "deepseek",
+            model: "deepseek-chat",
+            promptTokens: 10,
+            completionTokens: 5,
+            totalTokens: 15,
+            createdAt: "2026-06-08T00:00:02.000Z"
+          }
+        ],
+        permissionBoundary: {
+          previewOnly: true,
+          externalEffects: ["none"],
+          statement: "No external effects."
+        }
+      },
+      { sessionId: "fallback-session", provider: "deepseek" }
+    );
+
+    expect(trace).toMatchObject({
+      sessionId: "session-1",
+      provider: "deepseek",
+      syncStatus: "live",
+      toolCalls: [
+        expect.objectContaining({
+          name: "gmail.search_threads",
+          status: "completed",
+          previewOnly: true
+        })
+      ],
+      modelUsageSummary: expect.objectContaining({
+        provider: "deepseek",
+        totalTokens: 15,
+        recordCount: 1
+      }),
+      permissionBoundary: expect.objectContaining({
+        previewOnly: true,
+        statement: "No external effects."
+      })
+    });
   });
 
   it("maps approval API decisions into UI ledger states", () => {

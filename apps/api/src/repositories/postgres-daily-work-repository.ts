@@ -1,4 +1,4 @@
-import { desc, eq } from "drizzle-orm";
+import { asc, desc, eq } from "drizzle-orm";
 import { drizzle, type NodePgDatabase } from "drizzle-orm/node-postgres";
 import { Pool } from "pg";
 
@@ -13,6 +13,8 @@ import {
   dailyWorkSessionSummarySchema,
   dailyWorkTemplateSchema,
   dailyWorkWorkflowSchema,
+  toolCallRecordSchema,
+  toolModelUsageRecordSchema,
   defaultDailyActivityEvents,
   defaultDailyWorkApprovalRequests,
   defaultDailyWorkArtifacts,
@@ -21,8 +23,6 @@ import {
   defaultDailyWorkSessionDetails,
   defaultDailyWorkTemplates,
   defaultDailyWorkflows,
-  toolCallRecordSchema,
-  toolModelUsageRecordSchema,
   type DailyActivityEvent,
   type DailyApprovalRequest,
   type DailyWorkArtifact,
@@ -36,6 +36,7 @@ import * as schema from "../db/schema.js";
 import type {
   DailyWorkConnectorAccount,
   DailyWorkDataLayerStatus,
+  DailyWorkTraceQuery,
   DailyWorkRepository,
   PersistedChatMessage
 } from "./daily-work-repository.js";
@@ -258,6 +259,12 @@ export class PostgresDailyWorkRepository implements DailyWorkRepository {
     return cloneJson(parsed);
   }
 
+  async listToolCalls(query: DailyWorkTraceQuery = {}) {
+    const rows = await this.selectToolCallRows(query);
+
+    return rows.map(mapToolCallRow);
+  }
+
   async recordModelUsage(record: ToolModelUsageRecord) {
     const parsed = toolModelUsageRecordSchema.parse(record);
 
@@ -286,6 +293,12 @@ export class PostgresDailyWorkRepository implements DailyWorkRepository {
       });
 
     return cloneJson(parsed);
+  }
+
+  async listModelUsageRecords(query: DailyWorkTraceQuery = {}) {
+    const rows = await this.selectModelUsageRows(query);
+
+    return rows.map(mapModelUsageRow);
   }
 
   async getConnectorAccount(provider: string) {
@@ -419,6 +432,83 @@ export class PostgresDailyWorkRepository implements DailyWorkRepository {
         }
       });
   }
+
+  private async selectToolCallRows(query: DailyWorkTraceQuery) {
+    const limit = normalizeTraceLimit(query.limit);
+
+    if (query.sessionId) {
+      return this.db
+        .select()
+        .from(schema.toolCalls)
+        .where(eq(schema.toolCalls.sessionId, query.sessionId))
+        .orderBy(asc(schema.toolCalls.createdAt))
+        .limit(limit);
+    }
+
+    return this.db
+      .select()
+      .from(schema.toolCalls)
+      .orderBy(asc(schema.toolCalls.createdAt))
+      .limit(limit);
+  }
+
+  private async selectModelUsageRows(query: DailyWorkTraceQuery) {
+    const limit = normalizeTraceLimit(query.limit);
+
+    if (query.sessionId) {
+      return this.db
+        .select()
+        .from(schema.modelUsageRecords)
+        .where(eq(schema.modelUsageRecords.sessionId, query.sessionId))
+        .orderBy(asc(schema.modelUsageRecords.createdAt))
+        .limit(limit);
+    }
+
+    return this.db
+      .select()
+      .from(schema.modelUsageRecords)
+      .orderBy(asc(schema.modelUsageRecords.createdAt))
+      .limit(limit);
+  }
+}
+
+function mapToolCallRow(row: typeof schema.toolCalls.$inferSelect): ToolCallRecord {
+  return toolCallRecordSchema.parse({
+    id: row.id,
+    ...(row.sessionId ? { sessionId: row.sessionId } : {}),
+    name: row.name,
+    status: row.status,
+    inputJson: row.inputJson,
+    ...(row.outputJson === null ? {} : { outputJson: row.outputJson }),
+    previewOnly: row.previewOnly,
+    permissionRequired: row.permissionRequired,
+    ...(row.error ? { error: row.error } : {}),
+    createdAt: row.createdAt.toISOString(),
+    ...(row.completedAt ? { completedAt: row.completedAt.toISOString() } : {})
+  });
+}
+
+function mapModelUsageRow(
+  row: typeof schema.modelUsageRecords.$inferSelect
+): ToolModelUsageRecord {
+  return toolModelUsageRecordSchema.parse({
+    id: row.id,
+    ...(row.sessionId ? { sessionId: row.sessionId } : {}),
+    provider: row.provider,
+    model: row.model,
+    promptTokens: row.promptTokens,
+    completionTokens: row.completionTokens,
+    totalTokens: row.totalTokens,
+    createdAt: row.createdAt.toISOString()
+  });
+}
+
+function normalizeTraceLimit(limit: number | undefined) {
+  if (!Number.isFinite(limit)) {
+    return 50;
+  }
+
+  return Math.min(Math.max(Math.trunc(limit ?? 50), 1), 200);
 }
 
 function parsePersistedChatMessage(

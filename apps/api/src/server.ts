@@ -2,6 +2,8 @@
 import {
   DeepSeekModelProvider,
   MockModelProvider,
+  createDefaultToolRegistry,
+  fromModelToolName,
   streamAgentLoop,
   type ModelStreamChunk,
   type ModelProvider
@@ -38,6 +40,7 @@ const allowedOrigins = new Set([
   "http://localhost:3000",
   "http://127.0.0.1:3000"
 ]);
+const defaultToolRegistry = createDefaultToolRegistry();
 
 export async function buildServer(options?: {
   dailyWorkRepository?: DailyWorkRepository;
@@ -115,6 +118,27 @@ export async function buildServer(options?: {
       .send(stream);
   });
 
+  app.get<{ Params: { sessionId: string } }>(
+    "/api/chat/sessions/:sessionId/trace",
+    async (request) => {
+      const sessionId = request.params.sessionId.trim();
+      const [toolCalls, modelUsageRecords] = await Promise.all([
+        dailyWorkRepository.listToolCalls({ sessionId, limit: 100 }),
+        dailyWorkRepository.listModelUsageRecords({ sessionId, limit: 100 })
+      ]);
+
+      return {
+        mode: "daily_work",
+        sessionId,
+        toolCalls,
+        modelUsageRecords,
+        modelUsageSummary: summarizeModelUsageRecords(modelUsageRecords),
+        permissionBoundary: createAgentPermissionBoundary(),
+        generatedAt: new Date().toISOString()
+      };
+    }
+  );
+
   app.get("/ws", { websocket: true }, async (socket) => {
     socket.send(
       JSON.stringify({
@@ -157,6 +181,10 @@ function applyCorsHeaders(request: FastifyRequest, reply: FastifyReply) {
   reply.header("Vary", "Origin");
   reply.header("Access-Control-Allow-Methods", "GET,POST,OPTIONS");
   reply.header("Access-Control-Allow-Headers", "Content-Type,Authorization");
+  reply.header(
+    "Access-Control-Expose-Headers",
+    "X-SeekDesk-Chat-Mode,X-SeekDesk-Chat-Provider,X-SeekDesk-Chat-Session-Id"
+  );
 }
 
 function createAgentLoopInput(
@@ -251,7 +279,7 @@ async function recordToolCallChunk(
   },
   chunk: Extract<ModelStreamChunk, { type: "tool-call" }>
 ) {
-  const parsedName = toolNameSchema.safeParse(chunk.name);
+  const parsedName = parseRecordedToolName(chunk.name);
   if (!parsedName.success) {
     return;
   }
@@ -275,7 +303,7 @@ async function recordToolResultChunk(
   },
   chunk: Extract<ModelStreamChunk, { type: "tool-result" }>
 ) {
-  const parsedName = toolNameSchema.safeParse(chunk.name);
+  const parsedName = parseRecordedToolName(chunk.name);
   if (!parsedName.success) {
     return;
   }
@@ -353,6 +381,40 @@ function normalizeToolRecordStatus(
   }
 
   return "completed";
+}
+
+function parseRecordedToolName(name: string) {
+  const direct = toolNameSchema.safeParse(name);
+  if (direct.success) {
+    return direct;
+  }
+
+  return toolNameSchema.safeParse(fromModelToolName(defaultToolRegistry, name));
+}
+
+function summarizeModelUsageRecords(records: ToolModelUsageRecord[]) {
+  const latest = records.at(-1);
+
+  return {
+    provider: latest?.provider ?? "unknown",
+    model: latest?.model ?? "unknown",
+    promptTokens: records.reduce((sum, record) => sum + record.promptTokens, 0),
+    completionTokens: records.reduce(
+      (sum, record) => sum + record.completionTokens,
+      0
+    ),
+    totalTokens: records.reduce((sum, record) => sum + record.totalTokens, 0),
+    recordCount: records.length
+  };
+}
+
+function createAgentPermissionBoundary() {
+  return {
+    previewOnly: true,
+    externalEffects: ["none"],
+    statement:
+      "Daily-work agent tools may read authorized connector data and create local previews only. SeekDesk does not send email, create calendar events, write external documents, or run coding-agent tools in this mode."
+  };
 }
 
 function modelStreamToReadableStream(

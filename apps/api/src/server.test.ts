@@ -2913,6 +2913,9 @@ describe("api server", () => {
     expect(response.headers["access-control-allow-origin"]).toBe(
       "http://localhost:3000"
     );
+    expect(response.headers["access-control-expose-headers"]).toContain(
+      "X-SeekDesk-Chat-Session-Id"
+    );
     expect(response.body).toContain("Mock daily-work AI response");
     expect(response.body).toContain("summarize this repository");
     expect(response.headers["x-seekdesk-chat-mode"]).toBe("daily_work");
@@ -3096,7 +3099,7 @@ describe("api server", () => {
                       id: "call-persist-artifact",
                       type: "function",
                       function: {
-                        name: "daily.persist_artifact",
+                        name: "daily_persist_artifact",
                         arguments:
                           "{\"title\":\"AI work note\",\"artifactType\":\"brief\",\"content\":\"A reviewable work note from the model.\",\"tags\":[\"ai\",\"preview\"]}"
                       }
@@ -3114,6 +3117,14 @@ describe("api server", () => {
         createDeepSeekStreamResponse([
           `data: ${JSON.stringify({
             choices: [{ delta: { content: "Artifact saved for review." } }]
+          })}\n\n`,
+          `data: ${JSON.stringify({
+            usage: {
+              prompt_tokens: 12,
+              completion_tokens: 8,
+              total_tokens: 20
+            },
+            choices: []
           })}\n\n`,
           "data: [DONE]\n\n"
         ])
@@ -3143,7 +3154,7 @@ describe("api server", () => {
           expect.arrayContaining([
             expect.objectContaining({
               role: "tool",
-              name: "daily.persist_artifact",
+              name: "daily_persist_artifact",
               content: expect.stringContaining("AI work note")
             })
           ])
@@ -3176,6 +3187,44 @@ describe("api server", () => {
               summary: expect.stringContaining("AI work note")
             })
           ])
+        );
+
+        const sessionId = String(response.headers["x-seekdesk-chat-session-id"]);
+        const traceResponse = await app.inject({
+          method: "GET",
+          url: `/api/chat/sessions/${sessionId}/trace`
+        });
+
+        expect(traceResponse.statusCode).toBe(200);
+        expect(traceResponse.json()).toEqual(
+          expect.objectContaining({
+            mode: "daily_work",
+            sessionId,
+            toolCalls: expect.arrayContaining([
+              expect.objectContaining({
+                id: "call-persist-artifact",
+                name: "daily.persist_artifact",
+                status: "completed",
+                previewOnly: true,
+                permissionRequired: false
+              })
+            ]),
+            modelUsageRecords: expect.arrayContaining([
+              expect.objectContaining({
+                provider: "deepseek",
+                totalTokens: 20
+              })
+            ]),
+            modelUsageSummary: expect.objectContaining({
+              provider: "deepseek",
+              totalTokens: 20,
+              recordCount: 1
+            }),
+            permissionBoundary: expect.objectContaining({
+              previewOnly: true,
+              externalEffects: ["none"]
+            })
+          })
         );
       } finally {
         await app.close();

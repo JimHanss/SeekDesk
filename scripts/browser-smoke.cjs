@@ -1460,6 +1460,16 @@ async function runChatSendSmoke(client) {
       !state.hasErrorText,
     "chat submit API response"
   );
+  const traceState = await waitForValue(
+    client,
+    agentTraceExpression(),
+    (state) =>
+      state.present &&
+      state.status === "live" &&
+      state.hasSession &&
+      state.boundary === "preview-only",
+    "agent trace panel after chat"
+  );
 
   checks.push({
     name: "chat submit renders API response",
@@ -1468,6 +1478,15 @@ async function runChatSendSmoke(client) {
     structuredChatDom: pageState.present,
     matchedResponseSignature: pageState.hasResponseSignature,
     responseLength: pageState.responseTextLength
+  });
+  checks.push({
+    name: "agent trace panel",
+    status: "passed",
+    traceStatus: traceState.status,
+    sessionText: traceState.sessionText,
+    usageRecords: traceState.usageRecords,
+    boundary: traceState.boundary,
+    toolRows: traceState.toolRows
   });
 }
 
@@ -2286,6 +2305,26 @@ function chatResponseExpression(prompt, responseSignature) {
       inputValue: input ? input.value : null,
       submitDisabled: submit ? submit.disabled : true,
       hasErrorText: /request failed|chat api|code block smoke could not|璇锋眰澶辫触/i.test(bodyText)
+    };
+  })()`);
+}
+
+function agentTraceExpression() {
+  return withSmokeHelpers(`(() => {
+    const root = document.querySelector("[data-agent-trace-panel]");
+    const session = root ? root.querySelector("[data-agent-trace-session]") : null;
+    const usage = document.querySelector("[data-agent-model-usage-count]");
+    const boundary = document.querySelector("[data-agent-permission-boundary]");
+    const toolRows = root ? [...root.querySelectorAll("[data-agent-tool-call]")] : [];
+    const sessionText = session ? session.textContent || "" : "";
+    return {
+      present: Boolean(root),
+      status: root ? root.getAttribute("data-agent-trace-status") || "" : "",
+      sessionText,
+      hasSession: /Session:\\s+(?!waiting)/.test(sessionText),
+      usageRecords: usage ? Number(usage.getAttribute("data-agent-model-usage-count") || 0) : 0,
+      boundary: boundary ? boundary.getAttribute("data-agent-permission-boundary") || "" : "",
+      toolRows: toolRows.length
     };
   })()`);
 }

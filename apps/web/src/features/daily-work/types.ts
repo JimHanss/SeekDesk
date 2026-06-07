@@ -11,6 +11,67 @@ export interface ChatMessage {
   content: string;
 }
 
+export type AgentTraceSyncStatus = "idle" | "syncing" | "live" | "degraded";
+
+export interface AgentToolCallTraceItem {
+  id: string;
+  name: string;
+  status: string;
+  inputJson?: unknown;
+  outputJson?: unknown;
+  previewOnly: boolean;
+  permissionRequired: boolean;
+  error: string | null;
+  createdAt: string;
+  completedAt: string | null;
+}
+
+export interface AgentModelUsageTraceItem {
+  id: string;
+  provider: string;
+  model: string;
+  promptTokens: number;
+  completionTokens: number;
+  totalTokens: number;
+  createdAt: string;
+}
+
+export interface AgentModelUsageSummary {
+  provider: string;
+  model: string;
+  promptTokens: number;
+  completionTokens: number;
+  totalTokens: number;
+  recordCount: number;
+}
+
+export interface AgentPermissionBoundary {
+  previewOnly: boolean;
+  externalEffects: string[];
+  statement: string;
+}
+
+export interface AgentTraceState {
+  sessionId: string | null;
+  provider: string | null;
+  syncStatus: AgentTraceSyncStatus;
+  toolCalls: AgentToolCallTraceItem[];
+  modelUsageRecords: AgentModelUsageTraceItem[];
+  modelUsageSummary: AgentModelUsageSummary;
+  permissionBoundary: AgentPermissionBoundary;
+  notice: string;
+}
+
+export interface AgentTraceResponseDto {
+  mode?: AppMode;
+  sessionId?: string;
+  toolCalls?: unknown[];
+  modelUsageRecords?: unknown[];
+  modelUsageSummary?: Partial<AgentModelUsageSummary>;
+  permissionBoundary?: Partial<AgentPermissionBoundary>;
+  generatedAt?: string;
+}
+
 export type MessageSegment =
   | {
       type: "text";

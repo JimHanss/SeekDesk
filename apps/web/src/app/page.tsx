@@ -112,6 +112,7 @@ export default function Page() {
 
   const apiBaseUrl = useMemo(() => getRuntimeApiBaseUrl().replace(/\/$/, ""), []);
   const {
+    agentTrace,
     applyPrompt,
     cancelRequest,
     endpoint,
@@ -497,6 +498,7 @@ export default function Page() {
                       modelName={activeModelSnapshot.selectedModel}
                       onDismissError={() => setError(null)}
                       onRetry={retryLastPrompt}
+                      agentTrace={agentTrace}
                       status={status}
                     />
                   </div>
