@@ -172,11 +172,11 @@ export function assistantResponseMode(contentType: string): AssistantResponseMod
 }
 
 export async function formatChatError(response: Response) {
-  const fallback = `请求失败：${response.status}`;
+  const fallback = `Request failed: ${response.status}`;
 
   try {
     const detail = extractAssistantTextPayload(await response.text());
-    return detail ? `${fallback}：${detail}` : fallback;
+    return detail ? `${fallback}: ${detail}` : fallback;
   } catch {
     return fallback;
   }

@@ -95,6 +95,43 @@ Required env:
 Refresh tokens never reach the frontend. Tokens are encrypted with AES-256-GCM before
 repository storage.
 
+For SSH-based remote development, use a loopback redirect URI that matches the
+forwarded API port, for example:
+
+```text
+GOOGLE_REDIRECT_URI=http://127.0.0.1:4000/api/connectors/google/oauth/callback
+```
+
+Then forward the API and web ports from the local machine to `jim-mac` before
+opening the OAuth start URL in the local browser:
+
+```bash
+ssh -L 3000:127.0.0.1:3000 -L 4000:127.0.0.1:4000 jim-mac
+```
+
+## Real-Agent Verification
+
+`npm run verify:real-agent` verifies a running API without reading secrets. It
+checks:
+
+- `/health` is backed by a ready Postgres repository.
+- `/api/chat` uses DeepSeek, streams a response, and records model usage.
+- DeepSeek plans and completes `daily.persist_artifact`.
+- The session trace exposes tool plan/result records for the frontend.
+- Google status is reported clearly.
+
+When Google is connected, the same script asks DeepSeek to autonomously plan
+`gmail.search_threads` and `calendar.list_events`, then verifies both completed
+tool results are present in the session trace:
+
+```bash
+npm run verify:real-agent -- --require-google
+```
+
+If Google is not connected and `--require-google` is omitted, the script passes
+the DeepSeek/Postgres/artifact checks and reports the Google read verification as
+skipped with the missing setup fields.
+
 ## DeepSeek Streaming
 
 The DeepSeek provider parses:
