@@ -22,6 +22,7 @@
     "lint": "npm run lint --workspaces --if-present",
     "test": "npm run test --workspaces --if-present",
     "test:browser-smoke": "node scripts/browser-smoke.cjs",
+    "configure:google-oauth": "node scripts/configure-google-oauth-env.mjs",
     "verify:real-agent": "node scripts/verify-real-agent.mjs",
     "db:generate": "drizzle-kit generate",
     "db:migrate": "drizzle-kit migrate",

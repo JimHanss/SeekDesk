@@ -95,6 +95,21 @@ Required env:
 Refresh tokens never reach the frontend. Tokens are encrypted with AES-256-GCM before
 repository storage.
 
+To safely write local Google OAuth configuration without committing secrets, set
+the client id/secret in the current process environment and run:
+
+```bash
+GOOGLE_CLIENT_ID="..." \
+GOOGLE_CLIENT_SECRET="..." \
+npm run configure:google-oauth
+```
+
+The script updates `.env.local`, generates missing encryption/state secrets, and
+does not print secret values. `.env.local` remains git-ignored.
+
+Use `--target-env <path>` when writing a different ignored env file, for example
+on a remote checkout.
+
 For SSH-based remote development, use a loopback redirect URI that matches the
 forwarded API port, for example:
 
