@@ -16,6 +16,7 @@ try {
   const script = createRemoteScript({
     repo,
     port,
+    skipSecrets: Boolean(args.skipSecrets),
     skipMigrate: Boolean(args.skipMigrate),
     requireGoogle: Boolean(args.requireGoogle),
     requireGoogleConfigured: Boolean(args.requireGoogleConfigured),
@@ -33,6 +34,7 @@ try {
         repo,
         port,
         requireGoogle: Boolean(args.requireGoogle),
+        skipSecrets: Boolean(args.skipSecrets),
         keepRunning: Boolean(args.keepRunning)
       },
       null,
@@ -103,6 +105,9 @@ function createRemoteScript(input) {
   const cleanupTrap = input.keepRunning
     ? ""
     : `trap 'cleanup_remote_api' EXIT INT TERM`;
+  const secretsBlock = input.skipSecrets
+    ? `echo '{"step":"secrets","status":"skipped"}'`
+    : `npm run verify:secrets`;
   const migrateBlock = input.skipMigrate
     ? `echo '{"step":"db:migrate","status":"skipped"}'`
     : `set -a
@@ -127,6 +132,10 @@ ${cleanupTrap}
 
 cd ${shellQuote(input.repo)}
 export PATH=/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin:$PATH
+
+echo '{"step":"secrets","status":"checking"}'
+${secretsBlock}
+echo '{"step":"secrets","status":"done"}'
 
 echo '{"step":"db:migrate","status":"starting"}'
 ${migrateBlock}
@@ -204,6 +213,11 @@ function parseArgs(argv) {
       continue;
     }
 
+    if (arg === "--skip-secrets") {
+      parsed.skipSecrets = true;
+      continue;
+    }
+
     if (arg === "--require-google") {
       parsed.requireGoogle = true;
       continue;
@@ -266,17 +280,19 @@ function printHelp() {
   console.log(`Usage: npm run verify:remote-real-agent -- [options]
 
 Runs the remote SeekDesk real-agent verification flow over SSH:
-  1. optionally run npm run db:migrate
-  2. start a temporary API with remote .env.postgres + .env.local
-  3. run npm run verify:google-oauth
-  4. run npm run verify:real-agent
-  5. clean up the temporary API unless --keep-running is set
+  1. run npm run verify:secrets unless --skip-secrets is set
+  2. optionally run npm run db:migrate
+  3. start a temporary API with remote .env.postgres + .env.local
+  4. run npm run verify:google-oauth
+  5. run npm run verify:real-agent
+  6. clean up the temporary API unless --keep-running is set
 
 Options:
   --host <ssh-host>              SSH host. Default: jim-mac
   --repo <path>                  Remote repo path. Default:
                                  /Users/jimhuang/project/SeekDesk
   --port <port>                  Remote API port. Default: 45100
+  --skip-secrets                 Skip npm run verify:secrets.
   --skip-migrate                 Skip npm run db:migrate.
   --require-google               Also require Gmail/Calendar real read tools.
   --require-google-configured    Fail unless Google OAuth env config is complete.

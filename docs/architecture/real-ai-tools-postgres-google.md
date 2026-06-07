@@ -154,10 +154,10 @@ be run as one remote session:
 npm run verify:remote-real-agent
 ```
 
-That command runs the remote migration, starts a temporary API using the remote
-`.env.postgres` and `.env.local`, runs Google readiness, runs the real-agent
-verifier, and then cleans up the temporary API. To keep the remote API running
-while completing browser OAuth, use:
+That command runs the remote secret hygiene check, runs the remote migration,
+starts a temporary API using the remote `.env.postgres` and `.env.local`, runs
+Google readiness, runs the real-agent verifier, and then cleans up the temporary
+API. To keep the remote API running while completing browser OAuth, use:
 
 ```bash
 npm run verify:remote-real-agent -- --keep-running --show-authorization-url
