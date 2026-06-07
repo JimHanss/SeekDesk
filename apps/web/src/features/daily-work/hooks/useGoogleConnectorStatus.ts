@@ -129,6 +129,45 @@ export function useGoogleConnectorStatus(apiBaseUrl: string) {
     };
   }, [refreshGoogleConnectorStatus]);
 
+  const refreshGoogleConnectorStatusSafely = React.useCallback(async () => {
+    try {
+      await refreshGoogleConnectorStatus();
+    } catch {
+      setGoogleConnectorStatus({
+        ...fallbackStatus,
+        source: "degraded",
+        syncStatus: "degraded",
+        notice:
+          "Google connector status is unavailable; tools will degrade with connector_not_connected."
+      });
+      setGoogleOAuthStartStatus("failed");
+      setGoogleOAuthStartNotice(
+        "Google connector status could not be refreshed."
+      );
+    }
+  }, [refreshGoogleConnectorStatus]);
+
+  React.useEffect(() => {
+    function handleMessage(event: MessageEvent) {
+      const data = event.data;
+      if (
+        !data ||
+        typeof data !== "object" ||
+        (data as { type?: unknown }).type !== "seekdesk.google_oauth_callback"
+      ) {
+        return;
+      }
+
+      void refreshGoogleConnectorStatusSafely();
+    }
+
+    window.addEventListener("message", handleMessage);
+
+    return () => {
+      window.removeEventListener("message", handleMessage);
+    };
+  }, [refreshGoogleConnectorStatusSafely]);
+
   const startGoogleOAuth = React.useCallback(async () => {
     setGoogleOAuthStartStatus("starting");
     setGoogleOAuthStartNotice("Requesting a Google OAuth consent URL.");
@@ -175,7 +214,7 @@ export function useGoogleConnectorStatus(apiBaseUrl: string) {
     googleConnectorStatus,
     googleOAuthStartNotice,
     googleOAuthStartStatus,
-    refreshGoogleConnectorStatus,
+    refreshGoogleConnectorStatus: refreshGoogleConnectorStatusSafely,
     startGoogleOAuth
   };
 }

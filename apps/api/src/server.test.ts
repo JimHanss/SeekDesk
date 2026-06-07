@@ -166,6 +166,53 @@ describe("api server", () => {
     await app.close();
   });
 
+  it("returns a browser-friendly Google OAuth callback setup page", async () => {
+    const app = await buildServer();
+    const response = await app.inject({
+      method: "GET",
+      url: "/api/connectors/google/oauth/callback?code=fake-code",
+      headers: {
+        accept: "text/html"
+      }
+    });
+
+    expect(response.statusCode).toBe(503);
+    expect(response.headers["content-type"]).toContain("text/html");
+    expect(response.body).toContain("Google OAuth Setup Required");
+    expect(response.body).toContain("GOOGLE_CLIENT_ID");
+    expect(response.body).toContain("seekdesk.google_oauth_callback");
+
+    await app.close();
+  });
+
+  it("keeps Google OAuth callback JSON shape for API clients", async () => {
+    const app = await buildServer();
+    const response = await app.inject({
+      method: "GET",
+      url: "/api/connectors/google/oauth/callback?code=fake-code",
+      headers: {
+        accept: "application/json"
+      }
+    });
+
+    expect(response.statusCode).toBe(503);
+    expect(response.headers["content-type"]).toContain("application/json");
+    expect(response.json()).toEqual({
+      provider: "google",
+      connected: false,
+      requiresSetup: true,
+      error: "google_oauth_not_configured",
+      missingConfig: [
+        "GOOGLE_CLIENT_ID",
+        "GOOGLE_CLIENT_SECRET",
+        "GOOGLE_REDIRECT_URI",
+        "GOOGLE_TOKEN_ENCRYPTION_KEY"
+      ]
+    });
+
+    await app.close();
+  });
+
   it("returns the default daily-work templates when no mode is provided", async () => {
     const app = await buildServer();
     const response = await app.inject({

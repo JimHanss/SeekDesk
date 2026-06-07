@@ -1111,6 +1111,7 @@ async function runGoogleConnectorStatusSmoke(client, apiUrl) {
       state.present &&
       ["connected", "requires_setup"].includes(state.status) &&
       state.syncStatus &&
+      state.refreshPresent &&
       state.oauthPresent &&
       state.oauthStartStatus &&
       state.textLength > 0,
@@ -1124,6 +1125,7 @@ async function runGoogleConnectorStatusSmoke(client, apiUrl) {
     apiConnected: statusSnapshot.connected,
     pageStatus: pageState.status,
     pageSyncStatus: pageState.syncStatus,
+    refreshPresent: pageState.refreshPresent,
     oauthStartStatus: pageState.oauthStartStatus,
     oauthStartDisabled: pageState.oauthStartDisabled
   });
@@ -1591,6 +1593,7 @@ function dataLayerStateExpression() {
 function googleConnectorStatusExpression() {
   return withSmokeHelpers(`(() => {
     const root = document.querySelector("[data-google-connector-status]");
+    const refreshButton = document.querySelector("[data-google-connector-refresh]");
     const oauthButton = document.querySelector("[data-google-oauth-start]");
     const text = root ? root.textContent || "" : "";
 
@@ -1598,6 +1601,7 @@ function googleConnectorStatusExpression() {
       present: Boolean(root),
       status: root ? root.getAttribute("data-google-connector-status") || "" : "",
       syncStatus: root ? root.getAttribute("data-google-connector-sync-status") || "" : "",
+      refreshPresent: Boolean(refreshButton),
       oauthPresent: Boolean(oauthButton),
       oauthStartStatus: root ? root.getAttribute("data-google-oauth-start-status") || "" : "",
       oauthStartDisabled: oauthButton ? oauthButton.getAttribute("data-google-oauth-start-disabled") || "" : "",

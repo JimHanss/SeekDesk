@@ -157,6 +157,7 @@ export default function Page() {
     googleConnectorStatus,
     googleOAuthStartNotice,
     googleOAuthStartStatus,
+    refreshGoogleConnectorStatus,
     startGoogleOAuth
   } = useGoogleConnectorStatus(apiBaseUrl);
   const {
@@ -614,6 +615,9 @@ export default function Page() {
                   selectedConnectorPreviewStatus={selectedConnectorPreviewStatus}
                   onApplyConnectorPrompt={applyConnectorAndOpenAssistant}
                   onFilterChange={setConnectorFilter}
+                  onRefreshGoogleStatus={() => {
+                    void refreshGoogleConnectorStatus();
+                  }}
                   onSelectConnector={setSelectedConnectorId}
                   onStartGoogleOAuth={startGoogleOAuth}
                   onUpdateConnectorPreviewDecision={updateConnectorPreviewDecision}

@@ -48,6 +48,7 @@ interface ConnectorDirectoryPanelProps {
   selectedConnectorPreviewStatus: ApprovalStatus;
   onApplyConnectorPrompt: (connector: ConnectorItem) => void;
   onFilterChange: (filter: ConnectorFilter) => void;
+  onRefreshGoogleStatus: () => void;
   onSelectConnector: (connectorId: string) => void;
   onStartGoogleOAuth: () => void;
   onUpdateConnectorPreviewDecision: (
@@ -68,6 +69,7 @@ export function ConnectorDirectoryPanel({
   selectedConnectorPreviewStatus,
   onApplyConnectorPrompt,
   onFilterChange,
+  onRefreshGoogleStatus,
   onSelectConnector,
   onStartGoogleOAuth,
   onUpdateConnectorPreviewDecision
@@ -125,27 +127,44 @@ export function ConnectorDirectoryPanel({
               </p>
             </div>
 
-            <Button
-              type="button"
-              size="sm"
-              variant="secondary"
-              disabled={googleOauthBlocked}
-              className="h-8 shrink-0 rounded-[8px] border-teal-200 bg-white text-teal-800 hover:bg-teal-50"
-              data-google-oauth-start
-              data-google-oauth-start-disabled={String(googleOauthBlocked)}
-              onClick={onStartGoogleOAuth}
-            >
-              {googleOAuthStartStatus === "starting" ? (
-                <Loader2 className="size-4 animate-spin" aria-hidden="true" />
-              ) : (
-                <ExternalLink className="size-4" aria-hidden="true" />
-              )}
-              {googleConnectorStatus.connected
-                ? "Connected"
-                : googleConnectorStatus.missingConfig.length > 0
-                  ? "Setup needed"
-                  : "Open OAuth"}
-            </Button>
+            <div className="flex shrink-0 flex-wrap gap-2">
+              <Button
+                type="button"
+                size="sm"
+                variant="secondary"
+                className="h-8 rounded-[8px] border-teal-200 bg-white text-teal-800 hover:bg-teal-50"
+                data-google-connector-refresh
+                onClick={onRefreshGoogleStatus}
+              >
+                {googleConnectorStatus.syncStatus === "syncing" ? (
+                  <Loader2 className="size-4 animate-spin" aria-hidden="true" />
+                ) : (
+                  <CheckCircle2 className="size-4" aria-hidden="true" />
+                )}
+                Refresh
+              </Button>
+              <Button
+                type="button"
+                size="sm"
+                variant="secondary"
+                disabled={googleOauthBlocked}
+                className="h-8 rounded-[8px] border-teal-200 bg-white text-teal-800 hover:bg-teal-50"
+                data-google-oauth-start
+                data-google-oauth-start-disabled={String(googleOauthBlocked)}
+                onClick={onStartGoogleOAuth}
+              >
+                {googleOAuthStartStatus === "starting" ? (
+                  <Loader2 className="size-4 animate-spin" aria-hidden="true" />
+                ) : (
+                  <ExternalLink className="size-4" aria-hidden="true" />
+                )}
+                {googleConnectorStatus.connected
+                  ? "Connected"
+                  : googleConnectorStatus.missingConfig.length > 0
+                    ? "Setup needed"
+                    : "Open OAuth"}
+              </Button>
+            </div>
           </div>
         </div>
 
