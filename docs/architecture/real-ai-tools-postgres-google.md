@@ -110,6 +110,29 @@ does not print secret values. `.env.local` remains git-ignored.
 Use `--target-env <path>` when writing a different ignored env file, for example
 on a remote checkout.
 
+To check a running API without exposing local secrets, run:
+
+```bash
+npm run verify:google-oauth
+```
+
+The readiness check calls `/health`, `/api/connectors/google/status`, and, when
+configuration is complete but no account is connected yet,
+`/api/connectors/google/oauth/start`. By default it redacts `client_id` and
+`state` from the reported authorization URL. Use
+`--show-authorization-url` only when you are ready to open the Google consent URL
+in a browser:
+
+```bash
+npm run verify:google-oauth -- --require-configured --show-authorization-url
+```
+
+After the browser OAuth flow succeeds, use the stricter connected gate:
+
+```bash
+npm run verify:google-oauth -- --require-connected
+```
+
 For SSH-based remote development, use a loopback redirect URI that matches the
 forwarded API port, for example:
 
