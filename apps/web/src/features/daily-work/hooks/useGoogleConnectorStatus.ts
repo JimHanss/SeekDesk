@@ -10,6 +10,9 @@ const fallbackStatus: GoogleConnectorStatusState = {
   requiresSetup: true,
   accountEmail: null,
   scopes: [],
+  requiredScopes: [],
+  missingScopes: [],
+  scopesComplete: false,
   missingConfig: [],
   source: "local",
   syncStatus: "syncing",
@@ -21,6 +24,9 @@ interface GoogleConnectorStatusDto {
   requiresSetup?: boolean;
   accountEmail?: string;
   scopes?: string[];
+  requiredScopes?: string[];
+  missingScopes?: string[];
+  scopesComplete?: boolean;
   missingConfig?: string[];
 }
 
@@ -58,28 +64,42 @@ export function useGoogleConnectorStatus(apiBaseUrl: string) {
 
       const payload = (await response.json()) as GoogleConnectorStatusDto;
       const connected = payload.connected === true;
-      const requiresSetup = payload.requiresSetup === true || !connected;
+      const missingScopes = payload.missingScopes ?? [];
+      const scopesComplete = payload.scopesComplete === true;
+      const requiresSetup =
+        payload.requiresSetup === true || !connected || !scopesComplete;
       const missingConfig = payload.missingConfig ?? [];
+      const notice = buildGoogleConnectorNotice({
+        accountEmail: payload.accountEmail,
+        connected,
+        missingConfig,
+        missingScopes,
+        scopesComplete
+      });
 
       setGoogleConnectorStatus({
         connected,
         requiresSetup,
         accountEmail: payload.accountEmail ?? null,
         scopes: payload.scopes ?? [],
+        requiredScopes: payload.requiredScopes ?? [],
+        missingScopes,
+        scopesComplete,
         missingConfig,
         source: "api",
         syncStatus: "live",
-        notice: connected
-          ? `Google connected${payload.accountEmail ? ` as ${payload.accountEmail}` : ""}.`
-          : missingConfig.length > 0
-            ? `Google OAuth is missing ${missingConfig.join(", ")}.`
-            : "Google OAuth is configured; connect an account before Gmail or Calendar reads can run."
+        notice
       });
 
-      if (connected) {
+      if (connected && scopesComplete) {
         setGoogleOAuthStartStatus("idle");
         setGoogleOAuthStartNotice(
           "Google is connected. Real Gmail and Calendar read tools can run in preview-only mode."
+        );
+      } else if (connected && missingScopes.length > 0) {
+        setGoogleOAuthStartStatus("idle");
+        setGoogleOAuthStartNotice(
+          "Google is connected but needs updated consent for the missing Gmail/Calendar scopes. Reopen OAuth to refresh scopes."
         );
       } else if (missingConfig.length > 0) {
         setGoogleOAuthStartStatus("requires_setup");
@@ -217,4 +237,26 @@ export function useGoogleConnectorStatus(apiBaseUrl: string) {
     refreshGoogleConnectorStatus: refreshGoogleConnectorStatusSafely,
     startGoogleOAuth
   };
+}
+
+function buildGoogleConnectorNotice(input: {
+  accountEmail?: string | undefined;
+  connected: boolean;
+  missingConfig: string[];
+  missingScopes: string[];
+  scopesComplete: boolean;
+}) {
+  if (input.connected && input.scopesComplete) {
+    return `Google connected${input.accountEmail ? ` as ${input.accountEmail}` : ""}.`;
+  }
+
+  if (input.connected && input.missingScopes.length > 0) {
+    return `Google connected but missing required scopes: ${input.missingScopes.join(", ")}.`;
+  }
+
+  if (input.missingConfig.length > 0) {
+    return `Google OAuth is missing ${input.missingConfig.join(", ")}.`;
+  }
+
+  return "Google OAuth is configured; connect an account before Gmail or Calendar reads can run.";
 }

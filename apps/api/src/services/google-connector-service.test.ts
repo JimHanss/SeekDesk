@@ -5,6 +5,8 @@ import {
   createGmailDraftPreview,
   decryptJson,
   encryptJson,
+  getGoogleConnectionStatus,
+  googleConnectorScopes,
   getMissingGoogleOAuthConfig
 } from "./google-connector-service.js";
 
@@ -80,5 +82,85 @@ describe("google connector service", () => {
       "GOOGLE_REDIRECT_URI",
       "GOOGLE_TOKEN_ENCRYPTION_KEY"
     ]);
+  });
+
+  it("reports required OAuth scopes for disconnected Google status", async () => {
+    const status = await getGoogleConnectionStatus({
+      repository: {
+        getConnectorAccount: async () => null
+      } as never,
+      env: {
+        GOOGLE_CLIENT_ID: "client-id",
+        GOOGLE_CLIENT_SECRET: "client-secret",
+        GOOGLE_REDIRECT_URI: "http://127.0.0.1/callback",
+        GOOGLE_TOKEN_ENCRYPTION_KEY: "encryption-key"
+      } as NodeJS.ProcessEnv
+    });
+
+    expect(status).toMatchObject({
+      connected: false,
+      requiredScopes: [...googleConnectorScopes],
+      missingScopes: [...googleConnectorScopes],
+      scopesComplete: false,
+      requiresSetup: true
+    });
+  });
+
+  it("reports connected Google status with complete scopes", async () => {
+    const status = await getGoogleConnectionStatus({
+      repository: {
+        getConnectorAccount: async () => ({
+          id: "google:user@example.com",
+          provider: "google",
+          accountEmail: "user@example.com",
+          encryptedTokens: "encrypted",
+          scopes: [...googleConnectorScopes],
+          connectedAt: "2026-06-08T00:00:00.000Z",
+          updatedAt: "2026-06-08T00:00:00.000Z"
+        })
+      } as never,
+      env: {
+        GOOGLE_CLIENT_ID: "client-id",
+        GOOGLE_CLIENT_SECRET: "client-secret",
+        GOOGLE_REDIRECT_URI: "http://127.0.0.1/callback",
+        GOOGLE_TOKEN_ENCRYPTION_KEY: "encryption-key"
+      } as NodeJS.ProcessEnv
+    });
+
+    expect(status).toMatchObject({
+      connected: true,
+      scopesComplete: true,
+      missingScopes: [],
+      accountEmail: "user@example.com"
+    });
+  });
+
+  it("reports connected Google status with missing scopes", async () => {
+    const status = await getGoogleConnectionStatus({
+      repository: {
+        getConnectorAccount: async () => ({
+          id: "google:user@example.com",
+          provider: "google",
+          accountEmail: "user@example.com",
+          encryptedTokens: "encrypted",
+          scopes: [googleConnectorScopes[0]],
+          connectedAt: "2026-06-08T00:00:00.000Z",
+          updatedAt: "2026-06-08T00:00:00.000Z"
+        })
+      } as never,
+      env: {
+        GOOGLE_CLIENT_ID: "client-id",
+        GOOGLE_CLIENT_SECRET: "client-secret",
+        GOOGLE_REDIRECT_URI: "http://127.0.0.1/callback",
+        GOOGLE_TOKEN_ENCRYPTION_KEY: "encryption-key"
+      } as NodeJS.ProcessEnv
+    });
+
+    expect(status).toMatchObject({
+      connected: true,
+      scopesComplete: false,
+      requiresSetup: true,
+      missingScopes: googleConnectorScopes.slice(1)
+    });
   });
 });

@@ -14,8 +14,9 @@ try {
 
   const google = await readJson("/api/connectors/google/status");
   const missingConfig = normalizeStringList(google?.missingConfig);
+  const missingScopes = normalizeStringList(google?.missingScopes);
   const oauthStart =
-    google?.connected || missingConfig.length > 0
+    (google?.connected && missingScopes.length === 0) || missingConfig.length > 0
       ? null
       : await readOAuthStart();
 
@@ -25,10 +26,12 @@ try {
     );
   }
 
-  if (args.requireConnected && !google?.connected) {
+  if (args.requireConnected && (!google?.connected || missingScopes.length > 0)) {
     throw new Error(
       missingConfig.length > 0
         ? `Google connector is not connected and config is incomplete: ${missingConfig.join(", ")}.`
+        : missingScopes.length > 0
+          ? `Google connector is connected but missing required scopes: ${missingScopes.join(", ")}. Reopen OAuth consent.`
         : "Google connector is configured but not connected. Complete the OAuth browser flow."
     );
   }
@@ -48,6 +51,9 @@ try {
           connected: Boolean(google?.connected),
           requiresSetup: Boolean(google?.requiresSetup),
           missingConfig,
+          requiredScopes: normalizeStringList(google?.requiredScopes),
+          missingScopes,
+          scopesComplete: Boolean(google?.scopesComplete),
           accountEmail: google?.accountEmail ?? null,
           connectedAt: google?.connectedAt ?? null,
           updatedAt: google?.updatedAt ?? null,
@@ -71,6 +77,7 @@ try {
         nextStep: getNextStep({
           connected: Boolean(google?.connected),
           missingConfig,
+          missingScopes,
           oauthStartReady: Boolean(oauthStart)
         })
       },
@@ -126,8 +133,12 @@ async function readJson(path) {
 }
 
 function getNextStep(input) {
-  if (input.connected) {
+  if (input.connected && input.missingScopes.length === 0) {
     return "Run npm run verify:real-agent -- --require-google to verify Gmail and Calendar real read tools.";
+  }
+
+  if (input.connected && input.missingScopes.length > 0) {
+    return "Open the OAuth authorization URL again to refresh missing Gmail/Calendar scopes, then run npm run verify:google-oauth -- --require-connected.";
   }
 
   if (input.missingConfig.length > 0) {
@@ -224,7 +235,7 @@ local secret values.
 Options:
   --base-url <url>             API base URL. Default: http://127.0.0.1:4000
   --require-configured         Fail when Google OAuth env config is incomplete.
-  --require-connected          Fail until a Google account is connected.
+  --require-connected          Fail until a Google account is connected with all required scopes.
   --show-authorization-url     Print the full OAuth URL for browser setup.
                                Without this flag, client_id and state are redacted.
 `);

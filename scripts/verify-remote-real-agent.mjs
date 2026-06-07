@@ -291,9 +291,9 @@ Options:
   --port <port>                  Remote API port. Default: 45100
   --skip-secrets                 Skip npm run verify:secrets.
   --skip-migrate                 Skip npm run db:migrate.
-  --require-google               Also require Gmail/Calendar real read tools.
+  --require-google               Also require Gmail/Calendar real read tools and complete Google scopes.
   --require-google-configured    Fail unless Google OAuth env config is complete.
-  --require-google-connected     Fail unless a Google account is connected.
+  --require-google-connected     Fail unless a Google account is connected with all required scopes.
   --show-authorization-url       Print full Google OAuth URL from readiness.
   --keep-running                 Leave the remote API running for browser OAuth.
 

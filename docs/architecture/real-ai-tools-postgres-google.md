@@ -106,6 +106,18 @@ Required env:
 Refresh tokens never reach the frontend. Tokens are encrypted with AES-256-GCM before
 repository storage.
 
+`/api/connectors/google/status` also reports authorization completeness:
+
+- `requiredScopes`: Gmail readonly, Gmail compose, and Calendar readonly scopes.
+- `missingScopes`: required scopes absent from the stored Google account token.
+- `scopesComplete`: true only when the connected account can run the v1 real
+  read tools.
+
+If an account is connected but `missingScopes` is non-empty, reopen the OAuth
+consent URL to refresh scopes. The frontend keeps the OAuth button enabled in
+that state and labels it as a scope refresh instead of treating the connector as
+fully ready.
+
 To safely write local Google OAuth configuration without committing secrets, add
 the client id/secret to the ignored `.env.local` file and run:
 
@@ -157,6 +169,10 @@ After the browser OAuth flow succeeds, use the stricter connected gate:
 npm run verify:google-oauth -- --require-connected
 ```
 
+This gate requires both a connected Google account and complete required scopes.
+If scopes are missing, it fails before any Gmail or Calendar read attempt and
+instructs you to reopen OAuth consent.
+
 For the SSH remote checkout, the full Postgres + API + DeepSeek verification can
 be run as one remote session:
 
@@ -194,6 +210,9 @@ When Google is connected, the final strict gate is:
 npm run verify:remote-real-agent -- --require-google
 ```
 
+The strict remote gate also fails fast if the connected account lacks required
+Gmail/Calendar scopes.
+
 ## Real-Agent Verification
 
 `npm run verify:real-agent` verifies a running API without reading secrets. It
@@ -205,7 +224,7 @@ checks:
 - The session trace exposes tool plan/result records for the frontend.
 - Google status is reported clearly.
 
-When Google is connected, the same script asks DeepSeek to autonomously plan
+When Google is connected with complete scopes, the same script asks DeepSeek to autonomously plan
 `gmail.search_threads` and `calendar.list_events`. If Gmail returns a thread id,
 the verifier also expects DeepSeek to continue with `gmail.read_thread` for that
 thread. The script checks that each real read tool stays preview-only, records

@@ -28,9 +28,21 @@ try {
 
   summary.artifact = await verifyArtifactTool();
   summary.google = await readJson("/api/connectors/google/status");
+  const missingScopes = normalizeStringList(summary.google?.missingScopes);
 
-  if (summary.google?.connected) {
+  if (summary.google?.connected && missingScopes.length === 0) {
     summary.googleTools = await verifyGoogleReadTools();
+  } else if (summary.google?.connected && missingScopes.length > 0) {
+    if (requireGoogle) {
+      throw new Error(
+        `Google connector is connected but missing required scopes: ${missingScopes.join(", ")}. Reopen OAuth consent.`
+      );
+    }
+    summary.googleTools = {
+      status: "skipped",
+      reason: "google_connector_missing_scopes",
+      missingScopes
+    };
   } else if (requireGoogle) {
     const missing = Array.isArray(summary.google?.missingConfig)
       ? ` Missing config: ${summary.google.missingConfig.join(", ")}.`
@@ -40,7 +52,8 @@ try {
     summary.googleTools = {
       status: "skipped",
       reason: "google_connector_not_connected",
-      missingConfig: summary.google?.missingConfig ?? []
+      missingConfig: summary.google?.missingConfig ?? [],
+      missingScopes
     };
   }
 
@@ -479,7 +492,7 @@ function printHelp() {
 
 Options:
   --base-url <url>       API base URL. Default: http://127.0.0.1:4000
-  --require-google      Fail if Google is not connected.
+  --require-google      Fail if Google is not connected with all required scopes.
   --gmail-query <query> Gmail query for the real read verification.
   --calendar-id <id>    Calendar id for event listing. Default: primary
 `);
@@ -493,4 +506,10 @@ function assert(condition, message) {
 
 function trimTrailingSlash(value) {
   return value.replace(/\/+$/, "");
+}
+
+function normalizeStringList(value) {
+  return Array.isArray(value)
+    ? value.filter((item) => typeof item === "string" && item.trim())
+    : [];
 }

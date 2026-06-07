@@ -233,6 +233,17 @@ describe("api server", () => {
         "https://www.googleapis.com/auth/gmail.readonly",
         "https://www.googleapis.com/auth/calendar.readonly"
       ]),
+      requiredScopes: expect.arrayContaining([
+        "https://www.googleapis.com/auth/gmail.readonly",
+        "https://www.googleapis.com/auth/gmail.compose",
+        "https://www.googleapis.com/auth/calendar.readonly"
+      ]),
+      missingScopes: expect.arrayContaining([
+        "https://www.googleapis.com/auth/gmail.readonly",
+        "https://www.googleapis.com/auth/gmail.compose",
+        "https://www.googleapis.com/auth/calendar.readonly"
+      ]),
+      scopesComplete: false,
       missingConfig: [
         "GOOGLE_CLIENT_ID",
         "GOOGLE_CLIENT_SECRET",

@@ -1089,6 +1089,15 @@ async function runGoogleConnectorStatusSmoke(client, apiUrl) {
   if (typeof statusSnapshot.connected !== "boolean") {
     throw new Error("Google connector status did not expose a connected boolean.");
   }
+  if (!Array.isArray(statusSnapshot.requiredScopes)) {
+    throw new Error("Google connector status did not expose requiredScopes.");
+  }
+  if (!Array.isArray(statusSnapshot.missingScopes)) {
+    throw new Error("Google connector status did not expose missingScopes.");
+  }
+  if (typeof statusSnapshot.scopesComplete !== "boolean") {
+    throw new Error("Google connector status did not expose scopesComplete.");
+  }
 
   const apiStatus =
     statusSnapshot.status ||
@@ -1114,6 +1123,7 @@ async function runGoogleConnectorStatusSmoke(client, apiUrl) {
       state.refreshPresent &&
       state.oauthPresent &&
       state.oauthStartStatus &&
+      state.scopeStatus &&
       state.textLength > 0,
     "Google connector status panel"
   );
@@ -1123,7 +1133,11 @@ async function runGoogleConnectorStatusSmoke(client, apiUrl) {
     status: "passed",
     apiStatus,
     apiConnected: statusSnapshot.connected,
+    apiScopesComplete: statusSnapshot.scopesComplete,
+    apiMissingScopes: statusSnapshot.missingScopes.length,
     pageStatus: pageState.status,
+    scopeStatus: pageState.scopeStatus,
+    missingScopeCount: pageState.missingScopeCount,
     pageSyncStatus: pageState.syncStatus,
     refreshPresent: pageState.refreshPresent,
     oauthStartStatus: pageState.oauthStartStatus,
@@ -1653,6 +1667,8 @@ function googleConnectorStatusExpression() {
       present: Boolean(root),
       status: root ? root.getAttribute("data-google-connector-status") || "" : "",
       syncStatus: root ? root.getAttribute("data-google-connector-sync-status") || "" : "",
+      scopeStatus: root ? root.getAttribute("data-google-scope-status") || "" : "",
+      missingScopeCount: root ? Number(root.getAttribute("data-google-missing-scope-count") || 0) : 0,
       refreshPresent: Boolean(refreshButton),
       oauthPresent: Boolean(oauthButton),
       oauthStartStatus: root ? root.getAttribute("data-google-oauth-start-status") || "" : "",

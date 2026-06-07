@@ -827,6 +827,9 @@ export interface GoogleConnectorStatusState {
   requiresSetup: boolean;
   accountEmail: string | null;
   scopes: string[];
+  requiredScopes: string[];
+  missingScopes: string[];
+  scopesComplete: boolean;
   missingConfig: string[];
   source: "local" | "api" | "degraded";
   syncStatus: "syncing" | "live" | "degraded";

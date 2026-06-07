@@ -32,6 +32,9 @@ export interface GoogleConnectionStatus {
   provider: "google";
   connected: boolean;
   scopes: string[];
+  requiredScopes: string[];
+  missingScopes: string[];
+  scopesComplete: boolean;
   accountEmail?: string;
   connectedAt?: string;
   updatedAt?: string;
@@ -166,24 +169,35 @@ export async function getGoogleConnectionStatus(input: {
 }): Promise<GoogleConnectionStatus> {
   const missingConfig = getMissingGoogleOAuthConfig(input.env);
   const account = await input.repository.getConnectorAccount("google");
+  const requiredScopes = [...googleConnectorScopes];
 
   if (!account) {
     return {
       provider: "google",
       connected: false,
-      scopes: [...googleConnectorScopes],
+      scopes: requiredScopes,
+      requiredScopes,
+      missingScopes: requiredScopes,
+      scopesComplete: false,
       requiresSetup: true,
       ...(missingConfig.length > 0 ? { missingConfig } : {})
     };
   }
 
+  const accountScopes = normalizeScopeArray(account.scopes);
+  const missingScopes = getMissingGoogleScopes(accountScopes);
+
   return {
     provider: "google",
     connected: true,
-    scopes: account.scopes,
+    scopes: accountScopes,
+    requiredScopes,
+    missingScopes,
+    scopesComplete: missingScopes.length === 0,
     ...(account.accountEmail ? { accountEmail: account.accountEmail } : {}),
     connectedAt: account.connectedAt,
     updatedAt: account.updatedAt,
+    ...(missingScopes.length > 0 ? { requiresSetup: true } : {}),
     ...(missingConfig.length > 0 ? { missingConfig } : {})
   };
 }
@@ -418,6 +432,16 @@ function normalizeScopes(scope: string | null | undefined) {
     .split(/\s+/)
     .map((item) => item.trim())
     .filter(Boolean);
+}
+
+function getMissingGoogleScopes(scopes: string[]) {
+  const scopeSet = new Set(scopes);
+
+  return googleConnectorScopes.filter((scope) => !scopeSet.has(scope));
+}
+
+function normalizeScopeArray(scopes: string[]) {
+  return scopes.map((scope) => scope.trim()).filter(Boolean);
 }
 
 function createEmailRawPreview(input: GmailCreateDraftPreviewInput) {

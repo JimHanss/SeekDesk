@@ -75,10 +75,13 @@ export function ConnectorDirectoryPanel({
   onUpdateConnectorPreviewDecision
 }: ConnectorDirectoryPanelProps) {
   const googleOauthBlocked =
-    googleConnectorStatus.connected ||
+    (googleConnectorStatus.connected && googleConnectorStatus.scopesComplete) ||
     googleConnectorStatus.syncStatus === "syncing" ||
     googleOAuthStartStatus === "starting" ||
     googleConnectorStatus.missingConfig.length > 0;
+  const googleScopeStatus = googleConnectorStatus.scopesComplete
+    ? "complete"
+    : "incomplete";
 
   return (
     <div className="rounded-[8px] border border-teal-100 bg-teal-50 p-3">
@@ -103,6 +106,8 @@ export function ConnectorDirectoryPanel({
             googleConnectorStatus.connected ? "connected" : "requires_setup"
           }
           data-google-connector-sync-status={googleConnectorStatus.syncStatus}
+          data-google-scope-status={googleScopeStatus}
+          data-google-missing-scope-count={googleConnectorStatus.missingScopes.length}
           data-google-oauth-start-status={googleOAuthStartStatus}
         >
           <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
@@ -115,11 +120,26 @@ export function ConnectorDirectoryPanel({
                 <span className="rounded-[999px] bg-teal-50 px-2 py-0.5 text-[11px] text-teal-700">
                   {googleConnectorStatus.scopes.length} scopes
                 </span>
+                <span
+                  className={cn(
+                    "rounded-[999px] px-2 py-0.5 text-[11px]",
+                    googleConnectorStatus.scopesComplete
+                      ? "bg-emerald-50 text-emerald-700"
+                      : "bg-orange-50 text-orange-700"
+                  )}
+                >
+                  scopes {googleScopeStatus}
+                </span>
               </div>
               <p className="mt-1 text-teal-700">{googleConnectorStatus.notice}</p>
               {googleConnectorStatus.missingConfig.length > 0 ? (
                 <p className="mt-1 break-words text-orange-700">
                   Missing: {googleConnectorStatus.missingConfig.join(", ")}
+                </p>
+              ) : null}
+              {googleConnectorStatus.missingScopes.length > 0 ? (
+                <p className="mt-1 break-words text-orange-700">
+                  Missing scopes: {googleConnectorStatus.missingScopes.join(", ")}
                 </p>
               ) : null}
               <p className="mt-1 break-words text-[11px] text-slate-600">
@@ -159,7 +179,9 @@ export function ConnectorDirectoryPanel({
                   <ExternalLink className="size-4" aria-hidden="true" />
                 )}
                 {googleConnectorStatus.connected
-                  ? "Connected"
+                  ? googleConnectorStatus.scopesComplete
+                    ? "Connected"
+                    : "Refresh scopes"
                   : googleConnectorStatus.missingConfig.length > 0
                     ? "Setup needed"
                     : "Open OAuth"}
