@@ -16,6 +16,72 @@ import {
 
 import { buildServer } from "./server.js";
 import { SeedDailyWorkRepository } from "./repositories/daily-work-repository.js";
+import { encryptJson } from "./services/google-connector-service.js";
+
+const googleApiMock = vi.hoisted(() => ({
+  calendarEventsList: vi.fn(),
+  gmailThreadsGet: vi.fn(),
+  gmailThreadsList: vi.fn(),
+  oauthGenerateAuthUrl: vi.fn((input: unknown) => {
+    void input;
+
+    return "https://accounts.google.test/oauth";
+  }),
+  oauthGetToken: vi.fn<
+    (code: string) => Promise<{ tokens: Record<string, string> }>
+  >(async (code) => {
+    void code;
+
+    return {
+      tokens: {
+        access_token: "access-token",
+        refresh_token: "refresh-token"
+      }
+    };
+  }),
+  oauthSetCredentials: vi.fn((tokens: unknown) => {
+    void tokens;
+  }),
+  oauthUserInfoGet: vi.fn()
+}));
+
+vi.mock("googleapis", () => ({
+  google: {
+    auth: {
+      OAuth2: class MockOAuth2 {
+        generateAuthUrl(input: unknown) {
+          return googleApiMock.oauthGenerateAuthUrl(input);
+        }
+
+        async getToken(code: string) {
+          return googleApiMock.oauthGetToken(code);
+        }
+
+        setCredentials(tokens: unknown) {
+          googleApiMock.oauthSetCredentials(tokens);
+        }
+      }
+    },
+    calendar: vi.fn(() => ({
+      events: {
+        list: googleApiMock.calendarEventsList
+      }
+    })),
+    gmail: vi.fn(() => ({
+      users: {
+        threads: {
+          get: googleApiMock.gmailThreadsGet,
+          list: googleApiMock.gmailThreadsList
+        }
+      }
+    })),
+    oauth2: vi.fn(() => ({
+      userinfo: {
+        get: googleApiMock.oauthUserInfoGet
+      }
+    }))
+  }
+}));
 
 const deepSeekEnvKeys = [
   "DEEPSEEK_API_KEY",
@@ -45,6 +111,41 @@ describe("api server", () => {
     for (const key of deepSeekEnvKeys) {
       delete process.env[key];
     }
+
+    googleApiMock.calendarEventsList.mockReset().mockResolvedValue({
+      data: {
+        items: []
+      }
+    });
+    googleApiMock.gmailThreadsGet.mockReset().mockResolvedValue({
+      data: {
+        id: "thread-empty",
+        messages: []
+      }
+    });
+    googleApiMock.gmailThreadsList.mockReset().mockResolvedValue({
+      data: {
+        resultSizeEstimate: 0,
+        threads: []
+      }
+    });
+    googleApiMock.oauthGenerateAuthUrl
+      .mockReset()
+      .mockReturnValue("https://accounts.google.test/oauth");
+    googleApiMock.oauthGetToken.mockReset().mockResolvedValue({
+      tokens: {
+        access_token: "access-token",
+        refresh_token: "refresh-token",
+        scope:
+          "https://www.googleapis.com/auth/gmail.readonly https://www.googleapis.com/auth/calendar.readonly"
+      }
+    });
+    googleApiMock.oauthSetCredentials.mockReset();
+    googleApiMock.oauthUserInfoGet.mockReset().mockResolvedValue({
+      data: {
+        email: "person@example.com"
+      }
+    });
   });
 
   afterEach(() => {
@@ -3383,6 +3484,369 @@ describe("api server", () => {
       }
     } finally {
       await rm(dataDir, { force: true, recursive: true });
+    }
+  });
+
+  it("executes autonomous Gmail and Calendar read tool plans and persists the full trace", async () => {
+    process.env.DEEPSEEK_API_KEY = "sk-test-secret-value";
+    process.env.DEEPSEEK_BASE_URL = "https://api.deepseek.example";
+    process.env.GOOGLE_CLIENT_ID = "google-client-id";
+    process.env.GOOGLE_CLIENT_SECRET = "google-client-secret";
+    process.env.GOOGLE_REDIRECT_URI =
+      "http://127.0.0.1:4000/api/connectors/google/oauth/callback";
+    process.env.GOOGLE_TOKEN_ENCRYPTION_KEY = "test-token-encryption-key";
+
+    googleApiMock.gmailThreadsList.mockResolvedValueOnce({
+      data: {
+        resultSizeEstimate: 1,
+        threads: [
+          {
+            id: "thread-1",
+            snippet: "Customer is asking for the updated proposal.",
+            historyId: "1001"
+          }
+        ]
+      }
+    });
+    googleApiMock.gmailThreadsGet.mockResolvedValueOnce({
+      data: {
+        id: "thread-1",
+        historyId: "1002",
+        messages: [
+          {
+            id: "message-1",
+            threadId: "thread-1",
+            snippet: "Can you send the updated proposal today?",
+            internalDate: "1780848000000",
+            payload: {
+              headers: [
+                { name: "From", value: "customer@example.com" },
+                { name: "To", value: "person@example.com" },
+                { name: "Subject", value: "Updated proposal" },
+                { name: "Date", value: "Mon, 8 Jun 2026 09:00:00 +0800" }
+              ]
+            }
+          }
+        ]
+      }
+    });
+    googleApiMock.calendarEventsList.mockResolvedValueOnce({
+      data: {
+        items: [
+          {
+            id: "calendar-event-1",
+            status: "confirmed",
+            summary: "Proposal review",
+            start: { dateTime: "2026-06-08T10:00:00+08:00" },
+            end: { dateTime: "2026-06-08T10:30:00+08:00" },
+            attendees: [
+              {
+                email: "customer@example.com",
+                responseStatus: "accepted"
+              }
+            ]
+          }
+        ]
+      }
+    });
+
+    const repository = new SeedDailyWorkRepository();
+    await repository.upsertConnectorAccount({
+      id: "google:person@example.com",
+      provider: "google",
+      accountEmail: "person@example.com",
+      encryptedTokens: encryptJson(
+        {
+          access_token: "access-token",
+          refresh_token: "refresh-token",
+          scope:
+            "https://www.googleapis.com/auth/gmail.readonly https://www.googleapis.com/auth/calendar.readonly"
+        },
+        process.env.GOOGLE_TOKEN_ENCRYPTION_KEY
+      ),
+      scopes: [
+        "https://www.googleapis.com/auth/gmail.readonly",
+        "https://www.googleapis.com/auth/calendar.readonly"
+      ],
+      connectedAt: "2026-06-01T00:00:00.000Z",
+      updatedAt: "2026-06-01T00:00:00.000Z"
+    });
+
+    const fetchMock = vi
+      .fn()
+      .mockResolvedValueOnce(
+        createDeepSeekStreamResponse([
+          `data: ${JSON.stringify({
+            choices: [
+              {
+                delta: {
+                  tool_calls: [
+                    {
+                      index: 0,
+                      id: "call-gmail-search",
+                      type: "function",
+                      function: {
+                        name: "gmail_search_threads",
+                        arguments:
+                          "{\"query\":\"newer_than:7d proposal\",\"maxResults\":1}"
+                      }
+                    },
+                    {
+                      index: 1,
+                      id: "call-calendar-list",
+                      type: "function",
+                      function: {
+                        name: "calendar_list_events",
+                        arguments:
+                          "{\"calendarId\":\"primary\",\"timeMin\":\"2026-06-08T00:00:00.000Z\",\"timeMax\":\"2026-06-09T00:00:00.000Z\",\"maxResults\":3}"
+                      }
+                    }
+                  ]
+                },
+                finish_reason: "tool_calls"
+              }
+            ]
+          })}\n\n`,
+          "data: [DONE]\n\n"
+        ])
+      )
+      .mockResolvedValueOnce(
+        createDeepSeekStreamResponse([
+          `data: ${JSON.stringify({
+            choices: [
+              {
+                delta: {
+                  tool_calls: [
+                    {
+                      index: 0,
+                      id: "call-gmail-read-thread",
+                      type: "function",
+                      function: {
+                        name: "gmail_read_thread",
+                        arguments: "{\"threadId\":\"thread-1\"}"
+                      }
+                    }
+                  ]
+                },
+                finish_reason: "tool_calls"
+              }
+            ]
+          })}\n\n`,
+          "data: [DONE]\n\n"
+        ])
+      )
+      .mockResolvedValueOnce(
+        createDeepSeekStreamResponse([
+          `data: ${JSON.stringify({
+            choices: [
+              {
+                delta: {
+                  content:
+                    "I found one proposal email thread and one related calendar event. No external changes were made."
+                }
+              }
+            ]
+          })}\n\n`,
+          `data: ${JSON.stringify({
+            usage: {
+              prompt_tokens: 120,
+              completion_tokens: 30,
+              total_tokens: 150
+            },
+            choices: []
+          })}\n\n`,
+          "data: [DONE]\n\n"
+        ])
+      );
+    vi.stubGlobal("fetch", fetchMock);
+
+    const app = await buildServer({ dailyWorkRepository: repository });
+
+    try {
+      const response = await app.inject({
+        method: "POST",
+        url: "/api/chat",
+        payload: {
+          mode: "daily_work",
+          sessionId: "google-read-agent-session",
+          prompt:
+            "Check recent proposal email and today's calendar, then summarize what I need to do.",
+          context: {
+            workspaceId: "workspace-seekdesk",
+            connectorIds: ["google"],
+            timezone: "Asia/Shanghai"
+          }
+        }
+      });
+
+      expect(response.statusCode).toBe(200);
+      expect(response.body).toContain("one proposal email thread");
+      expect(fetchMock).toHaveBeenCalledTimes(3);
+      expect(googleApiMock.oauthSetCredentials).toHaveBeenCalledWith(
+        expect.objectContaining({
+          refresh_token: "refresh-token"
+        })
+      );
+      expect(googleApiMock.gmailThreadsList).toHaveBeenCalledWith(
+        expect.objectContaining({
+          userId: "me",
+          q: "newer_than:7d proposal",
+          maxResults: 1
+        })
+      );
+      expect(googleApiMock.calendarEventsList).toHaveBeenCalledWith(
+        expect.objectContaining({
+          calendarId: "primary",
+          maxResults: 3,
+          singleEvents: true,
+          orderBy: "startTime"
+        })
+      );
+      expect(googleApiMock.gmailThreadsGet).toHaveBeenCalledWith(
+        expect.objectContaining({
+          userId: "me",
+          id: "thread-1",
+          format: "metadata"
+        })
+      );
+
+      const [, secondInit] = fetchMock.mock.calls[1] ?? [];
+      const secondBody = JSON.parse(String(secondInit?.body));
+      expect(secondBody.messages).toEqual(
+        expect.arrayContaining([
+          expect.objectContaining({
+            role: "tool",
+            name: "gmail_search_threads",
+            content: expect.stringContaining("thread-1")
+          }),
+          expect.objectContaining({
+            role: "tool",
+            name: "calendar_list_events",
+            content: expect.stringContaining("Proposal review")
+          })
+        ])
+      );
+
+      const [, thirdInit] = fetchMock.mock.calls[2] ?? [];
+      const thirdBody = JSON.parse(String(thirdInit?.body));
+      expect(thirdBody.messages).toEqual(
+        expect.arrayContaining([
+          expect.objectContaining({
+            role: "tool",
+            name: "gmail_read_thread",
+            content: expect.stringContaining("Updated proposal")
+          })
+        ])
+      );
+
+      const traceResponse = await app.inject({
+        method: "GET",
+        url: "/api/chat/sessions/google-read-agent-session/trace"
+      });
+
+      expect(traceResponse.statusCode).toBe(200);
+      expect(traceResponse.json()).toEqual(
+        expect.objectContaining({
+          toolCalls: expect.arrayContaining([
+            expect.objectContaining({
+              id: "call-gmail-search",
+              name: "gmail.search_threads",
+              status: "completed",
+              previewOnly: true,
+              permissionRequired: false,
+              outputJson: expect.objectContaining({
+                provider: "gmail",
+                previewOnly: true,
+                threads: expect.arrayContaining([
+                  expect.objectContaining({
+                    id: "thread-1"
+                  })
+                ])
+              })
+            }),
+            expect.objectContaining({
+              id: "call-calendar-list",
+              name: "calendar.list_events",
+              status: "completed",
+              previewOnly: true,
+              permissionRequired: false,
+              outputJson: expect.objectContaining({
+                provider: "google_calendar",
+                previewOnly: true,
+                events: expect.arrayContaining([
+                  expect.objectContaining({
+                    id: "calendar-event-1",
+                    summary: "Proposal review"
+                  })
+                ])
+              })
+            }),
+            expect.objectContaining({
+              id: "call-gmail-read-thread",
+              name: "gmail.read_thread",
+              status: "completed",
+              previewOnly: true,
+              permissionRequired: false,
+              outputJson: expect.objectContaining({
+                provider: "gmail",
+                previewOnly: true,
+                threadId: "thread-1",
+                messages: expect.arrayContaining([
+                  expect.objectContaining({
+                    id: "message-1",
+                    headers: expect.objectContaining({
+                      Subject: "Updated proposal"
+                    })
+                  })
+                ])
+              })
+            })
+          ]),
+          modelUsageSummary: expect.objectContaining({
+            provider: "deepseek",
+            totalTokens: 150,
+            recordCount: 1
+          }),
+          permissionBoundary: expect.objectContaining({
+            previewOnly: true,
+            externalEffects: ["none"]
+          })
+        })
+      );
+
+      const eventsResponse = await app.inject({
+        method: "GET",
+        url: "/api/daily/events"
+      });
+      const events = eventsResponse.json().events;
+
+      expect(events).toEqual(
+        expect.arrayContaining([
+          expect.objectContaining({
+            id: expect.stringContaining("call-gmail-search-requested"),
+            title: "Agent tool planned",
+            relatedRefs: expect.objectContaining({
+              sessionIds: ["google-read-agent-session"]
+            })
+          }),
+          expect.objectContaining({
+            id: expect.stringContaining("call-calendar-list-completed"),
+            title: "Agent tool completed",
+            relatedRefs: expect.objectContaining({
+              sessionIds: ["google-read-agent-session"]
+            })
+          }),
+          expect.objectContaining({
+            id: expect.stringContaining("call-gmail-read-thread-completed"),
+            title: "Agent tool completed",
+            relatedRefs: expect.objectContaining({
+              sessionIds: ["google-read-agent-session"]
+            })
+          })
+        ])
+      );
+    } finally {
+      await app.close();
     }
   });
 
