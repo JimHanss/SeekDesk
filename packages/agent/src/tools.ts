@@ -90,7 +90,14 @@ export class ToolOrchestrator {
   constructor(private readonly registry: ToolRegistry = createDefaultToolRegistry()) {}
 
   async orchestrate(request: ToolCallRequest): Promise<ToolCallResult> {
-    const definition = this.registry.get(request.name);
+    const definition = resolveToolDefinition(this.registry, request.name);
+    const normalizedRequest =
+      definition && definition.name !== request.name
+        ? {
+            ...request,
+            name: definition.name
+          }
+        : request;
 
     if (!definition) {
       return createToolResult(request, {
@@ -104,7 +111,7 @@ export class ToolOrchestrator {
     }
 
     if (definition.permissionPolicy === "permission_required") {
-      return createToolResult(request, {
+      return createToolResult(normalizedRequest, {
         status: "permission_required",
         mode: definition.mode,
         previewOnly: false,
@@ -113,9 +120,9 @@ export class ToolOrchestrator {
       });
     }
 
-    const parsedInput = parseToolInput(definition, request);
+    const parsedInput = parseToolInput(definition, normalizedRequest);
     if (!parsedInput.success) {
-      return createToolResult(request, {
+      return createToolResult(normalizedRequest, {
         status: "failed",
         mode: definition.mode,
         previewOnly: definition.permissionPolicy === "preview_only",
@@ -137,10 +144,10 @@ export class ToolOrchestrator {
         const outputJson = await definition.execute({
           definition,
           input: parsedInput.input,
-          rawRequest: request
+          rawRequest: normalizedRequest
         });
 
-        return createToolResult(request, {
+        return createToolResult(normalizedRequest, {
           status: "completed",
           mode: definition.mode,
           previewOnly: true,
@@ -149,7 +156,7 @@ export class ToolOrchestrator {
           outputJson
         });
       } catch (error) {
-        return createToolResult(request, {
+        return createToolResult(normalizedRequest, {
           status: "failed",
           mode: definition.mode,
           previewOnly: true,
@@ -163,7 +170,7 @@ export class ToolOrchestrator {
       }
     }
 
-    return createToolResult(request, {
+    return createToolResult(normalizedRequest, {
       status,
       mode: definition.mode,
       previewOnly: true,
@@ -344,7 +351,7 @@ export function createModelToolDefinitions(
     .map((definition) => ({
       type: "function",
       function: {
-        name: definition.name,
+        name: toModelToolName(definition.name),
         description: definition.description,
         parameters: definition.parametersJsonSchema ?? {
           type: "object",
@@ -353,6 +360,30 @@ export function createModelToolDefinitions(
         }
       }
     }));
+}
+
+export function toModelToolName(name: string): string {
+  return name.trim().replace(/[^a-zA-Z0-9_-]/g, "_").slice(0, 64);
+}
+
+export function fromModelToolName(
+  registry: ToolRegistry,
+  modelToolName: string
+): string {
+  const exact = registry.get(modelToolName);
+  if (exact) {
+    return exact.name;
+  }
+
+  const match = registry
+    .list()
+    .find((definition) => toModelToolName(definition.name) === modelToolName);
+
+  return match?.name ?? modelToolName;
+}
+
+function resolveToolDefinition(registry: ToolRegistry, name: string) {
+  return registry.get(name) ?? registry.get(fromModelToolName(registry, name));
 }
 
 function normalizeToolDefinition(definition: ToolDefinition): ToolDefinition {
