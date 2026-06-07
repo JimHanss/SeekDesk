@@ -110,6 +110,20 @@ does not print secret values. `.env.local` remains git-ignored.
 Use `--target-env <path>` when writing a different ignored env file, for example
 on a remote checkout.
 
+When the Google OAuth client id/secret are available in the local process
+environment and the remote checkout is reachable over SSH, sync them to the
+remote ignored env file without printing secret values:
+
+```bash
+GOOGLE_CLIENT_ID="..." \
+GOOGLE_CLIENT_SECRET="..." \
+npm run sync:remote-google-oauth -- --host jim-mac
+```
+
+The remote sync command sends secrets over SSH stdin, invokes
+`scripts/configure-google-oauth-env.mjs` inside the remote checkout, and writes
+only to `.env.local` unless `--target-env` is provided.
+
 To check a running API without exposing local secrets, run:
 
 ```bash
