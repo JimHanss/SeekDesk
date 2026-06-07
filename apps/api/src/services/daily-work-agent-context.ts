@@ -291,6 +291,15 @@ function summarizeGoogleAuthorization(
   status: Awaited<ReturnType<typeof getGoogleConnectionStatus>>
 ) {
   if (status.connected) {
+    if (!status.scopesComplete) {
+      const missingScopes = status.missingScopes.join(", ") || "unknown";
+
+      return [
+        `Google authorization: connected${status.accountEmail ? ` as ${status.accountEmail}` : ""}, but required scopes are incomplete. Missing scopes=${missingScopes}.`,
+        "Google tool availability: do not call Gmail or Calendar read tools until OAuth is refreshed with all required scopes. Gmail draft and calendar event preview tools can still create local payload previews when the user provides all content."
+      ];
+    }
+
     return [
       `Google authorization: connected${status.accountEmail ? ` as ${status.accountEmail}` : ""}; scopes=${status.scopes.join(", ") || "unknown"}.`,
       "Google tool availability: gmail.search_threads, gmail.read_thread, and calendar.list_events may read authorized metadata. Gmail draft and calendar event tools remain local previews only."

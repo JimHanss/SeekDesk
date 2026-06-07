@@ -3283,6 +3283,7 @@ describe("api server", () => {
       encryptedTokens: "encrypted-token-payload",
       scopes: [
         "https://www.googleapis.com/auth/gmail.readonly",
+        "https://www.googleapis.com/auth/gmail.compose",
         "https://www.googleapis.com/auth/calendar.readonly"
       ],
       connectedAt: "2026-06-01T00:00:00.000Z",
@@ -3379,6 +3380,175 @@ describe("api server", () => {
     );
 
     await app.close();
+  });
+
+  it("blocks Google read tools when the connected account is missing required scopes", async () => {
+    process.env.DEEPSEEK_API_KEY = "sk-test-secret-value";
+    process.env.DEEPSEEK_BASE_URL = "https://api.deepseek.example";
+    process.env.GOOGLE_CLIENT_ID = "google-client-id";
+    process.env.GOOGLE_CLIENT_SECRET = "google-client-secret";
+    process.env.GOOGLE_REDIRECT_URI =
+      "http://127.0.0.1:4000/api/connectors/google/oauth/callback";
+    process.env.GOOGLE_TOKEN_ENCRYPTION_KEY = "test-token-encryption-key";
+
+    const repository = new SeedDailyWorkRepository();
+    await repository.upsertConnectorAccount({
+      id: "google:person@example.com",
+      provider: "google",
+      accountEmail: "person@example.com",
+      encryptedTokens: "encrypted-token-payload",
+      scopes: [
+        "https://www.googleapis.com/auth/gmail.readonly",
+        "https://www.googleapis.com/auth/calendar.readonly"
+      ],
+      connectedAt: "2026-06-01T00:00:00.000Z",
+      updatedAt: "2026-06-01T00:00:00.000Z"
+    });
+
+    const fetchMock = vi
+      .fn()
+      .mockResolvedValueOnce(
+        createDeepSeekStreamResponse([
+          `data: ${JSON.stringify({
+            choices: [
+              {
+                delta: {
+                  tool_calls: [
+                    {
+                      index: 0,
+                      id: "call-gmail-missing-scope",
+                      type: "function",
+                      function: {
+                        name: "gmail_search_threads",
+                        arguments:
+                          "{\"query\":\"newer_than:7d proposal\",\"maxResults\":1}"
+                      }
+                    }
+                  ]
+                },
+                finish_reason: "tool_calls"
+              }
+            ]
+          })}\n\n`,
+          "data: [DONE]\n\n"
+        ])
+      )
+      .mockResolvedValueOnce(
+        createDeepSeekStreamResponse([
+          `data: ${JSON.stringify({
+            choices: [
+              {
+                delta: {
+                  content:
+                    "Google authorization needs to be refreshed before I can read Gmail."
+                }
+              }
+            ]
+          })}\n\n`,
+          "data: [DONE]\n\n"
+        ])
+      );
+    vi.stubGlobal("fetch", fetchMock);
+
+    const app = await buildServer({ dailyWorkRepository: repository });
+
+    try {
+      const response = await app.inject({
+        method: "POST",
+        url: "/api/chat",
+        payload: {
+          mode: "daily_work",
+          sessionId: "google-missing-scope-session",
+          prompt: "Search my recent proposal email.",
+          context: {
+            workspaceId: "workspace-seekdesk",
+            connectorIds: ["google"]
+          }
+        }
+      });
+
+      expect(response.statusCode).toBe(200);
+      expect(response.body).toContain("authorization needs to be refreshed");
+      expect(fetchMock).toHaveBeenCalledTimes(2);
+      expect(googleApiMock.oauthSetCredentials).not.toHaveBeenCalled();
+      expect(googleApiMock.gmailThreadsList).not.toHaveBeenCalled();
+
+      const [, firstInit] = fetchMock.mock.calls[0] ?? [];
+      const firstBody = JSON.parse(String(firstInit?.body));
+      const contextMessage = String(firstBody.messages[1].content);
+      expect(contextMessage).toContain(
+        "required scopes are incomplete"
+      );
+      expect(contextMessage).toContain(
+        "https://www.googleapis.com/auth/gmail.compose"
+      );
+      expect(contextMessage).toContain(
+        "do not call Gmail or Calendar read tools until OAuth is refreshed"
+      );
+
+      const [, secondInit] = fetchMock.mock.calls[1] ?? [];
+      const secondBody = JSON.parse(String(secondInit?.body));
+      expect(secondBody.messages).toEqual(
+        expect.arrayContaining([
+          expect.objectContaining({
+            role: "tool",
+            name: "gmail_search_threads",
+            content: expect.stringContaining("connector_missing_scopes")
+          })
+        ])
+      );
+
+      const traceResponse = await app.inject({
+        method: "GET",
+        url: "/api/chat/sessions/google-missing-scope-session/trace"
+      });
+
+      expect(traceResponse.statusCode).toBe(200);
+      expect(traceResponse.json()).toEqual(
+        expect.objectContaining({
+          toolCalls: expect.arrayContaining([
+            expect.objectContaining({
+              id: "call-gmail-missing-scope",
+              name: "gmail.search_threads",
+              status: "failed",
+              previewOnly: true,
+              permissionRequired: false,
+              error: "connector_missing_scopes",
+              outputJson: expect.objectContaining({
+                message: expect.stringContaining("gmail.compose")
+              })
+            })
+          ])
+        })
+      );
+
+      const eventsResponse = await app.inject({
+        method: "GET",
+        url: "/api/daily/events"
+      });
+
+      expect(eventsResponse.json().events).toEqual(
+        expect.arrayContaining([
+          expect.objectContaining({
+            id: expect.stringContaining("call-gmail-missing-scope-completed"),
+            status: "failed",
+            title: "Agent tool completed",
+            summary: expect.stringContaining("connector_missing_scopes"),
+            relatedRefs: expect.objectContaining({
+              sessionIds: ["google-missing-scope-session"]
+            }),
+            metadata: expect.objectContaining({
+              toolName: "gmail.search_threads",
+              toolPhase: "completed",
+              externalDataSummary:
+                "Tool failed with connector_missing_scopes; no external write was performed."
+            })
+          })
+        ])
+      );
+    } finally {
+      await app.close();
+    }
   });
 
   it("executes preview-only daily-work tool calls and persists artifacts", async () => {
@@ -3640,12 +3810,13 @@ describe("api server", () => {
           access_token: "access-token",
           refresh_token: "refresh-token",
           scope:
-            "https://www.googleapis.com/auth/gmail.readonly https://www.googleapis.com/auth/calendar.readonly"
+            "https://www.googleapis.com/auth/gmail.readonly https://www.googleapis.com/auth/gmail.compose https://www.googleapis.com/auth/calendar.readonly"
         },
         process.env.GOOGLE_TOKEN_ENCRYPTION_KEY
       ),
       scopes: [
         "https://www.googleapis.com/auth/gmail.readonly",
+        "https://www.googleapis.com/auth/gmail.compose",
         "https://www.googleapis.com/auth/calendar.readonly"
       ],
       connectedAt: "2026-06-01T00:00:00.000Z",

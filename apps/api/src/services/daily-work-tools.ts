@@ -22,6 +22,7 @@ import {
   createCalendarEventPreview,
   createGmailDraftPreview,
   createGoogleAuthenticatedClient,
+  getGoogleConnectionStatus,
   getGoogleOAuthConfigFromEnv,
   listCalendarEvents,
   readGmailThread,
@@ -96,6 +97,21 @@ async function createGoogleAuthOrThrow(repository: DailyWorkRepository) {
     throw createToolError(
       "google_oauth_not_configured",
       "Google OAuth environment variables are not configured."
+    );
+  }
+
+  const status = await getGoogleConnectionStatus({ repository });
+  if (!status.connected) {
+    throw createToolError(
+      "connector_not_connected",
+      "Google connector is not connected."
+    );
+  }
+
+  if (!status.scopesComplete) {
+    throw createToolError(
+      "connector_missing_scopes",
+      `Google connector is missing required OAuth scopes: ${status.missingScopes.join(", ") || "unknown"}.`
     );
   }
 
