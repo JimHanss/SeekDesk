@@ -95,34 +95,33 @@ Required env:
 Refresh tokens never reach the frontend. Tokens are encrypted with AES-256-GCM before
 repository storage.
 
-To safely write local Google OAuth configuration without committing secrets, set
-the client id/secret in the current process environment and run:
+To safely write local Google OAuth configuration without committing secrets, add
+the client id/secret to the ignored `.env.local` file and run:
 
 ```bash
-GOOGLE_CLIENT_ID="..." \
-GOOGLE_CLIENT_SECRET="..." \
 npm run configure:google-oauth
 ```
 
-The script updates `.env.local`, generates missing encryption/state secrets, and
-does not print secret values. `.env.local` remains git-ignored.
+The script reads `GOOGLE_CLIENT_ID` and `GOOGLE_CLIENT_SECRET` from `.env.local`
+or the current process environment, updates `.env.local`, generates missing
+encryption/state secrets, and does not print secret values. `.env.local` remains
+git-ignored.
 
 Use `--target-env <path>` when writing a different ignored env file, for example
 on a remote checkout.
 
-When the Google OAuth client id/secret are available in the local process
-environment and the remote checkout is reachable over SSH, sync them to the
-remote ignored env file without printing secret values:
+When the Google OAuth client id/secret are available in local `.env.local` and
+the remote checkout is reachable over SSH, sync them to the remote ignored env
+file without printing secret values:
 
 ```bash
-GOOGLE_CLIENT_ID="..." \
-GOOGLE_CLIENT_SECRET="..." \
 npm run sync:remote-google-oauth -- --host jim-mac
 ```
 
 The remote sync command sends secrets over SSH stdin, invokes
 `scripts/configure-google-oauth-env.mjs` inside the remote checkout, and writes
-only to `.env.local` unless `--target-env` is provided.
+only to `.env.local` unless `--target-env` is provided. Use `--source-env` when
+reading from a local env file other than `.env.local`.
 
 To check a running API without exposing local secrets, run:
 

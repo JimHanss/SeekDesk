@@ -1,8 +1,11 @@
 #!/usr/bin/env node
 
 import { spawn } from "node:child_process";
+import { readFile } from "node:fs/promises";
+import { resolve } from "node:path";
 
 const args = parseArgs(process.argv.slice(2));
+const sourceEnvPath = resolve(args.sourceEnv ?? ".env.local");
 
 try {
   if (args.help) {
@@ -10,8 +13,13 @@ try {
     process.exit(0);
   }
 
-  const clientId = normalizeSecret(process.env.GOOGLE_CLIENT_ID);
-  const clientSecret = normalizeSecret(process.env.GOOGLE_CLIENT_SECRET);
+  const sourceEnv = await readEnvFile(sourceEnvPath);
+  const clientId = normalizeSecret(
+    process.env.GOOGLE_CLIENT_ID ?? sourceEnv.GOOGLE_CLIENT_ID
+  );
+  const clientSecret = normalizeSecret(
+    process.env.GOOGLE_CLIENT_SECRET ?? sourceEnv.GOOGLE_CLIENT_SECRET
+  );
   const missing = [
     clientId ? null : "GOOGLE_CLIENT_ID",
     clientSecret ? null : "GOOGLE_CLIENT_SECRET"
@@ -19,7 +27,7 @@ try {
 
   if (missing.length > 0) {
     throw new Error(
-      `Missing ${missing.join(", ")} in the current process environment.`
+      `Missing ${missing.join(", ")} in the current process environment or ${sourceEnvPath}.`
     );
   }
 
@@ -29,6 +37,7 @@ try {
   const redirectUri =
     args.redirectUri ??
     process.env.GOOGLE_REDIRECT_URI?.trim() ??
+    sourceEnv.GOOGLE_REDIRECT_URI ??
     "http://127.0.0.1:4000/api/connectors/google/oauth/callback";
   const payload = {
     clientId,
@@ -49,6 +58,7 @@ try {
         status: "updated",
         host,
         repo,
+        sourceEnv: sourceEnvPath,
         targetEnv,
         configuredKeys: [
           "GOOGLE_CLIENT_ID",
@@ -76,6 +86,54 @@ try {
     )
   );
   process.exit(1);
+}
+
+async function readEnvFile(filePath) {
+  try {
+    const content = await readFile(filePath, "utf8");
+    return parseEnvContent(content);
+  } catch (error) {
+    if (error && typeof error === "object" && error.code === "ENOENT") {
+      return {};
+    }
+
+    throw error;
+  }
+}
+
+function parseEnvContent(content) {
+  const values = {};
+
+  for (const line of content.split(/\r?\n/)) {
+    const trimmed = line.trim();
+    if (!trimmed || trimmed.startsWith("#")) {
+      continue;
+    }
+
+    const index = line.indexOf("=");
+    if (index === -1) {
+      continue;
+    }
+
+    const key = line.slice(0, index).trim();
+    const value = unquoteEnvValue(line.slice(index + 1).trim());
+    if (key) {
+      values[key] = value;
+    }
+  }
+
+  return values;
+}
+
+function unquoteEnvValue(value) {
+  if (
+    (value.startsWith('"') && value.endsWith('"')) ||
+    (value.startsWith("'") && value.endsWith("'"))
+  ) {
+    return value.slice(1, -1);
+  }
+
+  return value;
 }
 
 async function runRemoteConfigure(input) {
@@ -174,6 +232,12 @@ function parseArgs(argv) {
       continue;
     }
 
+    if (arg === "--source-env") {
+      parsed.sourceEnv = readValue(argv, index, arg);
+      index += 1;
+      continue;
+    }
+
     if (arg === "--redirect-uri") {
       parsed.redirectUri = readValue(argv, index, arg);
       index += 1;
@@ -205,15 +269,17 @@ function shellQuote(value) {
 }
 
 function printHelp() {
-  console.log(`Usage: GOOGLE_CLIENT_ID=... GOOGLE_CLIENT_SECRET=... npm run sync:remote-google-oauth -- [options]
+  console.log(`Usage: npm run sync:remote-google-oauth -- [options]
 
 Safely writes Google OAuth configuration to an ignored env file on a remote
 checkout. Secret values are sent over SSH stdin, not printed and not placed in
-git-tracked files.
+git-tracked files. GOOGLE_CLIENT_ID and GOOGLE_CLIENT_SECRET may be supplied
+from the current process environment or the local source env file.
 
 Options:
   --host <ssh-host>      SSH host. Default: jim-mac
   --repo <path>          Remote repo path. Default: /Users/jimhuang/project/SeekDesk
+  --source-env <path>    Local env file to read. Default: .env.local
   --target-env <path>    Remote env file path relative to repo. Default: .env.local
   --redirect-uri <uri>   OAuth redirect URI. Default:
                          http://127.0.0.1:4000/api/connectors/google/oauth/callback

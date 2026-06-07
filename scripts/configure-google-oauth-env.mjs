@@ -6,10 +6,6 @@ import { dirname, resolve } from "node:path";
 
 const args = parseArgs(process.argv.slice(2));
 const envPath = resolve(args.targetEnv ?? ".env.local");
-const redirectUri =
-  args.redirectUri ??
-  process.env.GOOGLE_REDIRECT_URI ??
-  "http://127.0.0.1:4000/api/connectors/google/oauth/callback";
 
 try {
   if (args.help) {
@@ -17,8 +13,13 @@ try {
     process.exit(0);
   }
 
-  const clientId = normalizeSecret(process.env.GOOGLE_CLIENT_ID);
-  const clientSecret = normalizeSecret(process.env.GOOGLE_CLIENT_SECRET);
+  const existing = await readEnvFile(envPath);
+  const clientId = normalizeSecret(
+    process.env.GOOGLE_CLIENT_ID ?? existing.values.GOOGLE_CLIENT_ID
+  );
+  const clientSecret = normalizeSecret(
+    process.env.GOOGLE_CLIENT_SECRET ?? existing.values.GOOGLE_CLIENT_SECRET
+  );
   const missing = [
     clientId ? null : "GOOGLE_CLIENT_ID",
     clientSecret ? null : "GOOGLE_CLIENT_SECRET"
@@ -26,11 +27,15 @@ try {
 
   if (missing.length > 0) {
     throw new Error(
-      `Missing ${missing.join(", ")} in the current process environment.`
+      `Missing ${missing.join(", ")} in the current process environment or ${envPath}.`
     );
   }
 
-  const existing = await readEnvFile(envPath);
+  const redirectUri =
+    args.redirectUri ??
+    process.env.GOOGLE_REDIRECT_URI?.trim() ??
+    existing.values.GOOGLE_REDIRECT_URI ??
+    "http://127.0.0.1:4000/api/connectors/google/oauth/callback";
   const next = upsertEnvValues(existing, {
     GOOGLE_CLIENT_ID: clientId,
     GOOGLE_CLIENT_SECRET: clientSecret,
@@ -105,7 +110,7 @@ function parseEnvContent(content) {
     }
 
     const key = line.slice(0, index).trim();
-    const value = line.slice(index + 1).trim();
+    const value = unquoteEnvValue(line.slice(index + 1).trim());
     if (key) {
       values[key] = value;
     }
@@ -157,6 +162,17 @@ function trimTrailingBlankLines(lines) {
   return next;
 }
 
+function unquoteEnvValue(value) {
+  if (
+    (value.startsWith('"') && value.endsWith('"')) ||
+    (value.startsWith("'") && value.endsWith("'"))
+  ) {
+    return value.slice(1, -1);
+  }
+
+  return value;
+}
+
 function parseArgs(argv) {
   const parsed = {};
 
@@ -205,10 +221,11 @@ function createSecret() {
 }
 
 function printHelp() {
-  console.log(`Usage: GOOGLE_CLIENT_ID=... GOOGLE_CLIENT_SECRET=... npm run configure:google-oauth -- [options]
+  console.log(`Usage: npm run configure:google-oauth -- [options]
 
 Writes Google OAuth configuration to an ignored env file without printing
-secret values.
+secret values. GOOGLE_CLIENT_ID and GOOGLE_CLIENT_SECRET may be supplied from
+the current process environment or already present in the target env file.
 
 Options:
   --target-env <path>    Target env file. Default: .env.local
