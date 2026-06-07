@@ -21,9 +21,13 @@ import type {
 
 interface UseChatControllerOptions {
   apiBaseUrl: string;
+  onActivityChanged?: () => Promise<void> | void;
 }
 
-export function useChatController({ apiBaseUrl }: UseChatControllerOptions) {
+export function useChatController({
+  apiBaseUrl,
+  onActivityChanged
+}: UseChatControllerOptions) {
   const [messages, setMessages] = useState<ChatMessage[]>(initialMessages);
   const [input, setInput] = useState("");
   const [status, setStatus] = useState<ChatStatus>("idle");
@@ -144,7 +148,11 @@ export function useChatController({ apiBaseUrl }: UseChatControllerOptions) {
 
       setStatus("idle");
       if (responseSessionId) {
-        void refreshAgentTrace(responseSessionId, responseProvider);
+        void refreshAgentTrace(responseSessionId, responseProvider).finally(() => {
+          void onActivityChanged?.();
+        });
+      } else {
+        void onActivityChanged?.();
       }
     } catch (requestError) {
       if (controller.signal.aborted) {

@@ -550,6 +550,20 @@ export interface ActivityEventItem {
   safetyBoundary: string;
   promptFocus: string;
   icon: LucideIcon;
+  toolAudit?: ActivityToolAuditItem;
+}
+
+export interface ActivityToolAuditItem {
+  toolName: string;
+  toolPhase: string;
+  provider: string | null;
+  connectorId: string | null;
+  inputFields: string[];
+  externalDataSummary: string;
+  resultCount: number | null;
+  reference: string | null;
+  previewOnly: boolean;
+  externalEffects: string[];
 }
 
 export type ActivityFeedSource = "fallback" | "api" | "websocket";
@@ -586,6 +600,21 @@ export interface DailyActivityNextAction {
   dueAt?: string;
 }
 
+export interface DailyActivityMetadataDto {
+  riskLevel?: string;
+  permissionState?: string;
+  externalEffects?: string[];
+  artifactType?: string;
+  toolName?: string;
+  toolPhase?: string;
+  provider?: string;
+  connectorId?: string;
+  inputFields?: string[];
+  externalDataSummary?: string;
+  resultCount?: number;
+  reference?: string;
+}
+
 export interface DailyActivityEventDto {
   id: string;
   mode?: AppMode;
@@ -598,6 +627,7 @@ export interface DailyActivityEventDto {
   relatedRefs?: DailyActivityRelatedRefs;
   safetyBoundary?: DailyActivitySafetyBoundary;
   nextAction?: DailyActivityNextAction | null;
+  metadata?: DailyActivityMetadataDto;
 }
 
 export interface DailyActivitySnapshotDto {

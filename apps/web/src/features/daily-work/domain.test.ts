@@ -5,6 +5,7 @@ import {
   connectorItems,
   createLocalConnectorPreviewState,
   mapAgentTraceResponse,
+  mapDailyActivitySnapshot,
   mapApprovalDecisionStatus,
   mapTemplatePreviewResponse,
   mapTemplatesResponse,
@@ -12,6 +13,7 @@ import {
 } from "./domain";
 import type {
   DailyApprovalDecisionResponseDto,
+  DailyActivitySnapshotDto,
   DailyWorkTemplateApplyPreviewResponseDto,
   DailyWorkTemplatesResponseDto
 } from "./types";
@@ -175,6 +177,65 @@ describe("daily-work domain mappers", () => {
         previewOnly: true,
         statement: "No external effects."
       })
+    });
+  });
+
+  it("maps activity tool audit metadata into visible event state", () => {
+    const [event] = mapDailyActivitySnapshot({
+      type: "daily.activity.snapshot",
+      mode: activeMode,
+      events: [
+        {
+          id: "daily-event-agent-tool-session-call-completed",
+          mode: activeMode,
+          eventType: "workflow.preview.completed",
+          status: "completed",
+          timestamp: "2026-06-08T00:00:00.000Z",
+          title: "Agent tool completed",
+          summary: "Agent persisted local artifact.",
+          actor: "daily-work-agent",
+          relatedRefs: {
+            sessionIds: ["session-1"],
+            artifactIds: ["artifact-1"],
+            connectorIds: [],
+            templateIds: [],
+            workflowIds: [],
+            actionQueueItemIds: [],
+            approvalRequestIds: [],
+            contextItemIds: []
+          },
+          safetyBoundary: {
+            previewOnly: true,
+            externalEffects: ["none"],
+            statement: "Preview-only tool execution."
+          },
+          nextAction: null,
+          metadata: {
+            toolName: "daily.persist_artifact",
+            toolPhase: "completed",
+            provider: "seekdesk",
+            inputFields: ["title", "content"],
+            externalDataSummary:
+              "Local SeekDesk artifact persisted for review; no external provider write.",
+            resultCount: 1,
+            reference: "artifact:artifact-1"
+          }
+        }
+      ]
+    } satisfies DailyActivitySnapshotDto);
+
+    expect(event).toMatchObject({
+      relatedLabel: "artifact:artifact-1",
+      toolAudit: {
+        toolName: "daily.persist_artifact",
+        toolPhase: "completed",
+        provider: "seekdesk",
+        inputFields: ["title", "content"],
+        resultCount: 1,
+        reference: "artifact:artifact-1",
+        previewOnly: true,
+        externalEffects: ["none"]
+      }
     });
   });
 

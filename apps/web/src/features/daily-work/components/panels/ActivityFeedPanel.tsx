@@ -1,6 +1,6 @@
 "use client";
 
-import { Activity, Lock, Send, ShieldCheck } from "lucide-react";
+import { Activity, Link2, Lock, Send, ShieldCheck, Wrench } from "lucide-react";
 
 import { Button } from "@/components/ui/button";
 import { cn } from "@/lib/utils";
@@ -12,7 +12,8 @@ import {
 import type {
   ActivityConnectionStatus,
   ActivityEventItem,
-  ActivityFeedSource
+  ActivityFeedSource,
+  ActivityToolAuditItem
 } from "../../types";
 import {
   ActivityEventStatusPill,
@@ -105,6 +106,18 @@ export function ActivityFeedPanel({
                 key={event.id}
                 type="button"
                 onClick={() => onSelectEvent(event.id)}
+                data-activity-event-id={event.id}
+                data-activity-tool-audit-row={event.toolAudit?.toolName}
+                data-activity-tool-provider={event.toolAudit?.provider ?? undefined}
+                data-activity-tool-phase={event.toolAudit?.toolPhase}
+                data-activity-tool-reference={event.toolAudit?.reference ?? undefined}
+                data-activity-tool-boundary={
+                  event.toolAudit
+                    ? event.toolAudit.previewOnly
+                      ? "preview-only"
+                      : "requires approval"
+                    : undefined
+                }
                 className={cn(
                   "flex w-full cursor-pointer items-start gap-3 rounded-[8px] border px-3 py-3 text-left transition-colors duration-200 focus-visible:outline focus-visible:outline-2 focus-visible:outline-teal-600",
                   isSelected
@@ -130,6 +143,17 @@ export function ActivityFeedPanel({
                   <span className="mt-2 block break-words text-xs leading-5 text-slate-700">
                     {event.summary}
                   </span>
+                  {event.toolAudit ? (
+                    <span
+                      className="mt-2 inline-flex max-w-full items-center gap-1 rounded-[999px] border border-slate-200 bg-slate-50 px-2 py-1 font-mono text-[11px] leading-4 text-slate-700"
+                      data-activity-tool-chip={event.toolAudit.toolName}
+                    >
+                      <Wrench className="size-3.5 shrink-0 text-teal-700" aria-hidden="true" />
+                      <span className="min-w-0 truncate">
+                        {event.toolAudit.toolPhase} / {event.toolAudit.toolName}
+                      </span>
+                    </span>
+                  ) : null}
                   <span className="mt-2 block break-words text-[11px] leading-4 text-orange-700">
                     安全边界：{event.safetyBoundary}
                   </span>
@@ -172,6 +196,10 @@ export function ActivityFeedPanel({
               {selectedEvent.safetyBoundary}
             </ArtifactDetailBlock>
 
+            {selectedEvent.toolAudit ? (
+              <ActivityToolAuditBlock toolAudit={selectedEvent.toolAudit} />
+            ) : null}
+
             <Button
               type="button"
               size="sm"
@@ -183,6 +211,71 @@ export function ActivityFeedPanel({
             </Button>
           </div>
         ) : null}
+      </div>
+    </div>
+  );
+}
+
+function ActivityToolAuditBlock({
+  toolAudit
+}: {
+  toolAudit: ActivityToolAuditItem;
+}) {
+  const inputFields = toolAudit.inputFields.length
+    ? toolAudit.inputFields.join(", ")
+    : "none";
+  const externalEffects = toolAudit.externalEffects.length
+    ? toolAudit.externalEffects.join(", ")
+    : "none";
+  const resultCount =
+    toolAudit.resultCount === null ? "not reported" : `${toolAudit.resultCount}`;
+  const boundary = toolAudit.previewOnly ? "preview-only" : "requires approval";
+
+  return (
+    <div
+      className="mt-3 rounded-[8px] border border-slate-200 bg-white px-3 py-2"
+      data-activity-tool-audit
+      data-activity-tool-name={toolAudit.toolName}
+      data-activity-tool-provider={toolAudit.provider ?? ""}
+      data-activity-tool-reference={toolAudit.reference ?? ""}
+      data-activity-tool-result-count={resultCount}
+      data-activity-tool-boundary={boundary}
+    >
+      <div className="flex items-center gap-2 text-xs font-medium text-slate-950">
+        <Wrench className="size-4 shrink-0 text-teal-700" aria-hidden="true" />
+        <span className="min-w-0 break-words">Agent tool audit</span>
+      </div>
+
+      <div className="mt-2 grid gap-2">
+        <ArtifactDetailRow
+          label="Tool"
+          value={`${toolAudit.toolPhase} / ${toolAudit.toolName}`}
+        />
+        <ArtifactDetailRow
+          label="Provider"
+          value={toolAudit.provider ?? "local preview"}
+        />
+        <ArtifactDetailRow label="Connector" value={toolAudit.connectorId ?? "none"} />
+        <ArtifactDetailRow label="Input fields" value={inputFields} />
+        <ArtifactDetailRow label="Result count" value={resultCount} />
+        <ArtifactDetailRow label="External effects" value={externalEffects} />
+      </div>
+
+      <div className="mt-2 rounded-[8px] border border-teal-100 bg-teal-50 px-2.5 py-2 text-xs leading-5 text-teal-800">
+        <span className="font-medium">Summary: </span>
+        {toolAudit.externalDataSummary}
+      </div>
+
+      {toolAudit.reference ? (
+        <div className="mt-2 flex items-start gap-2 rounded-[8px] border border-teal-100 bg-teal-50 px-2.5 py-2 text-xs leading-5 text-teal-800">
+          <Link2 className="mt-0.5 size-3.5 shrink-0" aria-hidden="true" />
+          <span className="min-w-0 break-words">{toolAudit.reference}</span>
+        </div>
+      ) : null}
+
+      <div className="mt-2 rounded-[8px] border border-orange-100 bg-orange-50 px-2.5 py-2 text-xs leading-5 text-orange-800">
+        <span className="font-medium">Boundary: </span>
+        {boundary}; external writes remain disabled in daily_work mode.
       </div>
     </div>
   );

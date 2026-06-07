@@ -112,6 +112,14 @@ export default function Page() {
 
   const apiBaseUrl = useMemo(() => getRuntimeApiBaseUrl().replace(/\/$/, ""), []);
   const {
+    activityConnectionStatus,
+    activityFeedEvents,
+    activityFeedNotice,
+    activityFeedSource,
+    activityLastUpdated,
+    refreshActivityFeed
+  } = useActivityFeed(apiBaseUrl, setSelectedActivityEventId);
+  const {
     agentTrace,
     applyPrompt,
     cancelRequest,
@@ -128,7 +136,7 @@ export default function Page() {
     setError,
     setInput,
     status
-  } = useChatController({ apiBaseUrl });
+  } = useChatController({ apiBaseUrl, onActivityChanged: refreshActivityFeed });
   const { templatePanel, setTemplatePanel } = useTemplatePanel(apiBaseUrl);
   const { contextPanel, setContextPanel } = useDailyContext(
     apiBaseUrl,
@@ -160,15 +168,6 @@ export default function Page() {
     refreshGoogleConnectorStatus,
     startGoogleOAuth
   } = useGoogleConnectorStatus(apiBaseUrl);
-  const {
-    activityConnectionStatus,
-    activityFeedEvents,
-    activityFeedNotice,
-    activityFeedSource,
-    activityLastUpdated,
-    refreshActivityFeed
-  } = useActivityFeed(apiBaseUrl, setSelectedActivityEventId);
-
   const activeModelSnapshot = modelUsagePanel.modelSnapshots[modelRouteMode];
   const modelInputPlaceholder =
     modelRouteMode === "fast"

@@ -1505,6 +1505,29 @@ async function runChatSendSmoke(client) {
     resultRows: traceState.resultRows,
     referenceRows: traceState.referenceRows
   });
+
+  await selectDailyView(client, "activity");
+  const activityToolAuditState = await waitForValue(
+    client,
+    activityToolAuditExpression(),
+    (state) =>
+      state.present &&
+      state.auditRows > 0 &&
+      state.chips >= state.auditRows &&
+      state.referenceRows > 0 &&
+      state.previewOnlyRows > 0,
+    "activity tool audit after chat"
+  );
+
+  checks.push({
+    name: "activity tool audit",
+    status: "passed",
+    auditRows: activityToolAuditState.auditRows,
+    chips: activityToolAuditState.chips,
+    referenceRows: activityToolAuditState.referenceRows,
+    previewOnlyRows: activityToolAuditState.previewOnlyRows,
+    toolNames: activityToolAuditState.toolNames
+  });
 }
 
 function activityFeedExpression(expectedTitles) {
@@ -1523,6 +1546,29 @@ function activityFeedExpression(expectedTitles) {
       hasStatusText: /WebSocket|\\/api\\/daily\\/events\\?mode=daily_work/.test(text),
       hasCountText: text.includes(String(expectedTitles.length)),
       includesExpectedTitles: expectedTitles.every((title) => text.includes(title))
+    };
+  })()`);
+}
+
+function activityToolAuditExpression() {
+  return withSmokeHelpers(`(() => {
+    const root = document.querySelector("[data-activity-feed]");
+    const rows = root ? [...root.querySelectorAll("[data-activity-tool-audit-row]")] : [];
+    const auditRows = rows.filter((row) => row.getAttribute("data-activity-tool-audit-row"));
+    const chips = root ? [...root.querySelectorAll("[data-activity-tool-chip]")] : [];
+    const referenceRows = auditRows.filter((row) =>
+      Boolean(row.getAttribute("data-activity-tool-reference"))
+    );
+    const previewOnlyRows = auditRows.filter(
+      (row) => row.getAttribute("data-activity-tool-boundary") === "preview-only"
+    );
+    return {
+      present: Boolean(root),
+      auditRows: auditRows.length,
+      chips: chips.length,
+      referenceRows: referenceRows.length,
+      previewOnlyRows: previewOnlyRows.length,
+      toolNames: auditRows.map((row) => row.getAttribute("data-activity-tool-audit-row"))
     };
   })()`);
 }
