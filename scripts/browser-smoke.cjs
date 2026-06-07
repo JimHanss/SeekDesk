@@ -1467,7 +1467,8 @@ async function runChatSendSmoke(client) {
       state.present &&
       state.status === "live" &&
       state.hasSession &&
-      state.boundary === "preview-only",
+      state.boundary === "preview-only" &&
+      state.hasToolTraceSelectors,
     "agent trace panel after chat"
   );
 
@@ -1486,7 +1487,11 @@ async function runChatSendSmoke(client) {
     sessionText: traceState.sessionText,
     usageRecords: traceState.usageRecords,
     boundary: traceState.boundary,
-    toolRows: traceState.toolRows
+    toolRows: traceState.toolRows,
+    planRows: traceState.planRows,
+    executionRows: traceState.executionRows,
+    resultRows: traceState.resultRows,
+    referenceRows: traceState.referenceRows
   });
 }
 
@@ -2316,6 +2321,10 @@ function agentTraceExpression() {
     const usage = document.querySelector("[data-agent-model-usage-count]");
     const boundary = document.querySelector("[data-agent-permission-boundary]");
     const toolRows = root ? [...root.querySelectorAll("[data-agent-tool-call]")] : [];
+    const planRows = root ? [...root.querySelectorAll("[data-agent-tool-plan]")] : [];
+    const executionRows = root ? [...root.querySelectorAll("[data-agent-tool-execution]")] : [];
+    const resultRows = root ? [...root.querySelectorAll("[data-agent-tool-result]")] : [];
+    const referenceRows = root ? [...root.querySelectorAll("[data-agent-tool-reference]")] : [];
     const sessionText = session ? session.textContent || "" : "";
     return {
       present: Boolean(root),
@@ -2324,7 +2333,17 @@ function agentTraceExpression() {
       hasSession: /Session:\\s+(?!waiting)/.test(sessionText),
       usageRecords: usage ? Number(usage.getAttribute("data-agent-model-usage-count") || 0) : 0,
       boundary: boundary ? boundary.getAttribute("data-agent-permission-boundary") || "" : "",
-      toolRows: toolRows.length
+      toolRows: toolRows.length,
+      planRows: planRows.length,
+      executionRows: executionRows.length,
+      resultRows: resultRows.length,
+      referenceRows: referenceRows.length,
+      hasToolTraceSelectors:
+        toolRows.length === 0 ||
+        (planRows.length === toolRows.length &&
+          executionRows.length === toolRows.length &&
+          resultRows.length === toolRows.length &&
+          referenceRows.length === toolRows.length)
     };
   })()`);
 }

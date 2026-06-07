@@ -6,6 +6,7 @@ import {
   CheckCircle2,
   Cpu,
   Database,
+  FileText,
   Loader2,
   MessageSquare,
   Play,
@@ -67,11 +68,15 @@ export function ChatThread({
       <div className="mb-3 flex flex-col gap-2 md:flex-row md:items-start md:justify-between">
         <div className="min-w-0">
           <div className="flex items-center gap-2 text-sm font-semibold text-teal-950">
-            <MessageSquare className="size-4 shrink-0 text-teal-700" aria-hidden="true" />
-            <span className="min-w-0 break-words">对话工作区</span>
+            <MessageSquare
+              className="size-4 shrink-0 text-teal-700"
+              aria-hidden="true"
+            />
+            <span className="min-w-0 break-words">Daily Work Chat</span>
           </div>
           <p className="mt-1 text-xs leading-5 text-teal-700">
-            daily_work 消息发送到 /api/chat，模型响应、工具计划和用量会归档到当前会话。
+            Messages stream through /api/chat. Model responses, tool plans, tool
+            results, usage, and local artifacts are attached to this session.
           </p>
         </div>
         <span className="inline-flex shrink-0 items-center gap-1 rounded-[999px] bg-teal-50 px-2.5 py-1 text-[11px] font-medium text-teal-700">
@@ -125,6 +130,9 @@ function AgentTracePanel({
 }) {
   const hasToolCalls = agentTrace.toolCalls.length > 0;
   const usage = agentTrace.modelUsageSummary;
+  const boundary = agentTrace.permissionBoundary.previewOnly
+    ? "preview-only"
+    : "requires-approval";
 
   return (
     <div
@@ -148,7 +156,12 @@ function AgentTracePanel({
             </span>
           </div>
         </div>
-        <span className={cn("inline-flex shrink-0 items-center gap-1 rounded-[999px] px-2.5 py-1 text-[11px] font-medium", traceStatusClass(agentTrace.syncStatus))}>
+        <span
+          className={cn(
+            "inline-flex shrink-0 items-center gap-1 rounded-[999px] px-2.5 py-1 text-[11px] font-medium",
+            traceStatusClass(agentTrace.syncStatus)
+          )}
+        >
           {agentTrace.syncStatus === "syncing" ? (
             <Loader2 className="size-3.5 animate-spin" aria-hidden="true" />
           ) : (
@@ -159,15 +172,13 @@ function AgentTracePanel({
       </div>
 
       <div
-        className="mt-3 grid gap-2 md:grid-cols-3"
+        className="mt-3 grid gap-2 md:grid-cols-4"
         data-agent-model-usage-count={usage.recordCount}
-        data-agent-permission-boundary={
-          agentTrace.permissionBoundary.previewOnly ? "preview-only" : "requires-approval"
-        }
+        data-agent-permission-boundary={boundary}
       >
         <TraceMetric
           icon={Wrench}
-          label="Tools"
+          label="Tool plans"
           value={`${agentTrace.toolCalls.length}`}
           dataAttr="agent-tool-count"
         />
@@ -178,9 +189,15 @@ function AgentTracePanel({
           dataAttr="agent-model-usage-count"
         />
         <TraceMetric
+          icon={Cpu}
+          label="Tokens"
+          value={`${usage.totalTokens}`}
+          dataAttr="agent-token-count"
+        />
+        <TraceMetric
           icon={ShieldCheck}
           label="Boundary"
-          value={agentTrace.permissionBoundary.previewOnly ? "preview-only" : "requires approval"}
+          value={boundary}
           dataAttr="agent-permission-boundary"
         />
       </div>
@@ -196,12 +213,17 @@ function AgentTracePanel({
           ))
         ) : (
           <div className="rounded-[8px] border border-dashed border-slate-200 bg-white px-3 py-2 text-xs text-slate-600">
-            本轮还没有工具调用。DeepSeek 会在需要读取 Google 或生成本地草稿时自动规划工具。
+            No tools have been called in this turn yet. DeepSeek can plan Gmail,
+            Calendar, and local preview tools when the task requires context or
+            a reviewable artifact.
           </div>
         )}
       </div>
 
-      <div className="mt-3 rounded-[8px] border border-teal-100 bg-white px-3 py-2 text-xs leading-5 text-teal-800">
+      <div
+        className="mt-3 rounded-[8px] border border-teal-100 bg-white px-3 py-2 text-xs leading-5 text-teal-800"
+        data-agent-permission-statement
+      >
         {agentTrace.permissionBoundary.statement}
       </div>
     </div>
@@ -209,10 +231,17 @@ function AgentTracePanel({
 }
 
 function ToolCallRow({ toolCall }: { toolCall: AgentToolCallTraceItem }) {
+  const resultSummary = summarizeToolResult(toolCall);
+  const reference = summarizeToolReference(toolCall.outputJson);
+
   return (
     <div
       className="rounded-[8px] border border-slate-200 bg-white px-3 py-2 text-xs"
       data-agent-tool-call={toolCall.name}
+      data-agent-tool-plan={toolCall.name}
+      data-agent-tool-execution={toolCall.status}
+      data-agent-tool-result={resultSummary}
+      data-agent-tool-reference={reference ?? ""}
     >
       <div className="flex flex-col gap-2 md:flex-row md:items-start md:justify-between">
         <div className="min-w-0">
@@ -220,27 +249,86 @@ function ToolCallRow({ toolCall }: { toolCall: AgentToolCallTraceItem }) {
             {toolCall.name}
           </div>
           <div className="mt-1 text-slate-600">
-            {toolCall.previewOnly ? "preview-only" : "external action"} ·{" "}
-            {toolCall.permissionRequired ? "permission required" : "no extra approval"}
+            {toolCall.previewOnly ? "preview-only" : "external action"} path,{" "}
+            {toolCall.permissionRequired
+              ? "permission required"
+              : "no extra approval"}
           </div>
         </div>
         <span
-          className={cn("inline-flex shrink-0 rounded-[999px] px-2 py-1 font-medium", toolStatusClass(toolCall.status))}
+          className={cn(
+            "inline-flex shrink-0 rounded-[999px] px-2 py-1 font-medium",
+            toolStatusClass(toolCall.status)
+          )}
           data-agent-tool-status={toolCall.status}
         >
           {toolCall.status}
         </span>
       </div>
+
+      <div className="mt-3 grid gap-2 md:grid-cols-3">
+        <ToolStep
+          icon={Wrench}
+          label="Plan"
+          value={summarizeToolPlan(toolCall)}
+        />
+        <ToolStep
+          icon={Activity}
+          label="Execution"
+          value={summarizeToolExecution(toolCall)}
+        />
+        <ToolStep
+          icon={FileText}
+          label="Result"
+          value={resultSummary}
+        />
+      </div>
+
+      {reference ? (
+        <div className="mt-2 rounded-[8px] border border-teal-100 bg-teal-50 px-2.5 py-2 text-teal-800">
+          <span className="font-medium">Reference: </span>
+          {reference}
+        </div>
+      ) : null}
+
       {toolCall.error ? (
         <div className="mt-2 rounded-[8px] bg-red-50 px-2 py-1 text-red-700">
           {toolCall.error}
         </div>
       ) : null}
+
       {toolCall.outputJson !== undefined ? (
-        <pre className="mt-2 max-h-28 overflow-auto rounded-[8px] bg-slate-950 px-2.5 py-2 font-mono text-[11px] leading-5 text-slate-100">
-          {formatJsonPreview(toolCall.outputJson)}
-        </pre>
+        <details className="mt-2">
+          <summary className="cursor-pointer text-[11px] font-medium text-slate-500">
+            Raw tool result
+          </summary>
+          <pre className="mt-2 max-h-40 overflow-auto rounded-[8px] bg-slate-950 px-2.5 py-2 font-mono text-[11px] leading-5 text-slate-100">
+            {formatJsonPreview(toolCall.outputJson)}
+          </pre>
+        </details>
       ) : null}
+    </div>
+  );
+}
+
+function ToolStep({
+  icon: Icon,
+  label,
+  value
+}: {
+  icon: typeof Wrench;
+  label: string;
+  value: string;
+}) {
+  return (
+    <div className="min-w-0 rounded-[8px] border border-slate-100 bg-slate-50 px-2.5 py-2">
+      <div className="flex items-center gap-1.5 text-[11px] font-medium uppercase tracking-normal text-slate-500">
+        <Icon className="size-3.5 shrink-0 text-teal-700" aria-hidden="true" />
+        {label}
+      </div>
+      <div className="mt-1 break-words text-xs leading-5 text-slate-700">
+        {value}
+      </div>
     </div>
   );
 }
@@ -262,7 +350,10 @@ function TraceMetric({
         <Icon className="size-3.5 shrink-0 text-teal-700" aria-hidden="true" />
         {label}
       </div>
-      <div className="mt-1 break-words text-sm font-semibold text-slate-900" data-agent-metric={dataAttr}>
+      <div
+        className="mt-1 break-words text-sm font-semibold text-slate-900"
+        data-agent-metric={dataAttr}
+      >
         {value}
       </div>
     </div>
@@ -285,20 +376,24 @@ function ChatEmptyState({
         <div className="min-w-0">
           <div className="flex items-center gap-2 text-sm font-semibold text-teal-950">
             <Bot className="size-4 shrink-0 text-teal-700" aria-hidden="true" />
-            <span className="min-w-0 break-words">等待第一条日常工作任务</span>
+            <span className="min-w-0 break-words">
+              Ready for a daily-work task
+            </span>
           </div>
           <p className="mt-1 text-xs leading-5 text-teal-700">
-            当前会话保持审批边界，输出可包含正文、清单和高亮代码块。
+            The current conversation keeps a preview-only boundary while it can
+            produce prose, checklists, highlighted code, and reviewable local
+            artifacts.
           </p>
         </div>
         <span className="inline-flex shrink-0 items-center gap-1 rounded-[999px] bg-white px-2.5 py-1 text-[11px] font-medium text-teal-700">
           <CheckCircle2 className="size-3.5" aria-hidden="true" />
-          接口就绪
+          API ready
         </span>
       </div>
       <div className="mt-3 grid gap-2 md:grid-cols-2">
-        <ChatInfoRow label="接口" value={endpoint} />
-        <ChatInfoRow label="模型" value={modelName} />
+        <ChatInfoRow label="Endpoint" value={endpoint} />
+        <ChatInfoRow label="Model" value={modelName} />
       </div>
     </div>
   );
@@ -307,8 +402,8 @@ function ChatEmptyState({
 function ChatProgress({ status }: { status: ChatStatus }) {
   const label =
     status === "submitting"
-      ? "正在连接日常工作模型..."
-      : "正在接收增量响应...";
+      ? "Connecting to the daily-work model..."
+      : "Receiving the streaming response...";
 
   return (
     <div
@@ -347,10 +442,10 @@ function ChatErrorState({
           onClick={onRetry}
         >
           <Play className="size-4" aria-hidden="true" />
-          重新发送
+          Retry
         </Button>
         <Button type="button" variant="secondary" size="sm" onClick={onDismiss}>
-          清除错误
+          Dismiss
         </Button>
       </div>
     </div>
@@ -391,7 +486,7 @@ function ChatBubble({
           ) : (
             <Sparkles className="size-3.5" aria-hidden="true" />
           )}
-          {isUser ? "你" : "SeekDesk"}
+          {isUser ? "You" : "SeekDesk"}
           {pending ? (
             <Loader2 className="size-3.5 animate-spin" aria-hidden="true" />
           ) : null}
@@ -401,7 +496,7 @@ function ChatBubble({
         ) : (
           <div className="flex items-center gap-2 text-sm text-teal-700">
             <Loader2 className="size-4 animate-spin" aria-hidden="true" />
-            <span>正在建立响应...</span>
+            <span>Building the response...</span>
           </div>
         )}
       </div>
@@ -481,13 +576,13 @@ function ChatInfoRow({ label, value }: { label: string; value: string }) {
 function traceStatusLabel(status: AgentTraceState["syncStatus"]) {
   switch (status) {
     case "idle":
-      return "待命";
+      return "Idle";
     case "syncing":
-      return "同步中";
+      return "Syncing";
     case "live":
-      return "已同步";
+      return "Live";
     case "degraded":
-      return "降级";
+      return "Degraded";
   }
 }
 
@@ -522,10 +617,123 @@ function toolStatusClass(status: string) {
   }
 }
 
+function summarizeToolPlan(toolCall: AgentToolCallTraceItem) {
+  return `${toolCall.name} with ${summarizeJsonShape(toolCall.inputJson)}`;
+}
+
+function summarizeToolExecution(toolCall: AgentToolCallTraceItem) {
+  const timing = toolCall.completedAt
+    ? `${formatTraceTime(toolCall.createdAt)} to ${formatTraceTime(toolCall.completedAt)}`
+    : `started ${formatTraceTime(toolCall.createdAt)}`;
+
+  return `${toolCall.status}; ${timing}`;
+}
+
+function summarizeToolResult(toolCall: AgentToolCallTraceItem) {
+  if (toolCall.error) {
+    return `Failed with ${toolCall.error}`;
+  }
+
+  const output = asRecord(toolCall.outputJson);
+  if (!output) {
+    return "No structured result yet";
+  }
+
+  if (Array.isArray(output.threads)) {
+    return `${output.threads.length} Gmail thread result(s)`;
+  }
+
+  if (Array.isArray(output.messages)) {
+    return `${output.messages.length} Gmail message metadata record(s)`;
+  }
+
+  if (Array.isArray(output.events)) {
+    return `${output.events.length} calendar event result(s)`;
+  }
+
+  if (output.draftPayloadPreview) {
+    return "Local Gmail draft payload preview";
+  }
+
+  if (output.eventPayloadPreview) {
+    return "Local Calendar event payload preview";
+  }
+
+  if (typeof output.artifactId === "string") {
+    return "Local review artifact persisted";
+  }
+
+  return "Structured tool result captured";
+}
+
+function summarizeToolReference(outputJson: unknown) {
+  const output = asRecord(outputJson);
+  if (!output) {
+    return null;
+  }
+
+  if (typeof output.artifactId === "string" && output.artifactId.trim()) {
+    return `artifact ${output.artifactId}`;
+  }
+
+  if (typeof output.threadId === "string" && output.threadId.trim()) {
+    return `Gmail thread ${output.threadId}`;
+  }
+
+  if (Array.isArray(output.threads) && output.threads.length > 0) {
+    const first = asRecord(output.threads[0]);
+    return typeof first?.id === "string" ? `Gmail thread ${first.id}` : null;
+  }
+
+  if (Array.isArray(output.events) && output.events.length > 0) {
+    const first = asRecord(output.events[0]);
+    return typeof first?.id === "string" ? `Calendar event ${first.id}` : null;
+  }
+
+  if (typeof output.calendarId === "string" && output.calendarId.trim()) {
+    return `calendar ${output.calendarId}`;
+  }
+
+  return null;
+}
+
+function summarizeJsonShape(value: unknown) {
+  const record = asRecord(value);
+  if (!record) {
+    return "no structured input";
+  }
+
+  const keys = Object.keys(record);
+  return keys.length ? `fields ${keys.join(", ")}` : "empty input";
+}
+
+function formatTraceTime(value: string) {
+  if (!value) {
+    return "unknown time";
+  }
+
+  const date = new Date(value);
+  if (Number.isNaN(date.getTime())) {
+    return value;
+  }
+
+  return date.toLocaleTimeString([], {
+    hour: "2-digit",
+    minute: "2-digit",
+    second: "2-digit"
+  });
+}
+
 function formatJsonPreview(value: unknown) {
   try {
     return JSON.stringify(value, null, 2).slice(0, 800);
   } catch {
     return String(value);
   }
+}
+
+function asRecord(value: unknown): Record<string, unknown> | null {
+  return value && typeof value === "object"
+    ? (value as Record<string, unknown>)
+    : null;
 }
