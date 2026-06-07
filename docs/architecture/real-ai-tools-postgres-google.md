@@ -146,6 +146,17 @@ The remote sync command sends secrets over SSH stdin, invokes
 only to `.env.local` unless `--target-env` is provided. Use `--source-env` when
 reading from a local env file other than `.env.local`.
 
+For the usual SSH browser-auth setup, prefer the one-shot preparation command:
+
+```bash
+npm run prepare:remote-google-oauth
+```
+
+It validates local `GOOGLE_CLIENT_ID`/`GOOGLE_CLIENT_SECRET`, syncs them to the
+remote ignored `.env.local`, starts the remote API with `--keep-running`, prints
+the Google authorization URL, and prints the SSH tunnel command for the browser
+callback. It still does not print Google client secret values.
+
 To check a running API without exposing local secrets, run:
 
 ```bash
