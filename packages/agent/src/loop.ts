@@ -21,6 +21,7 @@ export interface AgentLoopInput {
   messages?: ModelMessage[];
   sessionId?: string;
   context?: ChatContext;
+  contextSummaryLines?: string[];
   maxTurns?: number;
   toolPlan?: ToolCallRequest[];
   tools?: ModelToolDefinition[];
@@ -183,6 +184,13 @@ function createDailyWorkOrchestrationMessage(
 
   for (const line of summarizeContext(input.context)) {
     lines.push(line);
+  }
+
+  for (const line of input.contextSummaryLines ?? []) {
+    const normalized = line.replace(/\s+/g, " ").trim();
+    if (normalized) {
+      lines.push(normalized);
+    }
   }
 
   return {

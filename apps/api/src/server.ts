@@ -34,7 +34,9 @@ import {
   createDailyModelUsageSnapshot,
   filterDailyActivityEvents
 } from "./services/daily-work-service.js";
+import { createDailyWorkAgentContext } from "./services/daily-work-agent-context.js";
 import { createDailyWorkToolRuntime } from "./services/daily-work-tools.js";
+import { createToolActivityEvent } from "./services/daily-work-tool-activity.js";
 
 const allowedOrigins = new Set([
   "http://localhost:3000",
@@ -88,6 +90,14 @@ export async function buildServer(options?: {
       chatRequest.mode === "daily_work"
         ? createDailyWorkToolRuntime(dailyWorkRepository)
         : undefined;
+    const agentContext =
+      chatRequest.mode === "daily_work"
+        ? await createDailyWorkAgentContext({
+            repository: dailyWorkRepository,
+            chatRequest,
+            sessionId
+          })
+        : undefined;
     await recordIncomingChatMessage({
       dailyWorkRepository,
       chatRequest,
@@ -97,6 +107,7 @@ export async function buildServer(options?: {
       streamAgentLoop(
         createAgentLoopInput(chatRequest, providerSelection.provider, {
           sessionId,
+          ...(agentContext ? { agentContext } : {}),
           ...(toolRuntime ? { toolRuntime } : {})
         })
       ),
@@ -192,6 +203,7 @@ function createAgentLoopInput(
   provider: ModelProvider,
   options: {
     sessionId: string;
+    agentContext?: Awaited<ReturnType<typeof createDailyWorkAgentContext>>;
     toolRuntime?: ReturnType<typeof createDailyWorkToolRuntime>;
   }
 ) {
@@ -202,7 +214,14 @@ function createAgentLoopInput(
     ...(chatRequest.prompt ? { prompt: chatRequest.prompt } : {}),
     ...(chatRequest.messages ? { messages: chatRequest.messages } : {}),
     sessionId: options.sessionId,
-    ...(chatRequest.context ? { context: chatRequest.context } : {}),
+    ...(options.agentContext
+      ? { context: options.agentContext.context }
+      : chatRequest.context
+        ? { context: chatRequest.context }
+        : {}),
+    ...(options.agentContext?.summaryLines.length
+      ? { contextSummaryLines: options.agentContext.summaryLines }
+      : {}),
     ...(options.toolRuntime
       ? {
           tools: options.toolRuntime.modelTools,
@@ -284,6 +303,8 @@ async function recordToolCallChunk(
     return;
   }
 
+  const createdAt = new Date().toISOString();
+
   await options.dailyWorkRepository.recordToolCall({
     id: chunk.id ?? `tool-call-${randomUUID()}`,
     sessionId: options.sessionId,
@@ -292,8 +313,19 @@ async function recordToolCallChunk(
     inputJson: chunk.inputJson,
     previewOnly: true,
     permissionRequired: false,
-    createdAt: new Date().toISOString()
+    createdAt
   });
+  await options.dailyWorkRepository.upsertActivityEvent(
+    createToolActivityEvent({
+      sessionId: options.sessionId,
+      toolName: parsedName.data,
+      status: "queued",
+      timestamp: createdAt,
+      inputJson: chunk.inputJson,
+      ...(chunk.id ? { toolCallId: chunk.id } : {}),
+      phase: "requested"
+    })
+  );
 }
 
 async function recordToolResultChunk(
@@ -310,6 +342,7 @@ async function recordToolResultChunk(
 
   const result = isToolCallResult(chunk.result) ? chunk.result : undefined;
   const status = normalizeToolRecordStatus(result?.status);
+  const completedAt = new Date().toISOString();
 
   await options.dailyWorkRepository.recordToolCall({
     id: chunk.id ?? result?.id ?? `tool-call-${randomUUID()}`,
@@ -321,9 +354,24 @@ async function recordToolResultChunk(
     previewOnly: result?.previewOnly ?? true,
     permissionRequired: result?.permissionRequired ?? false,
     ...(result?.error ? { error: result.error } : {}),
-    createdAt: new Date().toISOString(),
-    completedAt: new Date().toISOString()
+    createdAt: completedAt,
+    completedAt
   });
+  await options.dailyWorkRepository.upsertActivityEvent(
+    createToolActivityEvent({
+      sessionId: options.sessionId,
+      toolName: parsedName.data,
+      status: status === "failed" ? "failed" : "completed",
+      timestamp: completedAt,
+      inputJson: result?.inputJson ?? {},
+      outputJson: result?.outputJson ?? chunk.result,
+      ...(result?.error ? { error: result.error } : {}),
+      ...(chunk.id ?? result?.id
+        ? { toolCallId: String(chunk.id ?? result?.id) }
+        : {}),
+      phase: "completed"
+    })
+  );
 }
 
 async function recordModelUsageChunk(

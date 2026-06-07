@@ -3075,6 +3075,15 @@ describe("api server", () => {
       }
     ]);
     expect(body.messages[1].content).toContain("Context item ids: meeting-notes");
+    expect(body.messages[1].content).toContain(
+      "Daily-work repository context snapshot"
+    );
+    expect(body.messages[1].content).toContain(
+      "Context item meeting-notes: Meeting Notes"
+    );
+    expect(body.messages[1].content).toContain("Connector customer-email");
+    expect(body.messages[1].content).toContain("Connector team-calendar");
+    expect(body.messages[1].content).toContain("Approval gates:");
 
     await app.close();
   });
@@ -3176,6 +3185,7 @@ describe("api server", () => {
           ])
         );
 
+        const sessionId = String(response.headers["x-seekdesk-chat-session-id"]);
         const eventsResponse = await app.inject({
           method: "GET",
           url: "/api/daily/events"
@@ -3183,13 +3193,34 @@ describe("api server", () => {
         expect(eventsResponse.json().events).toEqual(
           expect.arrayContaining([
             expect.objectContaining({
+              eventType: "workflow.preview.queued",
+              status: "queued",
+              title: "Agent tool planned",
+              summary: expect.stringContaining(
+                "Agent planned daily.persist_artifact"
+              ),
+              relatedRefs: expect.objectContaining({
+                sessionIds: [sessionId]
+              })
+            }),
+            expect.objectContaining({
+              eventType: "workflow.preview.completed",
+              status: "completed",
+              title: "Agent tool completed",
+              summary: expect.stringContaining(
+                "Agent persisted local artifact"
+              ),
+              relatedRefs: expect.objectContaining({
+                sessionIds: [sessionId]
+              })
+            }),
+            expect.objectContaining({
               eventType: "artifact.updated",
               summary: expect.stringContaining("AI work note")
             })
           ])
         );
 
-        const sessionId = String(response.headers["x-seekdesk-chat-session-id"]);
         const traceResponse = await app.inject({
           method: "GET",
           url: `/api/chat/sessions/${sessionId}/trace`

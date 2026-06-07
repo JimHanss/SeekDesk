@@ -24,7 +24,11 @@ describe("runAgentLoop", () => {
         approvalRequestIds: [],
         connectorIds: [],
         workflowIds: []
-      }
+      },
+      contextSummaryLines: [
+        "Context item project-brief: Project Brief; summary=Current scope.",
+        "Connector customer-email: Customer Email; provider=gmail; status=available."
+      ]
     });
 
     expect(result.status).toBe("completed");
@@ -53,6 +57,12 @@ describe("runAgentLoop", () => {
     );
     expect(provider.request?.messages[0]?.content).toContain(
       "Context item ids: project-brief, meeting-notes"
+    );
+    expect(provider.request?.messages[0]?.content).toContain(
+      "Context item project-brief: Project Brief"
+    );
+    expect(provider.request?.messages[0]?.content).toContain(
+      "Connector customer-email: Customer Email"
     );
     expect(provider.request?.messages[0]?.content).toContain(
       "Do not execute tools"
