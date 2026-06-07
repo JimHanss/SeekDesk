@@ -110,10 +110,7 @@ function createRemoteScript(input) {
     : `npm run verify:secrets`;
   const migrateBlock = input.skipMigrate
     ? `echo '{"step":"db:migrate","status":"skipped"}'`
-    : `set -a
-source .env.postgres
-set +a
-npm run db:migrate`;
+    : `npm run db:migrate`;
   const keepRunningNote = input.keepRunning
     ? `echo '{"status":"api_kept_running","baseUrl":"${baseUrl}","pidFile":"${pidFile}","logFile":"${logFile}"}'`
     : "";
@@ -299,5 +296,11 @@ Options:
   --require-google-connected     Fail unless a Google account is connected.
   --show-authorization-url       Print full Google OAuth URL from readiness.
   --keep-running                 Leave the remote API running for browser OAuth.
+
+Remote OAuth note:
+  The temporary API uses --port, default 45100. Before browser OAuth, sync the
+  remote Google redirect URI to the same port, then forward it locally:
+    npm run sync:remote-google-oauth -- --host jim-mac --redirect-uri http://127.0.0.1:45100/api/connectors/google/oauth/callback
+    ssh -L 3000:127.0.0.1:3000 -L 45100:127.0.0.1:45100 jim-mac
 `);
 }

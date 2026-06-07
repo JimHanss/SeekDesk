@@ -34,6 +34,17 @@ The repository factory prefers Postgres when `DATABASE_URL` is set:
 Postgres tables are defined in `apps/api/src/db/schema.ts` and migrated from
 `apps/api/drizzle/0000_real_ai_foundation.sql`.
 
+The Drizzle CLI config loads local env files in this order without printing
+values:
+
+1. `.env`
+2. `.env.local`
+3. `.env.postgres`
+
+Explicit process environment variables still take priority. This lets a remote
+checkout run `npm run db:migrate` directly when its ignored `.env.postgres`
+contains `DATABASE_URL`.
+
 Health exposes:
 
 - `currentLayer`
@@ -162,24 +173,25 @@ API. To keep the remote API running while completing browser OAuth, use:
 npm run verify:remote-real-agent -- --keep-running --show-authorization-url
 ```
 
+That command starts the temporary remote API on port `45100` by default. For a
+browser-based Google OAuth callback, make the redirect URI match that port before
+syncing remote Google env:
+
+```bash
+npm run sync:remote-google-oauth -- --host jim-mac --redirect-uri http://127.0.0.1:45100/api/connectors/google/oauth/callback
+```
+
+Then forward the web and API ports from the local machine to `jim-mac` before
+opening the OAuth URL:
+
+```bash
+ssh -L 3000:127.0.0.1:3000 -L 45100:127.0.0.1:45100 jim-mac
+```
+
 When Google is connected, the final strict gate is:
 
 ```bash
 npm run verify:remote-real-agent -- --require-google
-```
-
-For SSH-based remote development, use a loopback redirect URI that matches the
-forwarded API port, for example:
-
-```text
-GOOGLE_REDIRECT_URI=http://127.0.0.1:4000/api/connectors/google/oauth/callback
-```
-
-Then forward the API and web ports from the local machine to `jim-mac` before
-opening the OAuth start URL in the local browser:
-
-```bash
-ssh -L 3000:127.0.0.1:3000 -L 4000:127.0.0.1:4000 jim-mac
 ```
 
 ## Real-Agent Verification
