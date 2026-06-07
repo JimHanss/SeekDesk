@@ -131,7 +131,7 @@ function getNextStep(input) {
   }
 
   if (input.missingConfig.length > 0) {
-    return "Set GOOGLE_CLIENT_ID and GOOGLE_CLIENT_SECRET in the process environment, run npm run configure:google-oauth, restart the API, then run npm run verify:google-oauth -- --require-configured.";
+    return "Add GOOGLE_CLIENT_ID and GOOGLE_CLIENT_SECRET to .env.local, run npm run configure:google-oauth, restart the API, then run npm run verify:google-oauth -- --require-configured.";
   }
 
   if (input.oauthStartReady) {
