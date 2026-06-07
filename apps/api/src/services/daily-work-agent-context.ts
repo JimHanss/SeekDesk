@@ -21,6 +21,7 @@ export async function createDailyWorkAgentContext(input: {
   repository: DailyWorkRepository;
   chatRequest: ChatRequest;
   sessionId: string;
+  now?: Date;
 }): Promise<DailyWorkAgentContext> {
   const context = normalizeChatContext(input.chatRequest.context);
   const [
@@ -48,6 +49,7 @@ export async function createDailyWorkAgentContext(input: {
     context,
     summaryLines: [
       "Daily-work repository context snapshot:",
+      ...summarizeTemporalContext(context, input.now ?? new Date()),
       ...summarizeSession(activeSession),
       ...summarizeContextItems(contextItems, context.contextItemIds),
       ...summarizeArtifacts(artifacts, context.artifactIds),
@@ -55,6 +57,7 @@ export async function createDailyWorkAgentContext(input: {
       ...summarizeConnectors(connectors, context.connectorIds),
       ...summarizeGoogleAuthorization(googleStatus),
       ...summarizeWorkflows(workflows, context.workflowIds),
+      "Tool planning hint: use gmail.search_threads before gmail.read_thread, use calendar.list_events for schedule or time-window questions, and use daily.persist_artifact for reviewable local work artifacts.",
       "Tool execution boundary: Gmail and Calendar read tools may use an authorized Google connector. Draft email and calendar event tools only create local payload previews; they must not send email or insert events."
     ]
   };
@@ -89,6 +92,14 @@ function summarizeSession(session: DailyWorkSessionDetail | undefined) {
   }
 
   return lines;
+}
+
+function summarizeTemporalContext(context: ChatContext, now: Date) {
+  return [
+    `Current time: ${now.toISOString()}.`,
+    `Requested locale/timezone: locale=${context.locale ?? "not provided"}; timezone=${context.timezone ?? "not provided"}.`,
+    "Temporal planning: for requests like today, this morning, this week, or upcoming meetings, derive explicit ISO time windows before calling calendar.list_events."
+  ];
 }
 
 function summarizeContextItems(

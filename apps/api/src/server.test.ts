@@ -3233,6 +3233,13 @@ describe("api server", () => {
     expect(body.messages[1].content).toContain("Connector customer-email");
     expect(body.messages[1].content).toContain("Connector team-calendar");
     expect(body.messages[1].content).toContain("Approval gates:");
+    expect(body.messages[1].content).toMatch(/Current time: \d{4}-\d{2}-\d{2}T/);
+    expect(body.messages[1].content).toContain(
+      "Temporal planning: for requests like today"
+    );
+    expect(body.messages[1].content).toContain(
+      "Tool planning hint: use gmail.search_threads before gmail.read_thread"
+    );
     expect(body.messages[1].content).toContain("Google authorization: not connected.");
     expect(body.messages[1].content).toContain("GOOGLE_CLIENT_ID");
     expect(body.messages[1].content).toContain(
