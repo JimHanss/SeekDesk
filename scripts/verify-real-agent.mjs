@@ -82,10 +82,29 @@ async function verifyArtifactTool() {
     `Expected DeepSeek provider, received ${response.provider ?? "unknown"}.`
   );
   assert(artifactTool, "DeepSeek did not complete daily.persist_artifact.");
+  const artifactId = artifactTool.outputJson?.artifactId;
+  assert(
+    typeof artifactId === "string" && artifactId.trim(),
+    "daily.persist_artifact did not return a persisted artifact id."
+  );
   assert(
     trace.modelUsageSummary?.recordCount > 0 &&
       trace.modelUsageSummary?.provider === "deepseek",
     "Model usage was not recorded for the DeepSeek artifact verification."
+  );
+  const persistence = await verifyToolPersistence({
+    sessionId: response.sessionId,
+    trace,
+    toolCall: artifactTool,
+    expectedOutputKeys: ["artifactId", "artifact"]
+  });
+  const persistedArtifact = await readJson(
+    `/api/daily/artifacts/${encodeURIComponent(artifactId)}?mode=daily_work`
+  );
+
+  assert(
+    persistedArtifact?.artifact?.id === artifactId,
+    "Persisted artifact was not readable from /api/daily/artifacts/:artifactId."
   );
 
   return {
@@ -94,7 +113,13 @@ async function verifyArtifactTool() {
     sessionId: response.sessionId,
     responsePreview: response.text.slice(0, 400),
     toolCalls: summarizeToolCalls(toolCalls),
-    usageSummary: trace.modelUsageSummary
+    usageSummary: trace.modelUsageSummary,
+    persistence: {
+      ...persistence,
+      artifactId,
+      artifactReadable: true,
+      artifactTitle: persistedArtifact.artifact.title
+    }
   };
 }
 
@@ -124,6 +149,20 @@ async function verifyGoogleReadTools() {
     trace.modelUsageSummary?.recordCount > 0,
     "Model usage was not recorded for the Google read verification."
   );
+  const [gmailPersistence, calendarPersistence] = await Promise.all([
+    verifyToolPersistence({
+      sessionId: response.sessionId,
+      trace,
+      toolCall: gmailTool,
+      expectedOutputKeys: ["threads"]
+    }),
+    verifyToolPersistence({
+      sessionId: response.sessionId,
+      trace,
+      toolCall: calendarTool,
+      expectedOutputKeys: ["events"]
+    })
+  ]);
 
   return {
     status: "passed",
@@ -131,7 +170,71 @@ async function verifyGoogleReadTools() {
     sessionId: response.sessionId,
     responsePreview: response.text.slice(0, 400),
     toolCalls: summarizeToolCalls(toolCalls),
-    usageSummary: trace.modelUsageSummary
+    usageSummary: trace.modelUsageSummary,
+    persistence: {
+      gmail: gmailPersistence,
+      calendar: calendarPersistence
+    }
+  };
+}
+
+async function verifyToolPersistence(input) {
+  assert(
+    input.toolCall.inputJson !== undefined,
+    `${input.toolCall.name} did not persist tool plan inputJson.`
+  );
+  assert(
+    input.toolCall.outputJson !== undefined,
+    `${input.toolCall.name} did not persist tool result outputJson.`
+  );
+
+  for (const key of input.expectedOutputKeys) {
+    assert(
+      input.toolCall.outputJson &&
+        typeof input.toolCall.outputJson === "object" &&
+        key in input.toolCall.outputJson,
+      `${input.toolCall.name} outputJson did not include ${key}.`
+    );
+  }
+
+  const usageRecords = input.trace.modelUsageRecords ?? [];
+  assert(
+    usageRecords.length > 0,
+    `${input.toolCall.name} session did not expose model usage records.`
+  );
+
+  const activity = await readJson("/api/daily/events?mode=daily_work");
+  const events = activity.events ?? [];
+  const requestedEvent = findToolActivityEvent({
+    events,
+    sessionId: input.sessionId,
+    toolCallId: input.toolCall.id,
+    phase: "requested"
+  });
+  const completedEvent = findToolActivityEvent({
+    events,
+    sessionId: input.sessionId,
+    toolCallId: input.toolCall.id,
+    phase: "completed"
+  });
+
+  assert(
+    requestedEvent,
+    `${input.toolCall.name} did not persist an agent tool planned activity event.`
+  );
+  assert(
+    completedEvent,
+    `${input.toolCall.name} did not persist an agent tool completed activity event.`
+  );
+
+  return {
+    toolCallId: input.toolCall.id,
+    toolName: input.toolCall.name,
+    inputPersisted: true,
+    outputPersisted: true,
+    planEventId: requestedEvent.id,
+    resultEventId: completedEvent.id,
+    usageRecordCount: usageRecords.length
   };
 }
 
@@ -195,8 +298,51 @@ function summarizeToolCalls(toolCalls) {
     permissionRequired: tool.permissionRequired,
     hasInput: tool.inputJson !== undefined,
     hasOutput: tool.outputJson !== undefined,
+    reference: summarizeToolReference(tool.outputJson),
     error: tool.error ?? null
   }));
+}
+
+function findToolActivityEvent(input) {
+  return input.events.find((event) => {
+    if (!event?.id || !event?.relatedRefs) {
+      return false;
+    }
+
+    const sessionIds = event.relatedRefs.sessionIds ?? [];
+    return (
+      event.id.includes(input.sessionId) &&
+      event.id.includes(input.toolCallId) &&
+      event.id.endsWith(`-${input.phase}`) &&
+      sessionIds.includes(input.sessionId)
+    );
+  });
+}
+
+function summarizeToolReference(outputJson) {
+  if (!outputJson || typeof outputJson !== "object") {
+    return null;
+  }
+
+  if (typeof outputJson.artifactId === "string") {
+    return `artifact:${outputJson.artifactId}`;
+  }
+
+  if (Array.isArray(outputJson.threads)) {
+    const firstThread = outputJson.threads.find(
+      (thread) => thread && typeof thread.id === "string" && thread.id.trim()
+    );
+    return firstThread ? `gmail-thread:${firstThread.id}` : "gmail-threads:0";
+  }
+
+  if (Array.isArray(outputJson.events)) {
+    const firstEvent = outputJson.events.find(
+      (event) => event && typeof event.id === "string" && event.id.trim()
+    );
+    return firstEvent ? `calendar-event:${firstEvent.id}` : "calendar-events:0";
+  }
+
+  return null;
 }
 
 function parseArgs(argv) {
