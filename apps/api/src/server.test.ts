@@ -3245,6 +3245,12 @@ describe("api server", () => {
     expect(body.messages[1].content).toContain(
       "do not claim Gmail or Calendar data was read"
     );
+    expect(body.messages[1].content).toContain(
+      "Recent agent tool trace: none for this session."
+    );
+    expect(body.messages[1].content).toContain(
+      "Model usage in this session: no records yet."
+    );
 
     await app.close();
   });
@@ -3270,6 +3276,42 @@ describe("api server", () => {
       ],
       connectedAt: "2026-06-01T00:00:00.000Z",
       updatedAt: "2026-06-01T00:00:00.000Z"
+    });
+    await repository.recordToolCall({
+      id: "tool-call-existing-calendar",
+      sessionId: "google-connected-session",
+      name: "calendar.list_events",
+      status: "completed",
+      inputJson: {
+        calendarId: "primary",
+        timeMin: "2026-06-08T00:00:00.000Z",
+        timeMax: "2026-06-09T00:00:00.000Z"
+      },
+      outputJson: {
+        provider: "google_calendar",
+        previewOnly: true,
+        calendarId: "primary",
+        events: [
+          {
+            id: "calendar-event-ctx",
+            summary: "Planning review"
+          }
+        ]
+      },
+      previewOnly: true,
+      permissionRequired: false,
+      createdAt: "2026-06-08T09:00:00.000Z",
+      completedAt: "2026-06-08T09:00:01.000Z"
+    });
+    await repository.recordModelUsage({
+      id: "usage-existing-google-context",
+      sessionId: "google-connected-session",
+      provider: "deepseek",
+      model: "deepseek-v4-flash",
+      promptTokens: 120,
+      completionTokens: 40,
+      totalTokens: 160,
+      createdAt: "2026-06-08T09:00:02.000Z"
     });
 
     const fetchMock = vi.fn(
@@ -3312,6 +3354,17 @@ describe("api server", () => {
     expect(contextMessage).toContain("calendar.list_events");
     expect(contextMessage).toContain(
       "Gmail draft and calendar event tools remain local previews only"
+    );
+    expect(contextMessage).toContain("Recent agent tool trace:");
+    expect(contextMessage).toContain(
+      "Tool calendar.list_events: status=completed"
+    );
+    expect(contextMessage).toContain(
+      "input=calendarId, timeMin, timeMax"
+    );
+    expect(contextMessage).toContain("result=1 calendar event result(s)");
+    expect(contextMessage).toContain(
+      "Model usage in this session: records=1; latest=deepseek/deepseek-v4-flash; totalTokens=160."
     );
 
     await app.close();

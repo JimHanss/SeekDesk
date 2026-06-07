@@ -6,7 +6,9 @@ import type {
   DailyWorkArtifact,
   DailyWorkConnector,
   DailyWorkSessionDetail,
-  DailyWorkWorkflow
+  DailyWorkWorkflow,
+  ToolCallRecord,
+  ToolModelUsageRecord
 } from "@seekdesk/shared";
 
 import type { DailyWorkRepository } from "../repositories/daily-work-repository.js";
@@ -31,7 +33,9 @@ export async function createDailyWorkAgentContext(input: {
     connectors,
     workflows,
     sessionDetails,
-    googleStatus
+    googleStatus,
+    sessionToolCalls,
+    sessionModelUsageRecords
   ] = await Promise.all([
     input.repository.listContextItems(),
     input.repository.listArtifacts(),
@@ -39,7 +43,12 @@ export async function createDailyWorkAgentContext(input: {
     input.repository.listConnectors(),
     input.repository.listWorkflows(),
     input.repository.listSessionDetails(),
-    getGoogleConnectionStatus({ repository: input.repository })
+    getGoogleConnectionStatus({ repository: input.repository }),
+    input.repository.listToolCalls({ sessionId: input.sessionId, limit: 50 }),
+    input.repository.listModelUsageRecords({
+      sessionId: input.sessionId,
+      limit: 50
+    })
   ]);
   const activeSession = sessionDetails.find(
     (session) => session.id === input.sessionId
@@ -51,6 +60,8 @@ export async function createDailyWorkAgentContext(input: {
       "Daily-work repository context snapshot:",
       ...summarizeTemporalContext(context, input.now ?? new Date()),
       ...summarizeSession(activeSession),
+      ...summarizeToolTrace(sessionToolCalls),
+      ...summarizeModelUsage(sessionModelUsageRecords),
       ...summarizeContextItems(contextItems, context.contextItemIds),
       ...summarizeArtifacts(artifacts, context.artifactIds),
       ...summarizeApprovals(approvalRequests, context.approvalRequestIds),
@@ -92,6 +103,80 @@ function summarizeSession(session: DailyWorkSessionDetail | undefined) {
   }
 
   return lines;
+}
+
+function summarizeToolTrace(toolCalls: ToolCallRecord[]) {
+  const recent = [...toolCalls]
+    .sort((a, b) => a.createdAt.localeCompare(b.createdAt))
+    .slice(-6);
+
+  if (!recent.length) {
+    return ["Recent agent tool trace: none for this session."];
+  }
+
+  return [
+    "Recent agent tool trace:",
+    ...recent.map(
+      (toolCall) =>
+        `Tool ${toolCall.name}: status=${toolCall.status}; previewOnly=${toolCall.previewOnly}; permissionRequired=${toolCall.permissionRequired}; input=${summarizeJsonKeys(toolCall.inputJson)}; result=${summarizeToolOutput(toolCall.outputJson)}${toolCall.error ? `; error=${toolCall.error}` : ""}`
+    )
+  ];
+}
+
+function summarizeModelUsage(records: ToolModelUsageRecord[]) {
+  if (!records.length) {
+    return ["Model usage in this session: no records yet."];
+  }
+
+  const latest = records.at(-1)!;
+  const totalTokens = records.reduce((sum, record) => sum + record.totalTokens, 0);
+
+  return [
+    `Model usage in this session: records=${records.length}; latest=${latest.provider}/${latest.model}; totalTokens=${totalTokens}.`
+  ];
+}
+
+function summarizeJsonKeys(value: unknown) {
+  if (!value || typeof value !== "object" || Array.isArray(value)) {
+    return "none";
+  }
+
+  const keys = Object.keys(value);
+  return keys.length ? keys.join(", ") : "empty";
+}
+
+function summarizeToolOutput(value: unknown) {
+  if (!value || typeof value !== "object" || Array.isArray(value)) {
+    return value === undefined ? "pending" : "structured output";
+  }
+
+  const output = value as Record<string, unknown>;
+
+  if (typeof output.artifactId === "string" && output.artifactId.trim()) {
+    return `artifact ${output.artifactId}`;
+  }
+
+  if (Array.isArray(output.threads)) {
+    return `${output.threads.length} Gmail thread result(s)`;
+  }
+
+  if (Array.isArray(output.messages)) {
+    return `${output.messages.length} Gmail message metadata record(s)`;
+  }
+
+  if (Array.isArray(output.events)) {
+    return `${output.events.length} calendar event result(s)`;
+  }
+
+  if (output.draftPayloadPreview) {
+    return "local Gmail draft payload preview";
+  }
+
+  if (output.eventPayloadPreview) {
+    return "local Calendar event payload preview";
+  }
+
+  return `fields ${Object.keys(output).join(", ") || "none"}`;
 }
 
 function summarizeTemporalContext(context: ChatContext, now: Date) {
