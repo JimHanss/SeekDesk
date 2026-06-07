@@ -1,6 +1,15 @@
 import type { AppMode, ChatContext } from "@seekdesk/shared";
-import type { ModelMessage, ModelProvider, ModelStreamChunk } from "./provider.js";
-import type { ToolCallRequest } from "./tools.js";
+import type {
+  ModelMessage,
+  ModelProvider,
+  ModelStreamChunk,
+  ModelToolDefinition
+} from "./provider.js";
+import type {
+  ToolCallRequest,
+  ToolCallResult,
+  ToolOrchestrator
+} from "./tools.js";
 
 export type AgentLoopStatus = "idle" | "running" | "cancelled" | "completed";
 
@@ -13,6 +22,8 @@ export interface AgentLoopInput {
   context?: ChatContext;
   maxTurns?: number;
   toolPlan?: ToolCallRequest[];
+  tools?: ModelToolDefinition[];
+  orchestrator?: ToolOrchestrator;
 }
 
 export interface AgentLoopResult {
@@ -49,22 +60,72 @@ export async function* streamAgentLoop(
     throw new Error("Agent loop requires a prompt or at least one message.");
   }
 
-  const request = {
-    mode: input.mode ?? "daily_work",
-    messages,
-    maxTurns: input.maxTurns ?? 1
-  };
+  const maxTurns = input.maxTurns ?? 1;
+  let currentMessages = messages;
 
-  const chatRequest = input.toolPlan?.length
-    ? {
-        ...request,
-        toolPlan: [...input.toolPlan]
+  for (let turn = 0; turn < maxTurns; turn += 1) {
+    const toolCalls: Extract<ModelStreamChunk, { type: "tool-call" }>[] = [];
+    let assistantText = "";
+    const request = {
+      mode: input.mode ?? "daily_work",
+      messages: currentMessages,
+      maxTurns,
+      ...(input.toolPlan?.length ? { toolPlan: [...input.toolPlan] } : {}),
+      ...(input.tools?.length
+        ? {
+            tools: input.tools,
+            toolChoice: "auto" as const
+          }
+        : {
+            toolChoice: "none" as const
+          })
+    };
+
+    for await (const chunk of input.provider.streamChat(request)) {
+      if (chunk.type === "done") {
+        continue;
       }
-    : request;
 
-  for await (const chunk of input.provider.streamChat(chatRequest)) {
-    yield chunk;
+      if (chunk.type === "text-delta") {
+        assistantText += chunk.delta;
+      }
+
+      if (chunk.type === "tool-call") {
+        toolCalls.push(chunk);
+      }
+
+      yield chunk;
+    }
+
+    if (!toolCalls.length || !input.orchestrator || turn === maxTurns - 1) {
+      break;
+    }
+
+    const toolTurn = await orchestrateToolCalls({
+      toolCalls,
+      orchestrator: input.orchestrator
+    });
+
+    for (const result of toolTurn.results) {
+      yield {
+        type: "tool-result",
+        ...(result.id ? { id: result.id } : {}),
+        name: result.name,
+        result
+      };
+    }
+
+    currentMessages = [
+      ...currentMessages,
+      {
+        role: "assistant",
+        content: assistantText.trim() || createToolCallSummary(toolCalls)
+      },
+      ...toolTurn.messages
+    ];
   }
+
+  yield { type: "done" };
 }
 
 export function createAgentLoopMessages(input: AgentLoopInput): ModelMessage[] {
@@ -109,7 +170,9 @@ function createDailyWorkOrchestrationMessage(
 
   const lines = [
     "Daily-work orchestration context is read-only.",
-    "Do not execute tools, send messages, write documents, schedule events, or claim connector actions were performed."
+    input.orchestrator
+      ? "Preview-only tools may read authorized connector metadata and create local previews; never send email, write external documents, create calendar events, or claim irreversible actions were performed."
+      : "Do not execute tools, send messages, write documents, schedule events, or claim connector actions were performed."
   ];
 
   if (input.sessionId) {
@@ -124,6 +187,50 @@ function createDailyWorkOrchestrationMessage(
     role: "system",
     content: lines.join("\n")
   };
+}
+
+async function orchestrateToolCalls(input: {
+  toolCalls: Extract<ModelStreamChunk, { type: "tool-call" }>[];
+  orchestrator: ToolOrchestrator;
+}): Promise<{
+  messages: ModelMessage[];
+  results: ToolCallResult[];
+}> {
+  const messages: ModelMessage[] = [];
+  const results: ToolCallResult[] = [];
+
+  for (const toolCall of input.toolCalls) {
+    const result = await input.orchestrator.orchestrate({
+      ...(toolCall.id ? { id: toolCall.id } : {}),
+      name: toolCall.name,
+      inputJson: toolCall.inputJson
+    });
+
+    results.push(result);
+    messages.push({
+      role: "tool",
+      ...(toolCall.id ? { toolCallId: toolCall.id } : {}),
+      name: toolCall.name,
+      content: JSON.stringify({
+        status: result.status,
+        previewOnly: result.previewOnly,
+        permissionRequired: result.permissionRequired,
+        outputJson: result.outputJson,
+        error: result.error
+      })
+    });
+  }
+
+  return {
+    messages,
+    results
+  };
+}
+
+function createToolCallSummary(
+  toolCalls: Extract<ModelStreamChunk, { type: "tool-call" }>[]
+) {
+  return `Tool calls requested: ${toolCalls.map((toolCall) => toolCall.name).join(", ")}`;
 }
 
 function createToolPlanMessage(toolPlan?: ToolCallRequest[]): ModelMessage | null {

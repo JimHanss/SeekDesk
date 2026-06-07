@@ -25,10 +25,14 @@ import {
   type DailyWorkArtifact,
   type DailyWorkConnector,
   type DailyWorkSessionDetail,
+  type DailyWorkSessionMessage,
   type DailyWorkSessionSummary,
   type DailyWorkTemplate,
-  type DailyWorkWorkflow
+  type DailyWorkWorkflow,
+  type ToolCallRecord,
+  type ToolModelUsageRecord
 } from "@seekdesk/shared";
+import { PostgresDailyWorkRepository } from "./postgres-daily-work-repository.js";
 
 type JsonCollectionKey =
   | "templates"
@@ -45,11 +49,34 @@ type JsonArrayParser<T> = {
 };
 
 export type DailyWorkDataLayerStatus = {
-  currentLayer: "seed_mock" | "json_local" | "future_database";
+  currentLayer: "seed_mock" | "json_local" | "postgres";
   dataDirConfigured: boolean;
   jsonLocalReady: boolean;
+  postgresConfigured: boolean;
+  postgresReady: boolean;
   futureDatabaseReady: false;
 };
+
+export interface PersistedChatMessage {
+  id: string;
+  sessionId: string;
+  role: DailyWorkSessionMessage["role"];
+  content: string;
+  createdAt: string;
+  artifactIds?: string[];
+  contextItemIds?: string[];
+  approvalRequestIds?: string[];
+}
+
+export interface DailyWorkConnectorAccount {
+  id: string;
+  provider: string;
+  accountEmail?: string;
+  encryptedTokens: string;
+  scopes: string[];
+  connectedAt: string;
+  updatedAt: string;
+}
 
 const jsonFileNames: Record<JsonCollectionKey, string> = {
   templates: "templates.json",
@@ -75,6 +102,14 @@ export interface DailyWorkRepository {
   updateApprovalRequest(request: DailyApprovalRequest): Promise<DailyApprovalRequest>;
   updateSessionDetail(session: DailyWorkSessionDetail): Promise<DailyWorkSessionDetail>;
   upsertActivityEvent(event: DailyActivityEvent): Promise<DailyActivityEvent>;
+  upsertArtifact(artifact: DailyWorkArtifact): Promise<DailyWorkArtifact>;
+  recordChatMessage(message: PersistedChatMessage): Promise<PersistedChatMessage>;
+  recordToolCall(record: ToolCallRecord): Promise<ToolCallRecord>;
+  recordModelUsage(record: ToolModelUsageRecord): Promise<ToolModelUsageRecord>;
+  getConnectorAccount(provider: string): Promise<DailyWorkConnectorAccount | null>;
+  upsertConnectorAccount(
+    account: DailyWorkConnectorAccount
+  ): Promise<DailyWorkConnectorAccount>;
   getDataLayerStatus(): Promise<DailyWorkDataLayerStatus>;
 }
 
@@ -98,6 +133,7 @@ export class SeedDailyWorkRepository implements DailyWorkRepository {
   private readonly events = cloneJson(defaultDailyActivityEvents);
   private readonly connectors = cloneJson(defaultDailyWorkConnectors);
   private readonly workflows = cloneJson(defaultDailyWorkflows);
+  private readonly connectorAccounts = new Map<string, DailyWorkConnectorAccount>();
 
   async listTemplates() {
     return cloneJson(this.templates);
@@ -154,8 +190,42 @@ export class SeedDailyWorkRepository implements DailyWorkRepository {
 
   async upsertActivityEvent(event: DailyActivityEvent) {
     const parsed = dailyActivityEventSchema.parse(event);
+    upsertFirstById(this.events, parsed);
 
     return cloneJson(parsed);
+  }
+
+  async upsertArtifact(artifact: DailyWorkArtifact) {
+    const parsed = dailyWorkArtifactSchema.parse(artifact);
+    replaceById(this.artifacts, parsed);
+
+    return cloneJson(parsed);
+  }
+
+  async recordChatMessage(message: PersistedChatMessage) {
+    mergeChatMessageIntoSessions(this.sessionDetails, message);
+
+    return cloneJson(message);
+  }
+
+  async recordToolCall(record: ToolCallRecord) {
+    return cloneJson(record);
+  }
+
+  async recordModelUsage(record: ToolModelUsageRecord) {
+    return cloneJson(record);
+  }
+
+  async getConnectorAccount(provider: string) {
+    const account = this.connectorAccounts.get(provider);
+
+    return account ? cloneJson(account) : null;
+  }
+
+  async upsertConnectorAccount(account: DailyWorkConnectorAccount) {
+    this.connectorAccounts.set(account.provider, cloneJson(account));
+
+    return cloneJson(account);
   }
 
   async getDataLayerStatus(): Promise<DailyWorkDataLayerStatus> {
@@ -163,6 +233,8 @@ export class SeedDailyWorkRepository implements DailyWorkRepository {
       currentLayer: "seed_mock",
       dataDirConfigured: false,
       jsonLocalReady: false,
+      postgresConfigured: false,
+      postgresReady: false,
       futureDatabaseReady: false
     };
   }
@@ -284,6 +356,48 @@ export class JsonDailyWorkRepository implements DailyWorkRepository {
     return cloneJson(parsed);
   }
 
+  async upsertArtifact(artifact: DailyWorkArtifact) {
+    const parsed = dailyWorkArtifactSchema.parse(artifact);
+    const artifacts = await this.listArtifacts();
+    replaceById(artifacts, parsed);
+    await this.writeCollection(
+      "artifacts",
+      dailyWorkArtifactSchema.array(),
+      artifacts
+    );
+
+    return cloneJson(parsed);
+  }
+
+  async recordChatMessage(message: PersistedChatMessage) {
+    const sessions = await this.listSessionDetails();
+    mergeChatMessageIntoSessions(sessions, message);
+    await this.writeCollection(
+      "sessions",
+      dailyWorkSessionDetailSchema.array(),
+      sessions
+    );
+
+    return cloneJson(message);
+  }
+
+  async recordToolCall(record: ToolCallRecord) {
+    return cloneJson(record);
+  }
+
+  async recordModelUsage(record: ToolModelUsageRecord) {
+    return cloneJson(record);
+  }
+
+  async getConnectorAccount(_provider: string) {
+    void _provider;
+    return null;
+  }
+
+  async upsertConnectorAccount(account: DailyWorkConnectorAccount) {
+    return cloneJson(account);
+  }
+
   async getDataLayerStatus(): Promise<DailyWorkDataLayerStatus> {
     let jsonLocalReady = true;
 
@@ -297,6 +411,8 @@ export class JsonDailyWorkRepository implements DailyWorkRepository {
       currentLayer: "json_local",
       dataDirConfigured: true,
       jsonLocalReady,
+      postgresConfigured: false,
+      postgresReady: false,
       futureDatabaseReady: false
     };
   }
@@ -359,6 +475,12 @@ export class JsonDailyWorkRepository implements DailyWorkRepository {
 export function createDailyWorkRepositoryFromEnv(
   env: NodeJS.ProcessEnv = process.env
 ): DailyWorkRepository {
+  const databaseUrl = env.DATABASE_URL?.trim();
+
+  if (databaseUrl) {
+    return new PostgresDailyWorkRepository(databaseUrl);
+  }
+
   const dataDir = env.SEEKDESK_DATA_DIR?.trim();
 
   if (!dataDir) {
@@ -459,4 +581,82 @@ function upsertFirstById<T extends { id: string }>(items: T[], nextItem: T) {
   const filtered = items.filter((item) => item.id !== nextItem.id);
   items.length = 0;
   items.push(nextItem, ...filtered);
+}
+
+function mergeChatMessageIntoSessions(
+  sessions: DailyWorkSessionDetail[],
+  message: PersistedChatMessage
+) {
+  const parsedMessage: DailyWorkSessionMessage = {
+    id: message.id,
+    role: message.role,
+    content: message.content,
+    createdAt: message.createdAt,
+    artifactIds: message.artifactIds ?? [],
+    contextItemIds: message.contextItemIds ?? [],
+    approvalRequestIds: message.approvalRequestIds ?? []
+  };
+  const existing = sessions.find((session) => session.id === message.sessionId);
+
+  if (!existing) {
+    sessions.unshift({
+      id: message.sessionId,
+      workspaceId: "workspace-seekdesk",
+      appMode: "daily_work",
+      title: createSessionTitle(parsedMessage.content),
+      status: "active",
+      createdAt: message.createdAt,
+      updatedAt: message.createdAt,
+      summary: "AI daily-work chat session.",
+      lastAction: {
+        at: message.createdAt,
+        actor: message.role === "assistant" ? "daily-work-agent" : "user",
+        label: message.role === "assistant" ? "Assistant response recorded." : "User prompt recorded."
+      },
+      artifactIds: parsedMessage.artifactIds,
+      contextItemIds: parsedMessage.contextItemIds,
+      approvalRequestIds: parsedMessage.approvalRequestIds,
+      messageCount: 1,
+      tags: ["chat", "daily-work"],
+      recentMessages: [parsedMessage]
+    });
+    return;
+  }
+
+  existing.recentMessages = [...existing.recentMessages, parsedMessage].slice(-20);
+  existing.messageCount = Math.max(
+    existing.messageCount + 1,
+    existing.recentMessages.length
+  );
+  existing.updatedAt = message.createdAt;
+  existing.lastAction = {
+    at: message.createdAt,
+    actor: message.role === "assistant" ? "daily-work-agent" : "user",
+    label: message.role === "assistant" ? "Assistant response recorded." : "User prompt recorded."
+  };
+  existing.artifactIds = uniqueStrings([
+    ...existing.artifactIds,
+    ...parsedMessage.artifactIds
+  ]);
+  existing.contextItemIds = uniqueStrings([
+    ...existing.contextItemIds,
+    ...parsedMessage.contextItemIds
+  ]);
+  existing.approvalRequestIds = uniqueStrings([
+    ...existing.approvalRequestIds,
+    ...parsedMessage.approvalRequestIds
+  ]);
+}
+
+function createSessionTitle(content: string) {
+  const trimmed = content.replace(/\s+/g, " ").trim();
+  if (!trimmed) {
+    return "Daily-work chat";
+  }
+
+  return trimmed.length > 64 ? `${trimmed.slice(0, 61)}...` : trimmed;
+}
+
+function uniqueStrings(values: string[]) {
+  return [...new Set(values)];
 }

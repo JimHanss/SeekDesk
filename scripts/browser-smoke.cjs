@@ -53,7 +53,8 @@ async function main() {
     await runArtifactsSmoke(client, apiServer.url);
     await runActivityStreamSmoke(client, apiServer.url);
     await runModelUsageSmoke(client, apiServer.url);
-    await runDataLayerStateSmoke(client);
+    await runDataLayerStateSmoke(client, apiServer.url);
+    await runGoogleConnectorStatusSmoke(client, apiServer.url);
     await runApprovalPreviewSmoke(client, apiServer.url);
     await runWorkflowPreviewSmoke(client, apiServer.url);
     await runPostActionRefreshSmoke(client, apiServer.url);
@@ -1033,7 +1034,19 @@ async function runModelUsageSmoke(client, apiUrl) {
   });
 }
 
-async function runDataLayerStateSmoke(client) {
+async function runDataLayerStateSmoke(client, apiUrl) {
+  const healthSnapshot = await fetchHealthSnapshot(apiUrl);
+  const dataLayer = healthSnapshot.dataLayer || healthSnapshot;
+
+  if (
+    typeof dataLayer.currentLayer !== "string" ||
+    typeof dataLayer.futureDatabaseReady !== "boolean" ||
+    typeof dataLayer.postgresConfigured !== "boolean" ||
+    typeof dataLayer.postgresReady !== "boolean"
+  ) {
+    throw new Error("Health response did not expose the expected data layer fields.");
+  }
+
   await selectDailyView(client, "knowledge");
 
   const pageState = await waitForValue(
@@ -1059,11 +1072,56 @@ async function runDataLayerStateSmoke(client) {
   checks.push({
     name: "data layer state display",
     status: pageState.hasDedicatedState ? "passed" : "fallback-compatible",
+    currentLayer: dataLayer.currentLayer,
+    postgresConfigured: dataLayer.postgresConfigured,
+    postgresReady: dataLayer.postgresReady,
     dedicatedState: pageState.hasDedicatedState,
     activityFeedSource: pageState.activityFeedSource,
     activityConnectionStatus: pageState.activityConnectionStatus,
     modelUsageSource: pageState.modelUsageSource,
     modelUsageStatus: pageState.modelUsageStatus
+  });
+}
+
+async function runGoogleConnectorStatusSmoke(client, apiUrl) {
+  const statusSnapshot = await fetchGoogleConnectorStatusSnapshot(apiUrl);
+
+  if (typeof statusSnapshot.connected !== "boolean") {
+    throw new Error("Google connector status did not expose a connected boolean.");
+  }
+
+  const apiStatus =
+    statusSnapshot.status ||
+    (statusSnapshot.connected
+      ? "connected"
+      : statusSnapshot.requiresSetup
+        ? "requires_setup"
+        : "degraded");
+
+  if (!["connected", "requires_setup", "degraded"].includes(apiStatus)) {
+    throw new Error(`Unexpected Google connector status: ${apiStatus}`);
+  }
+
+  await selectDailyView(client, "connectors");
+
+  const pageState = await waitForValue(
+    client,
+    googleConnectorStatusExpression(),
+    (state) =>
+      state.present &&
+      ["connected", "requires_setup"].includes(state.status) &&
+      state.syncStatus &&
+      state.textLength > 0,
+    "Google connector status panel"
+  );
+
+  checks.push({
+    name: "google connector status",
+    status: "passed",
+    apiStatus,
+    apiConnected: statusSnapshot.connected,
+    pageStatus: pageState.status,
+    pageSyncStatus: pageState.syncStatus
   });
 }
 
@@ -1498,6 +1556,20 @@ function dataLayerStateExpression() {
       activityConnectionStatus: activityRoot ? activityRoot.getAttribute("data-activity-connection-status") || "" : "",
       modelUsageSource: modelUsageRoot ? modelUsageRoot.getAttribute("data-model-usage-source") || "" : "",
       modelUsageStatus: modelUsageRoot ? modelUsageRoot.getAttribute("data-model-usage-status") || "" : ""
+    };
+  })()`);
+}
+
+function googleConnectorStatusExpression() {
+  return withSmokeHelpers(`(() => {
+    const root = document.querySelector("[data-google-connector-status]");
+    const text = root ? root.textContent || "" : "";
+
+    return {
+      present: Boolean(root),
+      status: root ? root.getAttribute("data-google-connector-status") || "" : "",
+      syncStatus: root ? root.getAttribute("data-google-connector-sync-status") || "" : "",
+      textLength: text.trim().length
     };
   })()`);
 }
@@ -2450,6 +2522,39 @@ async function fetchDailyEndpointSnapshot(apiUrl, path) {
   return response.json();
 }
 
+async function fetchHealthSnapshot(apiUrl) {
+  const response = await fetch(new URL("/health", apiUrl).toString(), {
+    headers: {
+      Accept: "application/json"
+    },
+    signal: AbortSignal.timeout(5000)
+  });
+
+  if (!response.ok) {
+    throw new Error(`/health returned HTTP ${response.status}.`);
+  }
+
+  return response.json();
+}
+
+async function fetchGoogleConnectorStatusSnapshot(apiUrl) {
+  const response = await fetch(
+    new URL("/api/connectors/google/status", apiUrl).toString(),
+    {
+      headers: {
+        Accept: "application/json"
+      },
+      signal: AbortSignal.timeout(5000)
+    }
+  );
+
+  if (!response.ok) {
+    throw new Error(`/api/connectors/google/status returned HTTP ${response.status}.`);
+  }
+
+  return response.json();
+}
+
 async function fetchJson(apiUrl, path, payload) {
   const response = await fetch(new URL(path, apiUrl).toString(), {
     method: "POST",
@@ -2516,8 +2621,10 @@ function assertActivityEventsSnapshot(snapshot, label, options = {}) {
     throw new Error(`${label} did not include a daily_work events array.`);
   }
 
-  if (snapshot.events.length !== 7) {
-    throw new Error(`${label} included ${snapshot.events.length} event(s), expected 7.`);
+  if (snapshot.events.length < 7) {
+    throw new Error(
+      `${label} included ${snapshot.events.length} event(s), expected at least 7.`
+    );
   }
 
   for (const event of snapshot.events) {

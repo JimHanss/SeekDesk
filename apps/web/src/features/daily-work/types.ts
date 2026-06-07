@@ -559,7 +559,11 @@ export type ModelUsageBudgetState =
   | "over_budget";
 export type ModelUsagePanelSource = "fallback" | "api" | "degraded";
 export type ModelUsageSyncStatus = "syncing" | "live" | "degraded";
-export type PersistenceLayerId = "seed_mock" | "json_local" | "future_database";
+export type PersistenceLayerId =
+  | "seed_mock"
+  | "json_local"
+  | "postgres"
+  | "future_database";
 export type PersistenceLayerStatus = "active" | "available" | "planned" | "unknown";
 export type PersistencePanelSource = "fallback" | "health" | "degraded";
 export type PersistencePanelSyncStatus = "syncing" | "live" | "degraded";
@@ -727,6 +731,17 @@ export interface ConnectorPreviewPanelState {
   notice: string;
 }
 
+export interface GoogleConnectorStatusState {
+  connected: boolean;
+  requiresSetup: boolean;
+  accountEmail: string | null;
+  scopes: string[];
+  missingConfig: string[];
+  source: "local" | "api" | "degraded";
+  syncStatus: "syncing" | "live" | "degraded";
+  notice: string;
+}
+
 export type WorkflowPreviewPanelSource = "local" | "api" | "degraded";
 export type WorkflowPreviewPanelSyncStatus = "idle" | "syncing" | "live" | "degraded";
 
@@ -848,6 +863,8 @@ export interface HealthPersistenceSnapshotDto {
   path?: string;
   filePath?: string;
   databaseReady?: boolean;
+  postgresConfigured?: boolean;
+  postgresReady?: boolean;
   futureDatabaseReady?: boolean;
   updatedAt?: string;
   notes?: string[];

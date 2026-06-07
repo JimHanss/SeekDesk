@@ -100,8 +100,117 @@ describe("DeepSeekModelProvider", () => {
     expect(fetchMock).toHaveBeenCalledOnce();
     expect(chunks).toEqual([
       { type: "text-delta", delta: "Hello" },
-      { type: "text-delta", delta: " reasoning" },
+      { type: "reasoning-delta", delta: " reasoning" },
+      {
+        type: "usage",
+        usage: {
+          promptTokens: 10,
+          completionTokens: 0,
+          totalTokens: 10
+        }
+      },
       { type: "text-delta", delta: " split" },
+      { type: "done" }
+    ]);
+  });
+
+  it("parses streamed tool call arguments and usage chunks", async () => {
+    stubFetch(
+      streamResponse([
+        `data: ${JSON.stringify({
+          choices: [
+            {
+              delta: {
+                tool_calls: [
+                  {
+                    index: 0,
+                    id: "call-gmail",
+                    type: "function",
+                    function: {
+                      name: "gmail.search_threads",
+                      arguments: "{\"query\":\"from:customer"
+                    }
+                  }
+                ]
+              }
+            }
+          ]
+        })}\n\n`,
+        `data: ${JSON.stringify({
+          choices: [
+            {
+              delta: {
+                tool_calls: [
+                  {
+                    index: 0,
+                    function: {
+                      arguments: "\",\"maxResults\":5}"
+                    }
+                  }
+                ]
+              },
+              finish_reason: "tool_calls"
+            }
+          ]
+        })}\n\n`,
+        `data: ${JSON.stringify({
+          usage: {
+            prompt_tokens: 12,
+            completion_tokens: 7,
+            total_tokens: 19
+          },
+          choices: []
+        })}\n\n`,
+        "data: [DONE]\n\n"
+      ])
+    );
+    const provider = createProvider({
+      includeUsage: true
+    });
+
+    const chunks = await collectChunks(
+      provider.streamChat({
+        mode: "daily_work",
+        messages: [{ role: "user", content: "Find customer mail" }],
+        maxTurns: 1,
+        tools: [
+          {
+            type: "function",
+            function: {
+              name: "gmail.search_threads",
+              description: "Search Gmail threads.",
+              parameters: {
+                type: "object",
+                properties: {
+                  query: { type: "string" }
+                },
+                required: ["query"]
+              }
+            }
+          }
+        ]
+      })
+    );
+
+    expect(chunks).toEqual([
+      {
+        type: "tool-call",
+        id: "call-gmail",
+        name: "gmail.search_threads",
+        inputJson: {
+          query: "from:customer",
+          maxResults: 5
+        },
+        rawArguments: "{\"query\":\"from:customer\",\"maxResults\":5}"
+      },
+      {
+        type: "usage",
+        usage: {
+          promptTokens: 12,
+          completionTokens: 7,
+          totalTokens: 19
+        }
+      },
       { type: "done" }
     ]);
   });

@@ -23,7 +23,8 @@ import type {
   ApprovalStatus,
   ConnectorFilter,
   ConnectorItem,
-  ConnectorPreviewPanelState
+  ConnectorPreviewPanelState,
+  GoogleConnectorStatusState
 } from "../../types";
 import {
   ConnectorPermissionPill,
@@ -36,6 +37,7 @@ interface ConnectorDirectoryPanelProps {
   connectorFilter: ConnectorFilter;
   connectorPreviewPanel: ConnectorPreviewPanelState;
   filteredConnectors: ConnectorItem[];
+  googleConnectorStatus: GoogleConnectorStatusState;
   selectedConnector: ConnectorItem | null;
   selectedConnectorApprovalRequests: ApprovalRequestItem[];
   selectedConnectorPreviewStatus: ApprovalStatus;
@@ -52,6 +54,7 @@ export function ConnectorDirectoryPanel({
   connectorFilter,
   connectorPreviewPanel,
   filteredConnectors,
+  googleConnectorStatus,
   selectedConnector,
   selectedConnectorApprovalRequests,
   selectedConnectorPreviewStatus,
@@ -73,8 +76,31 @@ export function ConnectorDirectoryPanel({
           </span>
         </div>
         <p className="text-xs leading-5 text-teal-700">
-          当前只做目录和权限预演，不读取真实文档、日历、邮件、笔记或团队知识库。
+          Google 连接器当前只读取真实数据，并生成邮件草稿或日历事件预览；不会发送邮件或创建真实日历事件。
         </p>
+        <div
+          className="rounded-[8px] border border-teal-200 bg-white px-3 py-2 text-xs leading-5 text-teal-900"
+          data-google-connector-status={
+            googleConnectorStatus.connected ? "connected" : "requires_setup"
+          }
+          data-google-connector-sync-status={googleConnectorStatus.syncStatus}
+        >
+          <div className="flex flex-wrap items-center justify-between gap-2">
+            <span className="font-medium">
+              Google:{" "}
+              {googleConnectorStatus.connected ? "connected" : "requires_setup"}
+            </span>
+            <span className="rounded-[999px] bg-teal-50 px-2 py-0.5 text-[11px] text-teal-700">
+              {googleConnectorStatus.scopes.length} scopes
+            </span>
+          </div>
+          <p className="mt-1 text-teal-700">{googleConnectorStatus.notice}</p>
+          {googleConnectorStatus.missingConfig.length > 0 ? (
+            <p className="mt-1 break-words text-orange-700">
+              Missing: {googleConnectorStatus.missingConfig.join(", ")}
+            </p>
+          ) : null}
+        </div>
         <div className="flex flex-wrap gap-2" aria-label="连接器筛选">
           {connectorFilters.map((filter) => {
             const isActive = connectorFilter === filter;

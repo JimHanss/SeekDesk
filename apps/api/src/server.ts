@@ -9,24 +9,30 @@ import {
 import {
   chatRequestSchema,
   createDailyActivitySnapshotMessage,
+  toolNameSchema,
   type ChatProvider,
-  type ChatRequest
+  type ChatRequest,
+  type ToolCallRecord,
+  type ToolModelUsageRecord
 } from "@seekdesk/shared";
 import websocket from "@fastify/websocket";
 import Fastify, {
   type FastifyReply,
   type FastifyRequest
 } from "fastify";
+import { randomUUID } from "node:crypto";
 import { pathToFileURL } from "node:url";
 import {
   createDailyWorkRepositoryFromEnv,
   type DailyWorkRepository
 } from "./repositories/daily-work-repository.js";
 import { registerDailyWorkRoutes } from "./routes/daily-work-routes.js";
+import { registerGoogleConnectorRoutes } from "./routes/google-connector-routes.js";
 import {
   createDailyModelUsageSnapshot,
   filterDailyActivityEvents
 } from "./services/daily-work-service.js";
+import { createDailyWorkToolRuntime } from "./services/daily-work-tools.js";
 
 const allowedOrigins = new Set([
   "http://localhost:3000",
@@ -51,6 +57,7 @@ export async function buildServer(options?: {
   app.options("/api/chat", async (_request, reply) => reply.code(204).send());
 
   await registerDailyWorkRoutes(app, dailyWorkRepository);
+  await registerGoogleConnectorRoutes(app, dailyWorkRepository);
 
   app.get("/health", async () => ({
     status: "ok",
@@ -73,8 +80,29 @@ export async function buildServer(options?: {
 
     const chatRequest = parsed.data;
     const providerSelection = createModelProvider();
+    const sessionId = chatRequest.sessionId ?? `chat-${randomUUID()}`;
+    const toolRuntime =
+      chatRequest.mode === "daily_work"
+        ? createDailyWorkToolRuntime(dailyWorkRepository)
+        : undefined;
+    await recordIncomingChatMessage({
+      dailyWorkRepository,
+      chatRequest,
+      sessionId
+    });
     const stream = modelStreamToReadableStream(
-      streamAgentLoop(createAgentLoopInput(chatRequest, providerSelection.provider))
+      streamAgentLoop(
+        createAgentLoopInput(chatRequest, providerSelection.provider, {
+          sessionId,
+          ...(toolRuntime ? { toolRuntime } : {})
+        })
+      ),
+      {
+        dailyWorkRepository,
+        sessionId,
+        providerName: providerSelection.providerName,
+        modelName: providerSelection.modelName
+      }
     );
 
     return reply
@@ -83,6 +111,7 @@ export async function buildServer(options?: {
       .header("X-Accel-Buffering", "no")
       .header("X-SeekDesk-Chat-Mode", chatRequest.mode)
       .header("X-SeekDesk-Chat-Provider", providerSelection.providerName)
+      .header("X-SeekDesk-Chat-Session-Id", sessionId)
       .send(stream);
   });
 
@@ -130,28 +159,43 @@ function applyCorsHeaders(request: FastifyRequest, reply: FastifyReply) {
   reply.header("Access-Control-Allow-Headers", "Content-Type,Authorization");
 }
 
-function createAgentLoopInput(chatRequest: ChatRequest, provider: ModelProvider) {
+function createAgentLoopInput(
+  chatRequest: ChatRequest,
+  provider: ModelProvider,
+  options: {
+    sessionId: string;
+    toolRuntime?: ReturnType<typeof createDailyWorkToolRuntime>;
+  }
+) {
   return {
     provider,
     mode: chatRequest.mode,
-    maxTurns: 1,
+    maxTurns: options.toolRuntime ? 3 : 1,
     ...(chatRequest.prompt ? { prompt: chatRequest.prompt } : {}),
     ...(chatRequest.messages ? { messages: chatRequest.messages } : {}),
-    ...(chatRequest.sessionId ? { sessionId: chatRequest.sessionId } : {}),
-    ...(chatRequest.context ? { context: chatRequest.context } : {})
+    sessionId: options.sessionId,
+    ...(chatRequest.context ? { context: chatRequest.context } : {}),
+    ...(options.toolRuntime
+      ? {
+          tools: options.toolRuntime.modelTools,
+          orchestrator: options.toolRuntime.orchestrator
+        }
+      : {})
   };
 }
 
 function createModelProvider(): {
   provider: ModelProvider;
   providerName: ChatProvider;
+  modelName: string;
 } {
   const apiKey = process.env.DEEPSEEK_API_KEY?.trim();
 
   if (!apiKey) {
     return {
       provider: new MockModelProvider(),
-      providerName: "mock"
+      providerName: "mock",
+      modelName: "mock-daily-work"
     };
   }
 
@@ -165,27 +209,198 @@ function createModelProvider(): {
       thinkingMode: modelConfig.thinkingMode,
       includeUsage: modelConfig.streamUsageEnabled
     }),
-    providerName: "deepseek"
+    providerName: "deepseek",
+    modelName: modelConfig.selectedModel
   };
 }
 
+async function recordIncomingChatMessage(input: {
+  dailyWorkRepository: DailyWorkRepository;
+  chatRequest: ChatRequest;
+  sessionId: string;
+}) {
+  const message = input.chatRequest.prompt
+    ? {
+        role: "user" as const,
+        content: input.chatRequest.prompt
+      }
+    : [...(input.chatRequest.messages ?? [])]
+        .reverse()
+        .find((candidate) => candidate.role === "user");
+
+  if (!message?.content.trim()) {
+    return;
+  }
+
+  await input.dailyWorkRepository.recordChatMessage({
+    id: `message-${randomUUID()}`,
+    sessionId: input.sessionId,
+    role: message.role,
+    content: message.content,
+    createdAt: new Date().toISOString(),
+    artifactIds: input.chatRequest.context?.artifactIds ?? [],
+    contextItemIds: input.chatRequest.context?.contextItemIds ?? [],
+    approvalRequestIds: input.chatRequest.context?.approvalRequestIds ?? []
+  });
+}
+
+async function recordToolCallChunk(
+  options: {
+    dailyWorkRepository: DailyWorkRepository;
+    sessionId: string;
+  },
+  chunk: Extract<ModelStreamChunk, { type: "tool-call" }>
+) {
+  const parsedName = toolNameSchema.safeParse(chunk.name);
+  if (!parsedName.success) {
+    return;
+  }
+
+  await options.dailyWorkRepository.recordToolCall({
+    id: chunk.id ?? `tool-call-${randomUUID()}`,
+    sessionId: options.sessionId,
+    name: parsedName.data,
+    status: "requested",
+    inputJson: chunk.inputJson,
+    previewOnly: true,
+    permissionRequired: false,
+    createdAt: new Date().toISOString()
+  });
+}
+
+async function recordToolResultChunk(
+  options: {
+    dailyWorkRepository: DailyWorkRepository;
+    sessionId: string;
+  },
+  chunk: Extract<ModelStreamChunk, { type: "tool-result" }>
+) {
+  const parsedName = toolNameSchema.safeParse(chunk.name);
+  if (!parsedName.success) {
+    return;
+  }
+
+  const result = isToolCallResult(chunk.result) ? chunk.result : undefined;
+  const status = normalizeToolRecordStatus(result?.status);
+
+  await options.dailyWorkRepository.recordToolCall({
+    id: chunk.id ?? result?.id ?? `tool-call-${randomUUID()}`,
+    sessionId: options.sessionId,
+    name: parsedName.data,
+    status,
+    inputJson: result?.inputJson ?? {},
+    outputJson: result?.outputJson ?? chunk.result,
+    previewOnly: result?.previewOnly ?? true,
+    permissionRequired: result?.permissionRequired ?? false,
+    ...(result?.error ? { error: result.error } : {}),
+    createdAt: new Date().toISOString(),
+    completedAt: new Date().toISOString()
+  });
+}
+
+async function recordModelUsageChunk(
+  options: {
+    dailyWorkRepository: DailyWorkRepository;
+    sessionId: string;
+    providerName: ChatProvider;
+    modelName: string;
+  },
+  chunk: Extract<ModelStreamChunk, { type: "usage" }>
+) {
+  const record: ToolModelUsageRecord = {
+    id: `model-usage-${randomUUID()}`,
+    sessionId: options.sessionId,
+    provider: options.providerName,
+    model: options.modelName,
+    promptTokens: chunk.usage.promptTokens,
+    completionTokens: chunk.usage.completionTokens,
+    totalTokens: chunk.usage.totalTokens,
+    createdAt: new Date().toISOString()
+  };
+
+  await options.dailyWorkRepository.recordModelUsage(record);
+}
+
+function isToolCallResult(value: unknown): value is {
+  id?: string;
+  name: string;
+  status: string;
+  inputJson?: unknown;
+  outputJson?: unknown;
+  previewOnly: boolean;
+  permissionRequired: boolean;
+  error?: string;
+} {
+  return Boolean(
+    value &&
+      typeof value === "object" &&
+      "name" in value &&
+      "status" in value &&
+      "previewOnly" in value &&
+      "permissionRequired" in value
+  );
+}
+
+function normalizeToolRecordStatus(
+  status: string | undefined
+): ToolCallRecord["status"] {
+  if (
+    status === "permission_required" ||
+    status === "failed" ||
+    status === "completed"
+  ) {
+    return status;
+  }
+
+  return "completed";
+}
+
 function modelStreamToReadableStream(
-  chunks: AsyncIterable<ModelStreamChunk>
+  chunks: AsyncIterable<ModelStreamChunk>,
+  options: {
+    dailyWorkRepository: DailyWorkRepository;
+    sessionId: string;
+    providerName: ChatProvider;
+    modelName: string;
+  }
 ) {
   const encoder = new TextEncoder();
 
   return new ReadableStream({
     async start(controller) {
+      let assistantContent = "";
       try {
         for await (const chunk of chunks) {
           if (chunk.type === "text-delta" && chunk.delta) {
+            assistantContent += chunk.delta;
             controller.enqueue(encoder.encode(chunk.delta));
+          }
+
+          if (chunk.type === "tool-call") {
+            await recordToolCallChunk(options, chunk);
+          }
+
+          if (chunk.type === "tool-result") {
+            await recordToolResultChunk(options, chunk);
+          }
+
+          if (chunk.type === "usage") {
+            await recordModelUsageChunk(options, chunk);
           }
         }
       } catch (error) {
         const message = error instanceof Error ? error.message : "Unknown model error";
         controller.enqueue(encoder.encode(`\n\n${message}`));
       } finally {
+        if (assistantContent.trim()) {
+          await options.dailyWorkRepository.recordChatMessage({
+            id: `message-${randomUUID()}`,
+            sessionId: options.sessionId,
+            role: "assistant",
+            content: assistantContent,
+            createdAt: new Date().toISOString()
+          });
+        }
         controller.close();
       }
     }

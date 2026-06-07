@@ -25,7 +25,14 @@ const deepSeekEnvKeys = [
   "DEEPSEEK_THINKING_MODE",
   "DEEPSEEK_STREAM_USAGE",
   "DEEPSEEK_STREAM_USAGE_ENABLED",
-  "SEEKDESK_DATA_DIR"
+  "SEEKDESK_DATA_DIR",
+  "DATABASE_URL",
+  "GOOGLE_CLIENT_ID",
+  "GOOGLE_CLIENT_SECRET",
+  "GOOGLE_REDIRECT_URI",
+  "GOOGLE_TOKEN_ENCRYPTION_KEY",
+  "GOOGLE_OAUTH_STATE_SECRET",
+  "SEEKDESK_OAUTH_STATE_SECRET"
 ] as const;
 
 const originalDeepSeekEnv = new Map(
@@ -67,6 +74,8 @@ describe("api server", () => {
       currentLayer: "seed_mock",
       dataDirConfigured: false,
       jsonLocalReady: false,
+      postgresConfigured: false,
+      postgresReady: false,
       futureDatabaseReady: false
     });
 
@@ -94,6 +103,8 @@ describe("api server", () => {
           currentLayer: "json_local",
           dataDirConfigured: true,
           jsonLocalReady: true,
+          postgresConfigured: false,
+          postgresReady: false,
           futureDatabaseReady: false
         });
       } finally {
@@ -102,6 +113,57 @@ describe("api server", () => {
     } finally {
       await rm(dataDir, { force: true, recursive: true });
     }
+  });
+
+  it("reports Google connector setup status when OAuth is not configured", async () => {
+    const app = await buildServer();
+    const response = await app.inject({
+      method: "GET",
+      url: "/api/connectors/google/status"
+    });
+
+    expect(response.statusCode).toBe(200);
+    expect(response.json()).toEqual({
+      provider: "google",
+      connected: false,
+      requiresSetup: true,
+      scopes: expect.arrayContaining([
+        "https://www.googleapis.com/auth/gmail.readonly",
+        "https://www.googleapis.com/auth/calendar.readonly"
+      ]),
+      missingConfig: [
+        "GOOGLE_CLIENT_ID",
+        "GOOGLE_CLIENT_SECRET",
+        "GOOGLE_REDIRECT_URI",
+        "GOOGLE_TOKEN_ENCRYPTION_KEY"
+      ]
+    });
+
+    await app.close();
+  });
+
+  it("returns a clear setup error before starting Google OAuth", async () => {
+    const app = await buildServer();
+    const response = await app.inject({
+      method: "GET",
+      url: "/api/connectors/google/oauth/start"
+    });
+
+    expect(response.statusCode).toBe(503);
+    expect(response.json()).toEqual({
+      provider: "google",
+      connected: false,
+      requiresSetup: true,
+      error: "google_oauth_not_configured",
+      missingConfig: [
+        "GOOGLE_CLIENT_ID",
+        "GOOGLE_CLIENT_SECRET",
+        "GOOGLE_REDIRECT_URI",
+        "GOOGLE_TOKEN_ENCRYPTION_KEY"
+      ]
+    });
+
+    await app.close();
   });
 
   it("returns the default daily-work templates when no mode is provided", async () => {
@@ -3012,6 +3074,115 @@ describe("api server", () => {
     expect(body.messages[1].content).toContain("Context item ids: meeting-notes");
 
     await app.close();
+  });
+
+  it("executes preview-only daily-work tool calls and persists artifacts", async () => {
+    const dataDir = await mkdtemp(join(tmpdir(), "seekdesk-api-data-"));
+    process.env.SEEKDESK_DATA_DIR = dataDir;
+    process.env.DEEPSEEK_API_KEY = "sk-test-secret-value";
+    process.env.DEEPSEEK_BASE_URL = "https://api.deepseek.example";
+
+    const fetchMock = vi
+      .fn()
+      .mockResolvedValueOnce(
+        createDeepSeekStreamResponse([
+          `data: ${JSON.stringify({
+            choices: [
+              {
+                delta: {
+                  tool_calls: [
+                    {
+                      index: 0,
+                      id: "call-persist-artifact",
+                      type: "function",
+                      function: {
+                        name: "daily.persist_artifact",
+                        arguments:
+                          "{\"title\":\"AI work note\",\"artifactType\":\"brief\",\"content\":\"A reviewable work note from the model.\",\"tags\":[\"ai\",\"preview\"]}"
+                      }
+                    }
+                  ]
+                },
+                finish_reason: "tool_calls"
+              }
+            ]
+          })}\n\n`,
+          "data: [DONE]\n\n"
+        ])
+      )
+      .mockResolvedValueOnce(
+        createDeepSeekStreamResponse([
+          `data: ${JSON.stringify({
+            choices: [{ delta: { content: "Artifact saved for review." } }]
+          })}\n\n`,
+          "data: [DONE]\n\n"
+        ])
+      );
+    vi.stubGlobal("fetch", fetchMock);
+
+    try {
+      const app = await buildServer();
+
+      try {
+        const response = await app.inject({
+          method: "POST",
+          url: "/api/chat",
+          payload: {
+            mode: "daily_work",
+            prompt: "Create a reviewable work note."
+          }
+        });
+
+        expect(response.statusCode).toBe(200);
+        expect(response.body).toContain("Artifact saved for review.");
+        expect(fetchMock).toHaveBeenCalledTimes(2);
+
+        const [, secondInit] = fetchMock.mock.calls[1] ?? [];
+        const secondBody = JSON.parse(String(secondInit?.body));
+        expect(secondBody.messages).toEqual(
+          expect.arrayContaining([
+            expect.objectContaining({
+              role: "tool",
+              name: "daily.persist_artifact",
+              content: expect.stringContaining("AI work note")
+            })
+          ])
+        );
+
+        const artifactsResponse = await app.inject({
+          method: "GET",
+          url: "/api/daily/artifacts"
+        });
+
+        expect(artifactsResponse.statusCode).toBe(200);
+        expect(artifactsResponse.json().artifacts).toEqual(
+          expect.arrayContaining([
+            expect.objectContaining({
+              title: "AI work note",
+              artifactType: "brief",
+              status: "draft"
+            })
+          ])
+        );
+
+        const eventsResponse = await app.inject({
+          method: "GET",
+          url: "/api/daily/events"
+        });
+        expect(eventsResponse.json().events).toEqual(
+          expect.arrayContaining([
+            expect.objectContaining({
+              eventType: "artifact.updated",
+              summary: expect.stringContaining("AI work note")
+            })
+          ])
+        );
+      } finally {
+        await app.close();
+      }
+    } finally {
+      await rm(dataDir, { force: true, recursive: true });
+    }
   });
 
   it("accepts the reserved coding-agent mode without enabling tools", async () => {

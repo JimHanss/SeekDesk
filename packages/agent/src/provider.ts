@@ -4,6 +4,23 @@ import type { ToolCallRequest } from "./tools.js";
 export interface ModelMessage {
   role: "system" | "user" | "assistant" | "tool";
   content: string;
+  name?: string;
+  toolCallId?: string;
+}
+
+export interface ModelToolDefinition {
+  type: "function";
+  function: {
+    name: string;
+    description: string;
+    parameters: Record<string, unknown>;
+  };
+}
+
+export interface ModelUsage {
+  promptTokens: number;
+  completionTokens: number;
+  totalTokens: number;
 }
 
 export interface ModelChatRequest {
@@ -11,6 +28,8 @@ export interface ModelChatRequest {
   messages: ModelMessage[];
   maxTurns: number;
   toolPlan?: ToolCallRequest[];
+  tools?: ModelToolDefinition[];
+  toolChoice?: "auto" | "none";
 }
 
 export type ModelStreamChunk =
@@ -19,9 +38,25 @@ export type ModelStreamChunk =
       delta: string;
     }
   | {
+      type: "reasoning-delta";
+      delta: string;
+    }
+  | {
       type: "tool-call";
+      id?: string;
       name: string;
       inputJson: unknown;
+      rawArguments?: string;
+    }
+  | {
+      type: "tool-result";
+      id?: string;
+      name: string;
+      result: unknown;
+    }
+  | {
+      type: "usage";
+      usage: ModelUsage;
     }
   | {
       type: "done";

@@ -37,6 +37,7 @@ import {
   useArtifacts,
   useConnectorPreview,
   useDailyContext,
+  useGoogleConnectorStatus,
   useModelUsagePanel,
   usePersistencePanel,
   useSessionHistory,
@@ -151,6 +152,7 @@ export default function Page() {
   );
   const { modelUsagePanel } = useModelUsagePanel(apiBaseUrl);
   const { persistencePanel } = usePersistencePanel(apiBaseUrl);
+  const { googleConnectorStatus } = useGoogleConnectorStatus(apiBaseUrl);
   const {
     activityConnectionStatus,
     activityFeedEvents,
@@ -597,6 +599,7 @@ export default function Page() {
                   connectorFilter={connectorFilter}
                   connectorPreviewPanel={connectorPreviewPanel}
                   filteredConnectors={filteredConnectors}
+                  googleConnectorStatus={googleConnectorStatus}
                   selectedConnector={selectedConnector}
                   selectedConnectorApprovalRequests={selectedConnectorApprovalRequests}
                   selectedConnectorPreviewStatus={selectedConnectorPreviewStatus}

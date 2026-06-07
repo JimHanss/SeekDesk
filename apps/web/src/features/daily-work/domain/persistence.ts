@@ -1,4 +1,4 @@
-import { HardDrive, Server, Sparkles } from "lucide-react";
+import { Database, HardDrive, Server, Sparkles } from "lucide-react";
 
 import { formatModelUsageTimestamp, nonEmptyText } from "./model-usage";
 import type {
@@ -33,6 +33,14 @@ export function createFallbackPersistencePanelState(): PersistencePanelState {
         icon: HardDrive
       },
       {
+        id: "postgres",
+        label: "Postgres / Drizzle",
+        description: "Postgres-backed daily_work persistence with Drizzle migrations.",
+        status: "planned",
+        detail: "DATABASE_URL is not active in this fallback snapshot.",
+        icon: Database
+      },
+      {
         id: "future_database",
         label: "Future Database",
         description: "未来数据库持久化通道。",
@@ -64,8 +72,10 @@ export function mapHealthPersistenceResponse(payload: unknown): PersistencePanel
     snapshot?.writable === true ||
     Boolean(snapshot?.path || snapshot?.filePath);
   const isDatabaseReady =
+    currentLayer === "postgres" ||
     currentLayer === "future_database" ||
     snapshot?.databaseReady === true ||
+    snapshot?.postgresReady === true ||
     snapshot?.futureDatabaseReady === true;
   const statusText = nonEmptyText(snapshot?.status, "");
   const healthSource = snapshot ? "health" : "fallback";
@@ -102,13 +112,33 @@ export function mapHealthPersistenceResponse(payload: unknown): PersistencePanel
         icon: HardDrive
       },
       {
+        id: "postgres",
+        label: "Postgres / Drizzle",
+        description: "DATABASE_URL powered persistence for daily_work data.",
+        status:
+          currentLayer === "postgres"
+            ? "active"
+            : snapshot?.postgresConfigured === true
+              ? "available"
+              : "planned",
+        detail:
+          currentLayer === "postgres"
+            ? snapshot?.postgresReady === false
+              ? "Postgres is configured, but the health check is not connected."
+              : "Postgres repository is active; daily_work data writes prefer the database."
+            : snapshot?.postgresConfigured === true
+              ? "Postgres is configured but is not the active data layer."
+              : "Set DATABASE_URL and run Drizzle migrations to enable Postgres.",
+        icon: Database
+      },
+      {
         id: "future_database",
         label: "Future Database",
         description: "未来数据库持久化入口。",
         status:
           currentLayer === "future_database"
             ? "active"
-            : isDatabaseReady
+            : isDatabaseReady && currentLayer !== "postgres"
               ? "available"
               : "planned",
         detail: isDatabaseReady
@@ -180,11 +210,16 @@ export function normalizePersistenceLayer(value: string | undefined): Persistenc
   }
 
   if (
+    normalized === "postgres" ||
+    normalized === "postgresql"
+  ) {
+    return "postgres";
+  }
+
+  if (
     normalized === "database" ||
     normalized === "db" ||
     normalized === "future_database" ||
-    normalized === "postgres" ||
-    normalized === "postgresql" ||
     normalized === "sqlite"
   ) {
     return "future_database";
@@ -226,6 +261,8 @@ export function hasPersistenceSignal(value: Record<string, unknown>) {
     "path",
     "filePath",
     "databaseReady",
+    "postgresConfigured",
+    "postgresReady",
     "futureDatabaseReady"
   ].some((key) => key in value);
 }
