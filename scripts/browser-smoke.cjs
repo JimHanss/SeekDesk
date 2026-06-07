@@ -1491,6 +1491,8 @@ async function runChatSendSmoke(client) {
       state.hasToolTraceSelectors &&
       state.usageRecords > 0 &&
       state.toolRows > 0 &&
+      state.timelineRows > 0 &&
+      state.timelineCount === state.timelineRows &&
       state.planRows === state.toolRows &&
       state.executionRows === state.toolRows &&
       state.resultRows === state.toolRows &&
@@ -1517,7 +1519,9 @@ async function runChatSendSmoke(client) {
     planRows: traceState.planRows,
     executionRows: traceState.executionRows,
     resultRows: traceState.resultRows,
-    referenceRows: traceState.referenceRows
+    referenceRows: traceState.referenceRows,
+    timelineRows: traceState.timelineRows,
+    timelineReferenceRows: traceState.timelineReferenceRows
   });
 
   await selectDailyView(client, "activity");
@@ -2405,6 +2409,12 @@ function agentTraceExpression() {
     const executionRows = root ? [...root.querySelectorAll("[data-agent-tool-execution]")] : [];
     const resultRows = root ? [...root.querySelectorAll("[data-agent-tool-result]")] : [];
     const referenceRows = root ? [...root.querySelectorAll("[data-agent-tool-reference]")] : [];
+    const timeline = root ? root.querySelector("[data-agent-tool-timeline]") : null;
+    const timelineRows = root ? [...root.querySelectorAll("[data-agent-tool-timeline-row]")] : [];
+    const timelineReferenceRows = root
+      ? [...root.querySelectorAll("[data-agent-tool-timeline-reference]")]
+          .filter((element) => element.getAttribute("data-agent-tool-timeline-reference"))
+      : [];
     const sessionText = session ? session.textContent || "" : "";
     return {
       present: Boolean(root),
@@ -2418,6 +2428,9 @@ function agentTraceExpression() {
       executionRows: executionRows.length,
       resultRows: resultRows.length,
       referenceRows: referenceRows.length,
+      timelineCount: timeline ? Number(timeline.getAttribute("data-agent-tool-timeline-count") || 0) : 0,
+      timelineRows: timelineRows.length,
+      timelineReferenceRows: timelineReferenceRows.length,
       hasToolTraceSelectors:
         toolRows.length === 0 ||
         (planRows.length === toolRows.length &&

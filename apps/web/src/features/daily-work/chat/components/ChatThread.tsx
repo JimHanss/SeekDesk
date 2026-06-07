@@ -21,6 +21,7 @@ import { cn } from "@/lib/utils";
 
 import { statusLabel } from "../../domain";
 import type {
+  AgentToolActivityTraceItem,
   AgentToolCallTraceItem,
   AgentTraceState,
   ChatMessage,
@@ -129,6 +130,7 @@ function AgentTracePanel({
   modelName: string;
 }) {
   const hasToolCalls = agentTrace.toolCalls.length > 0;
+  const hasToolActivityEvents = agentTrace.toolActivityEvents.length > 0;
   const usage = agentTrace.modelUsageSummary;
   const boundary = agentTrace.permissionBoundary.previewOnly
     ? "preview-only"
@@ -220,11 +222,69 @@ function AgentTracePanel({
         )}
       </div>
 
+      {hasToolActivityEvents ? (
+        <ToolActivityTimeline events={agentTrace.toolActivityEvents} />
+      ) : null}
+
       <div
         className="mt-3 rounded-[8px] border border-teal-100 bg-white px-3 py-2 text-xs leading-5 text-teal-800"
         data-agent-permission-statement
       >
         {agentTrace.permissionBoundary.statement}
+      </div>
+    </div>
+  );
+}
+
+function ToolActivityTimeline({
+  events
+}: {
+  events: AgentToolActivityTraceItem[];
+}) {
+  return (
+    <div
+      className="mt-3 rounded-[8px] border border-slate-200 bg-white px-3 py-2"
+      data-agent-tool-timeline
+      data-agent-tool-timeline-count={events.length}
+    >
+      <div className="flex items-center gap-2 text-[11px] font-semibold uppercase tracking-normal text-slate-500">
+        <Activity className="size-3.5 shrink-0 text-teal-700" aria-hidden="true" />
+        Tool activity timeline
+      </div>
+      <div className="mt-2 space-y-2">
+        {events.map((event) => (
+          <div
+            key={event.id}
+            className="rounded-[8px] border border-slate-100 bg-slate-50 px-2.5 py-2 text-xs"
+            data-agent-tool-timeline-row={event.toolName}
+            data-agent-tool-timeline-phase={event.toolPhase}
+            data-agent-tool-timeline-status={event.status}
+            data-agent-tool-timeline-reference={event.reference ?? ""}
+          >
+            <div className="flex flex-col gap-1 md:flex-row md:items-start md:justify-between">
+              <div className="min-w-0">
+                <div className="font-mono font-semibold text-slate-900">
+                  {event.toolName}
+                </div>
+                <div className="mt-1 text-slate-600">
+                  {event.toolPhase} · {event.time} ·{" "}
+                  {event.previewOnly ? "preview-only" : "external action"}
+                </div>
+              </div>
+              <span className="inline-flex shrink-0 rounded-[999px] bg-slate-200 px-2 py-1 text-[11px] font-medium text-slate-700">
+                {event.status}
+              </span>
+            </div>
+            <p className="mt-2 leading-5 text-slate-700">
+              {event.externalDataSummary}
+            </p>
+            {event.reference ? (
+              <div className="mt-1 break-words text-[11px] font-medium text-teal-700">
+                Reference: {event.reference}
+              </div>
+            ) : null}
+          </div>
+        ))}
       </div>
     </div>
   );

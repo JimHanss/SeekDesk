@@ -3712,6 +3712,25 @@ describe("api server", () => {
                 permissionRequired: false
               })
             ]),
+            toolActivityEvents: expect.arrayContaining([
+              expect.objectContaining({
+                id: expect.stringContaining("call-persist-artifact-requested"),
+                title: "Agent tool planned",
+                metadata: expect.objectContaining({
+                  toolName: "daily.persist_artifact",
+                  toolPhase: "requested"
+                })
+              }),
+              expect.objectContaining({
+                id: expect.stringContaining("call-persist-artifact-completed"),
+                title: "Agent tool completed",
+                metadata: expect.objectContaining({
+                  toolName: "daily.persist_artifact",
+                  toolPhase: "completed",
+                  reference: expect.stringMatching(/^artifact:ai-artifact-/)
+                })
+              })
+            ]),
             modelUsageRecords: expect.arrayContaining([
               expect.objectContaining({
                 provider: "deepseek",

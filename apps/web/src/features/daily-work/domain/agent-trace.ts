@@ -2,10 +2,12 @@ import type {
   AgentModelUsageSummary,
   AgentModelUsageTraceItem,
   AgentPermissionBoundary,
+  AgentToolActivityTraceItem,
   AgentToolCallTraceItem,
   AgentTraceResponseDto,
   AgentTraceState
 } from "../types";
+import { mapDailyActivityEvent } from "./activity";
 
 const defaultPermissionBoundary: AgentPermissionBoundary = {
   previewOnly: true,
@@ -31,6 +33,7 @@ export function createEmptyAgentTraceState(
     provider: null,
     syncStatus: "idle",
     toolCalls: [],
+    toolActivityEvents: [],
     modelUsageRecords: [],
     modelUsageSummary: emptyUsageSummary,
     permissionBoundary: defaultPermissionBoundary,
@@ -62,6 +65,9 @@ export function mapAgentTraceResponse(
     toolCalls: (payload.toolCalls ?? [])
       .map(mapToolCallRecord)
       .filter((item): item is AgentToolCallTraceItem => Boolean(item)),
+    toolActivityEvents: (payload.toolActivityEvents ?? [])
+      .map(mapToolActivityEvent)
+      .filter((item): item is AgentToolActivityTraceItem => Boolean(item)),
     modelUsageRecords,
     modelUsageSummary: summary,
     permissionBoundary: mapPermissionBoundary(payload.permissionBoundary),
@@ -98,6 +104,32 @@ function mapToolCallRecord(value: unknown): AgentToolCallTraceItem | null {
     error: typeof value.error === "string" ? value.error : null,
     createdAt: stringValue(value.createdAt, ""),
     completedAt: typeof value.completedAt === "string" ? value.completedAt : null
+  };
+}
+
+function mapToolActivityEvent(
+  value: NonNullable<AgentTraceResponseDto["toolActivityEvents"]>[number]
+): AgentToolActivityTraceItem | null {
+  const activityItem = mapDailyActivityEvent(value);
+  const audit = activityItem.toolAudit;
+
+  if (!audit) {
+    return null;
+  }
+
+  return {
+    id: activityItem.id,
+    toolName: audit.toolName,
+    toolPhase: audit.toolPhase,
+    status: activityItem.status,
+    time: activityItem.time,
+    title: activityItem.title,
+    summary: activityItem.summary,
+    externalDataSummary: audit.externalDataSummary,
+    reference: audit.reference,
+    provider: audit.provider,
+    previewOnly: audit.previewOnly,
+    externalEffects: audit.externalEffects
   };
 }
 

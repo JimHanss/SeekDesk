@@ -26,6 +26,21 @@ export interface AgentToolCallTraceItem {
   completedAt: string | null;
 }
 
+export interface AgentToolActivityTraceItem {
+  id: string;
+  toolName: string;
+  toolPhase: string;
+  status: string;
+  time: string;
+  title: string;
+  summary: string;
+  externalDataSummary: string;
+  reference: string | null;
+  provider: string | null;
+  previewOnly: boolean;
+  externalEffects: string[];
+}
+
 export interface AgentModelUsageTraceItem {
   id: string;
   provider: string;
@@ -56,6 +71,7 @@ export interface AgentTraceState {
   provider: string | null;
   syncStatus: AgentTraceSyncStatus;
   toolCalls: AgentToolCallTraceItem[];
+  toolActivityEvents: AgentToolActivityTraceItem[];
   modelUsageRecords: AgentModelUsageTraceItem[];
   modelUsageSummary: AgentModelUsageSummary;
   permissionBoundary: AgentPermissionBoundary;
@@ -66,6 +82,7 @@ export interface AgentTraceResponseDto {
   mode?: AppMode;
   sessionId?: string;
   toolCalls?: unknown[];
+  toolActivityEvents?: DailyActivityEventDto[];
   modelUsageRecords?: unknown[];
   modelUsageSummary?: Partial<AgentModelUsageSummary>;
   permissionBoundary?: Partial<AgentPermissionBoundary>;

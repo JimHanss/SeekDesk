@@ -14,6 +14,7 @@ import {
   toolNameSchema,
   type ChatProvider,
   type ChatRequest,
+  type DailyActivityEvent,
   type ToolCallRecord,
   type ToolModelUsageRecord
 } from "@seekdesk/shared";
@@ -133,15 +134,20 @@ export async function buildServer(options?: {
     "/api/chat/sessions/:sessionId/trace",
     async (request) => {
       const sessionId = request.params.sessionId.trim();
-      const [toolCalls, modelUsageRecords] = await Promise.all([
+      const [toolCalls, modelUsageRecords, activityEvents] = await Promise.all([
         dailyWorkRepository.listToolCalls({ sessionId, limit: 100 }),
-        dailyWorkRepository.listModelUsageRecords({ sessionId, limit: 100 })
+        dailyWorkRepository.listModelUsageRecords({ sessionId, limit: 100 }),
+        dailyWorkRepository.listEvents()
       ]);
 
       return {
         mode: "daily_work",
         sessionId,
         toolCalls,
+        toolActivityEvents: filterSessionToolActivityEvents(
+          activityEvents,
+          sessionId
+        ),
         modelUsageRecords,
         modelUsageSummary: summarizeModelUsageRecords(modelUsageRecords),
         permissionBoundary: createAgentPermissionBoundary(),
@@ -463,6 +469,21 @@ function createAgentPermissionBoundary() {
     statement:
       "Daily-work agent tools may read authorized connector data and create local previews only. SeekDesk does not send email, create calendar events, write external documents, or run coding-agent tools in this mode."
   };
+}
+
+function filterSessionToolActivityEvents(
+  events: DailyActivityEvent[],
+  sessionId: string
+) {
+  return events
+    .filter(
+      (event) =>
+        event.mode === "daily_work" &&
+        event.relatedRefs.sessionIds.includes(sessionId) &&
+        Boolean(event.metadata.toolName)
+    )
+    .sort((a, b) => a.timestamp.localeCompare(b.timestamp))
+    .slice(-100);
 }
 
 function modelStreamToReadableStream(

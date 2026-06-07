@@ -137,6 +137,44 @@ describe("daily-work domain mappers", () => {
             completedAt: "2026-06-08T00:00:01.000Z"
           }
         ],
+        toolActivityEvents: [
+          {
+            id: "daily-event-agent-tool-session-1-call-1-completed",
+            mode: activeMode,
+            eventType: "workflow.preview.completed",
+            status: "completed",
+            timestamp: "2026-06-08T00:00:01.000Z",
+            title: "Agent tool completed",
+            summary: "Agent read Gmail thread metadata.",
+            actor: "daily-work-agent",
+            relatedRefs: {
+              sessionIds: ["session-1"],
+              artifactIds: [],
+              connectorIds: ["customer-email"],
+              templateIds: [],
+              workflowIds: [],
+              actionQueueItemIds: [],
+              approvalRequestIds: [],
+              contextItemIds: []
+            },
+            safetyBoundary: {
+              previewOnly: true,
+              externalEffects: ["none"],
+              statement: "Preview-only tool execution."
+            },
+            nextAction: null,
+            metadata: {
+              toolName: "gmail.search_threads",
+              toolPhase: "completed",
+              provider: "gmail",
+              connectorId: "customer-email",
+              inputFields: ["query"],
+              externalDataSummary: "0 Gmail thread metadata result(s).",
+              resultCount: 0,
+              reference: "gmail-thread:thread-1"
+            }
+          }
+        ],
         modelUsageRecords: [
           {
             id: "usage-1",
@@ -165,6 +203,15 @@ describe("daily-work domain mappers", () => {
         expect.objectContaining({
           name: "gmail.search_threads",
           status: "completed",
+          previewOnly: true
+        })
+      ],
+      toolActivityEvents: [
+        expect.objectContaining({
+          toolName: "gmail.search_threads",
+          toolPhase: "completed",
+          externalDataSummary: "0 Gmail thread metadata result(s).",
+          reference: "gmail-thread:thread-1",
           previewOnly: true
         })
       ],
