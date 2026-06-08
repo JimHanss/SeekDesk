@@ -5,6 +5,7 @@ import { readFile } from "node:fs/promises";
 import { resolve } from "node:path";
 
 const args = parseArgs(process.argv.slice(2));
+let remoteCleanupTarget = null;
 
 try {
   if (args.help) {
@@ -69,6 +70,7 @@ try {
     )
   );
 
+  remoteCleanupTarget = { host, port };
   await runNodeScript(
     [
       "scripts/verify-remote-real-agent.mjs",
@@ -86,6 +88,7 @@ try {
     ],
     "start remote OAuth-ready API"
   );
+  remoteCleanupTarget = null;
 
   console.log(
     JSON.stringify(
@@ -108,11 +111,21 @@ try {
     )
   );
 } catch (error) {
+  let cleanup = null;
+  if (remoteCleanupTarget) {
+    cleanup = await cleanupRemoteApi(remoteCleanupTarget).catch((cleanupError) => ({
+      status: "failed",
+      error:
+        cleanupError instanceof Error ? cleanupError.message : String(cleanupError)
+    }));
+  }
+
   console.error(
     JSON.stringify(
       {
         status: "failed",
-        error: error instanceof Error ? error.message : String(error)
+        error: error instanceof Error ? error.message : String(error),
+        ...(cleanup ? { cleanup } : {})
       },
       null,
       2
@@ -198,6 +211,42 @@ async function runNodeScript(argv, label) {
   if (exitCode !== 0) {
     throw new Error(`${label} failed with exit code ${exitCode}.`);
   }
+}
+
+async function cleanupRemoteApi(input) {
+  const pidFile = `/tmp/seekdesk-api-real-${input.port}.pid`;
+  const script = [
+    `if [ -f ${shellQuote(pidFile)} ]; then kill "$(cat ${shellQuote(pidFile)})" 2>/dev/null || true; fi`,
+    `if command -v lsof >/dev/null 2>&1; then lsof -tiTCP:${input.port} -sTCP:LISTEN | xargs kill 2>/dev/null || true; fi`,
+    `rm -f ${shellQuote(pidFile)}`
+  ].join("\n");
+  const child = spawn("ssh", [input.host, "zsh", "-lc", shellQuote(script)], {
+    stdio: ["ignore", "pipe", "pipe"],
+    windowsHide: true
+  });
+  const stdout = [];
+  const stderr = [];
+
+  child.stdout.on("data", (chunk) => stdout.push(chunk));
+  child.stderr.on("data", (chunk) => stderr.push(chunk));
+
+  const exitCode = await new Promise((resolve, reject) => {
+    child.on("error", reject);
+    child.on("close", resolve);
+  });
+
+  return {
+    status: exitCode === 0 ? "attempted" : "failed",
+    host: input.host,
+    port: input.port,
+    ...(exitCode !== 0 ? { exitCode } : {}),
+    ...(stdout.length > 0
+      ? { stdout: Buffer.concat(stdout).toString("utf8").trim() }
+      : {}),
+    ...(stderr.length > 0
+      ? { stderr: Buffer.concat(stderr).toString("utf8").trim() }
+      : {})
+  };
 }
 
 function parseArgs(argv) {
@@ -300,6 +349,10 @@ function createTunnelCommand(input) {
   return `ssh -L 3000:127.0.0.1:3000 -L ${input.port}:127.0.0.1:${input.port} ${input.host}`;
 }
 
+function shellQuote(value) {
+  return `'${String(value).replace(/'/g, "'\\''")}'`;
+}
+
 function printHelp() {
   console.log(`Usage: npm run prepare:remote-google-oauth -- [options]
 
@@ -310,6 +363,9 @@ printing Google client secret values:
   3. starts the remote API with --keep-running
   4. prints the Google authorization URL from the running API
   5. prints the SSH tunnel command needed for the browser callback
+
+If the OAuth-ready remote API fails before the ready message is printed, this
+helper attempts to clean up the temporary remote API process and port.
 
 Options:
   --host <ssh-host>      SSH host. Default: jim-mac
