@@ -155,7 +155,9 @@ npm run prepare:remote-google-oauth
 It validates local `GOOGLE_CLIENT_ID`/`GOOGLE_CLIENT_SECRET`, syncs them to the
 remote ignored `.env.local`, starts the remote API with `--keep-running`, prints
 the Google authorization URL, and prints the SSH tunnel command for the browser
-callback. It still does not print Google client secret values.
+callback. It still does not print Google client secret values. If the
+OAuth-ready session fails before the ready message, the helper attempts to clean
+up the temporary remote API process and port.
 
 To check a running API without exposing local secrets, run:
 
