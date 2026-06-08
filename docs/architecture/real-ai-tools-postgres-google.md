@@ -165,6 +165,14 @@ To check a running API without exposing local secrets, run:
 npm run verify:google-oauth
 ```
 
+To check ignored env-file readiness without starting the API or printing secret
+values, run:
+
+```bash
+npm run verify:real-agent-env
+npm run verify:real-agent-env -- --host jim-mac
+```
+
 The readiness check calls `/health`, `/api/connectors/google/status`, and, when
 configuration is complete but no account is connected yet,
 `/api/connectors/google/oauth/start`. By default it redacts `client_id` and

@@ -26,6 +26,7 @@
     "prepare:remote-google-oauth": "node scripts/prepare-remote-google-oauth.mjs",
     "sync:remote-google-oauth": "node scripts/sync-remote-google-oauth-env.mjs",
     "verify:google-oauth": "node scripts/google-oauth-readiness.mjs",
+    "verify:real-agent-env": "node scripts/real-agent-env-readiness.mjs",
     "verify:remote-real-agent": "node scripts/verify-remote-real-agent.mjs",
     "verify:real-agent": "node scripts/verify-real-agent.mjs",
     "verify:secrets": "node scripts/verify-secret-hygiene.mjs",
