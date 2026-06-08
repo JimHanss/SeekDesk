@@ -18,7 +18,8 @@ secret values. `prepare:remote-google-oauth` also attempts to clean up the
 temporary remote API process if OAuth readiness fails before the ready state.
 
 To check whether a local or SSH remote checkout has the required real-agent env
-variables without revealing values:
+variables without revealing values, and to print the Google OAuth redirect URI
+and required scopes:
 
 ```bash
 npm run verify:real-agent-env

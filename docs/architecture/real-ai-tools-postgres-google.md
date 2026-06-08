@@ -166,7 +166,7 @@ npm run verify:google-oauth
 ```
 
 To check ignored env-file readiness without starting the API or printing secret
-values, run:
+values, and to see the required Google OAuth redirect URI/scopes, run:
 
 ```bash
 npm run verify:real-agent-env

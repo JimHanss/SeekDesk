@@ -14,6 +14,15 @@ const requiredKeys = [
   "GOOGLE_TOKEN_ENCRYPTION_KEY",
   "GOOGLE_OAUTH_STATE_SECRET"
 ];
+const googleConnectorScopes = [
+  "https://www.googleapis.com/auth/gmail.readonly",
+  "https://www.googleapis.com/auth/gmail.compose",
+  "https://www.googleapis.com/auth/calendar.readonly"
+];
+const localApiRedirectUri =
+  "http://127.0.0.1:4000/api/connectors/google/oauth/callback";
+const remoteApiRedirectUri =
+  "http://127.0.0.1:45100/api/connectors/google/oauth/callback";
 const args = parseArgs(process.argv.slice(2));
 
 try {
@@ -53,7 +62,8 @@ async function checkLocalReadiness(input) {
     envFiles.map(async (filePath) => readEnvFileReport(filePath))
   );
   const merged = mergeEnvValues(fileReports.map((report) => report.values));
-  const has = (key) => Boolean((process.env[key] ?? merged[key] ?? "").trim());
+  const valueOf = (key) => (process.env[key] ?? merged[key] ?? "").trim();
+  const has = (key) => Boolean(valueOf(key));
   const requirements = {
     deepseekApiKey: has("DEEPSEEK_API_KEY"),
     postgresDatabaseUrl: has("DATABASE_URL"),
@@ -94,6 +104,9 @@ async function checkLocalReadiness(input) {
       note:
         "This checks env readiness only. A connected Google account with complete scopes is still verified by verify:google-oauth or verify:remote-real-agent -- --require-google."
     },
+    googleOAuthSetup: createGoogleOAuthSetup({
+      configuredRedirectUri: valueOf("GOOGLE_REDIRECT_URI")
+    }),
     nextStep: createNextStep({
       artifactChainReady,
       googleClientReady,
@@ -223,6 +236,37 @@ function createNextStep(input) {
   return "Run npm run prepare:remote-google-oauth -- --host jim-mac, complete browser consent, then run npm run verify:remote-real-agent -- --require-google.";
 }
 
+function createGoogleOAuthSetup(input) {
+  const configuredRedirectUri =
+    input.configuredRedirectUri || localApiRedirectUri;
+
+  return {
+    googleCloudClientType: "Web application",
+    authorizedRedirectUris: uniqueStrings([
+      configuredRedirectUri,
+      localApiRedirectUri,
+      remoteApiRedirectUri
+    ]),
+    requiredScopes: googleConnectorScopes,
+    checklist: [
+      "Create or reuse a Google Cloud OAuth client with type Web application.",
+      "Add the authorized redirect URI that matches the API port used during OAuth.",
+      "Enable Gmail API and Google Calendar API for the project.",
+      "Keep the OAuth consent app in test mode if this is a private development setup, and add your Google account as a test user.",
+      "Put GOOGLE_CLIENT_ID and GOOGLE_CLIENT_SECRET only in ignored .env.local or process env; do not commit them."
+    ],
+    nextCommands: [
+      "npm run configure:google-oauth",
+      "npm run prepare:remote-google-oauth -- --host jim-mac",
+      "npm run verify:remote-real-agent -- --require-google"
+    ]
+  };
+}
+
+function uniqueStrings(values) {
+  return [...new Set(values.filter((value) => typeof value === "string" && value))];
+}
+
 async function runRemote(input) {
   const repo = input.repo ?? "/Users/jimhuang/project/SeekDesk";
   const remoteArgs = [
@@ -328,7 +372,8 @@ function printHelp() {
 
 Checks whether ignored env files contain the variables needed for the real
 DeepSeek/Postgres/Google daily-work agent. It prints only booleans and next
-steps, never secret values.
+steps, never secret values. It also prints the Google OAuth redirect URI and
+required scopes needed to finish browser consent.
 
 Options:
   --host <ssh-host>              Check a remote checkout over SSH.
