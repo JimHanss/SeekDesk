@@ -378,6 +378,7 @@ function findBrowserExecutable() {
       : process.platform === "darwin"
         ? [
             "/Applications/Google Chrome.app/Contents/MacOS/Google Chrome",
+            "/Volumes/SSD/Google Chrome.app/Contents/MacOS/Google Chrome",
             "/Applications/Microsoft Edge.app/Contents/MacOS/Microsoft Edge",
             "/Applications/Chromium.app/Contents/MacOS/Chromium"
           ]
@@ -732,6 +733,12 @@ async function runContextUsePreviewSmoke(client, apiUrl) {
     prompt: "Use customer context carefully."
   });
   const uploadSnapshot = await uploadTextContextSnapshot(apiUrl);
+  await client.send("Page.navigate", { url: smokePageUrl(apiUrl) });
+  await waitForRuntime(
+    client,
+    "Boolean(document.querySelector('[data-daily-active-view]'))",
+    "daily workspace after context upload"
+  );
 
   await selectDailyView(client, "knowledge");
   const panelState = await waitForValue(
@@ -1720,13 +1727,18 @@ function activityToolAuditExpression() {
 function modelUsagePanelExpression() {
   return withSmokeHelpers(`(() => {
     const root = document.querySelector("[data-model-usage-source]");
+    const aggregateRoot = document.querySelector("[data-model-usage-aggregates]");
+    const recordRoot = document.querySelector("[data-model-usage-records]");
     const text = root ? root.textContent || "" : "";
     return {
       present: Boolean(root),
       source: root ? root.getAttribute("data-model-usage-source") || "" : "",
       status: root ? root.getAttribute("data-model-usage-status") || "" : "",
+      aggregateCount: aggregateRoot ? Number(aggregateRoot.getAttribute("data-model-usage-aggregates") || 0) : -1,
+      recordCount: recordRoot ? Number(recordRoot.getAttribute("data-model-usage-records") || 0) : -1,
       hasDeepSeekText: /DeepSeek/i.test(text),
-      hasUsageText: /usage|tokens|prompt|completion|用量|模型/i.test(text)
+      hasUsageText: /usage|tokens|prompt|completion|model|token|DeepSeek/i.test(text),
+      hasTokenOnlyText: /token/i.test(text) && !/\$[0-9]/.test(text)
     };
   })()`);
 }
