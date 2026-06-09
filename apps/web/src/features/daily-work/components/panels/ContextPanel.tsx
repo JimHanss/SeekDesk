@@ -1,6 +1,6 @@
 "use client";
 
-import { Lock, ShieldCheck } from "lucide-react";
+import { FileUp, Lock, ShieldCheck } from "lucide-react";
 
 import { cn } from "@/lib/utils";
 
@@ -12,20 +12,25 @@ import {
 } from "../../domain";
 import type {
   ContextItem,
-  ContextPanelState
+  ContextPanelState,
+  ContextUploadState
 } from "../../types";
 
 interface ContextPanelProps {
   contextItems: ContextItem[];
   contextPanel: ContextPanelState;
+  contextUploadState: ContextUploadState;
   selectedContextId: string | null;
+  onUploadContextFile: (file: File) => Promise<void>;
   onUseContextItem: (item: ContextItem) => void;
 }
 
 export function ContextPanel({
   contextItems,
   contextPanel,
+  contextUploadState,
   selectedContextId,
+  onUploadContextFile,
   onUseContextItem
 }: ContextPanelProps) {
   return (
@@ -70,6 +75,53 @@ export function ContextPanel({
           <div className="mt-1 break-words" data-context-panel-notice>
             {contextPanel.notice}
           </div>
+        </div>
+      </div>
+
+      <div className="mb-3 rounded-[8px] border border-teal-100 bg-white p-2.5">
+        <div className="flex flex-col gap-2 md:flex-row md:items-center md:justify-between">
+          <div className="min-w-0">
+            <div className="text-xs font-medium text-teal-950">?????</div>
+            <div
+              className="mt-1 break-words text-[11px] leading-5 text-teal-700"
+              data-context-upload-notice
+            >
+              {contextUploadState.notice}
+            </div>
+          </div>
+          <label className="inline-flex cursor-pointer items-center justify-center gap-2 rounded-[8px] bg-teal-600 px-3 py-2 text-xs font-medium text-white transition-colors duration-200 hover:bg-teal-700 focus-within:outline focus-within:outline-2 focus-within:outline-teal-600">
+            <FileUp className="size-4" aria-hidden="true" />
+            ????
+            <input
+              type="file"
+              className="sr-only"
+              accept=".pdf,.docx,.txt,.md,.csv,.json,application/pdf,application/vnd.openxmlformats-officedocument.wordprocessingml.document,text/plain,text/markdown,text/csv,application/json"
+              disabled={contextUploadState.status === "uploading"}
+              onChange={(event) => {
+                const file = event.currentTarget.files?.[0];
+                if (file) {
+                  void onUploadContextFile(file);
+                }
+                event.currentTarget.value = "";
+              }}
+            />
+          </label>
+        </div>
+        <div
+          className={cn(
+            "mt-2 inline-flex rounded-[999px] px-2 py-0.5 text-[11px] font-medium",
+            contextUploadState.status === "ready"
+              ? "bg-emerald-100 text-emerald-800"
+              : contextUploadState.status === "error"
+                ? "bg-orange-100 text-orange-800"
+                : contextUploadState.status === "uploading"
+                  ? "bg-sky-100 text-sky-800"
+                  : "bg-slate-100 text-slate-700"
+          )}
+          data-context-upload-status={contextUploadState.status}
+          data-context-upload-token-estimate={contextUploadState.tokenEstimate ?? ""}
+        >
+          {contextUploadState.status}
         </div>
       </div>
       <div className="space-y-2">

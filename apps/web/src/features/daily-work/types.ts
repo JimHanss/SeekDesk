@@ -11,6 +11,84 @@ export interface ChatMessage {
   content: string;
 }
 
+export type AgentTraceSyncStatus = "idle" | "syncing" | "live" | "degraded";
+
+export interface AgentToolCallTraceItem {
+  id: string;
+  name: string;
+  status: string;
+  inputJson?: unknown;
+  outputJson?: unknown;
+  previewOnly: boolean;
+  permissionRequired: boolean;
+  error: string | null;
+  createdAt: string;
+  completedAt: string | null;
+}
+
+export interface AgentToolActivityTraceItem {
+  id: string;
+  toolName: string;
+  toolPhase: string;
+  status: string;
+  time: string;
+  title: string;
+  summary: string;
+  externalDataSummary: string;
+  reference: string | null;
+  provider: string | null;
+  previewOnly: boolean;
+  externalEffects: string[];
+}
+
+export interface AgentModelUsageTraceItem {
+  id: string;
+  provider: string;
+  model: string;
+  promptTokens: number;
+  completionTokens: number;
+  totalTokens: number;
+  createdAt: string;
+}
+
+export interface AgentModelUsageSummary {
+  provider: string;
+  model: string;
+  promptTokens: number;
+  completionTokens: number;
+  totalTokens: number;
+  recordCount: number;
+}
+
+export interface AgentPermissionBoundary {
+  previewOnly: boolean;
+  externalEffects: string[];
+  statement: string;
+}
+
+export interface AgentTraceState {
+  sessionId: string | null;
+  provider: string | null;
+  syncStatus: AgentTraceSyncStatus;
+  toolCalls: AgentToolCallTraceItem[];
+  toolActivityEvents: AgentToolActivityTraceItem[];
+  modelUsageRecords: AgentModelUsageTraceItem[];
+  modelUsageSummary: AgentModelUsageSummary;
+  permissionBoundary: AgentPermissionBoundary;
+  notice: string;
+}
+
+export interface AgentTraceResponseDto {
+  mode?: AppMode;
+  sessionId?: string;
+  toolCalls?: unknown[];
+  toolActivityEvents?: DailyActivityEventDto[];
+  modelUsageRecords?: unknown[];
+  modelUsageSummary?: Partial<AgentModelUsageSummary>;
+  permissionBoundary?: Partial<AgentPermissionBoundary>;
+  generatedAt?: string;
+}
+
 export type MessageSegment =
   | {
       type: "text";
@@ -60,9 +138,23 @@ export interface DailyWorkTemplateDto {
   title?: string;
   description?: string;
   prompt?: string;
+  systemPrompt?: string;
+  promptTemplate?: string;
+  defaultModelRoute?: ModelRouteMode;
+  allowedToolNames?: string[];
+  contextPolicy?: {
+    maxContextTokens?: number;
+    includeSelectedContext?: boolean;
+    includeRecentSession?: boolean;
+    includeArtifacts?: boolean;
+  };
+  status?: string;
   artifactType?: string;
   tags?: string[];
   enabled?: boolean;
+  version?: number;
+  createdAt?: string;
+  updatedAt?: string;
 }
 
 export interface DailyWorkTemplatesResponseDto {
@@ -397,6 +489,40 @@ export interface DailyContextUsePreviewResponseDto {
   preview?: DailyContextUsePreviewDto;
 }
 
+export interface DailyContextDocumentDto {
+  id?: string;
+  contextItemId?: string;
+  title?: string;
+  originalFileName?: string;
+  mimeType?: string;
+  fileType?: string;
+  fileSizeBytes?: number;
+  sha256?: string;
+  textPreview?: string;
+  tokenEstimate?: number;
+  status?: string;
+  tags?: string[];
+  createdAt?: string;
+  updatedAt?: string;
+}
+
+export interface DailyContextUploadResponseDto {
+  mode?: AppMode;
+  document?: DailyContextDocumentDto;
+  contextItem?: DailyContextItemDto;
+  previewOnly?: boolean;
+  externalEffects?: string[];
+}
+
+export type ContextUploadStatus = "idle" | "uploading" | "ready" | "error";
+
+export interface ContextUploadState {
+  status: ContextUploadStatus;
+  notice: string;
+  documentId: string | null;
+  tokenEstimate: number | null;
+}
+
 export interface ContextPreviewPanelState {
   contextItemId: string;
   source: ContextPreviewSource;
@@ -489,6 +615,20 @@ export interface ActivityEventItem {
   safetyBoundary: string;
   promptFocus: string;
   icon: LucideIcon;
+  toolAudit?: ActivityToolAuditItem;
+}
+
+export interface ActivityToolAuditItem {
+  toolName: string;
+  toolPhase: string;
+  provider: string | null;
+  connectorId: string | null;
+  inputFields: string[];
+  externalDataSummary: string;
+  resultCount: number | null;
+  reference: string | null;
+  previewOnly: boolean;
+  externalEffects: string[];
 }
 
 export type ActivityFeedSource = "fallback" | "api" | "websocket";
@@ -525,6 +665,21 @@ export interface DailyActivityNextAction {
   dueAt?: string;
 }
 
+export interface DailyActivityMetadataDto {
+  riskLevel?: string;
+  permissionState?: string;
+  externalEffects?: string[];
+  artifactType?: string;
+  toolName?: string;
+  toolPhase?: string;
+  provider?: string;
+  connectorId?: string;
+  inputFields?: string[];
+  externalDataSummary?: string;
+  resultCount?: number;
+  reference?: string;
+}
+
 export interface DailyActivityEventDto {
   id: string;
   mode?: AppMode;
@@ -537,6 +692,7 @@ export interface DailyActivityEventDto {
   relatedRefs?: DailyActivityRelatedRefs;
   safetyBoundary?: DailyActivitySafetyBoundary;
   nextAction?: DailyActivityNextAction | null;
+  metadata?: DailyActivityMetadataDto;
 }
 
 export interface DailyActivitySnapshotDto {
@@ -559,7 +715,11 @@ export type ModelUsageBudgetState =
   | "over_budget";
 export type ModelUsagePanelSource = "fallback" | "api" | "degraded";
 export type ModelUsageSyncStatus = "syncing" | "live" | "degraded";
-export type PersistenceLayerId = "seed_mock" | "json_local" | "future_database";
+export type PersistenceLayerId =
+  | "seed_mock"
+  | "json_local"
+  | "postgres"
+  | "future_database";
 export type PersistenceLayerStatus = "active" | "available" | "planned" | "unknown";
 export type PersistencePanelSource = "fallback" | "health" | "degraded";
 export type PersistencePanelSyncStatus = "syncing" | "live" | "degraded";
@@ -625,11 +785,34 @@ export interface UsageSnapshotItem {
   inputTokens: number;
   outputTokens: number;
   totalTokens: number;
+  callCount: number;
   estimatedCost: string;
   budgetState: string;
   budgetLevel: ModelUsageBudgetState;
   updatedAt: string;
   notes: string[];
+}
+
+export interface ModelUsageAggregateItem {
+  id: string;
+  label: string;
+  promptTokens: number;
+  completionTokens: number;
+  totalTokens: number;
+  recordCount: number;
+  startedAt?: string;
+  endedAt?: string;
+}
+
+export interface ModelUsageRecordItem {
+  id: string;
+  sessionId: string;
+  provider: string;
+  model: string;
+  promptTokens: number;
+  completionTokens: number;
+  totalTokens: number;
+  createdAt: string;
 }
 
 export interface DailyModelConfigSnapshotDto {
@@ -653,6 +836,30 @@ export interface DailyModelUsageWindowDto {
   endedAt?: string;
 }
 
+export interface DailyModelUsageAggregateDto {
+  id?: string;
+  label?: string;
+  promptTokens?: number;
+  completionTokens?: number;
+  totalTokens?: number;
+  recordCount?: number;
+  startedAt?: string;
+  endedAt?: string;
+}
+
+export interface DailyModelUsageRecordDto {
+  id?: string;
+  sessionId?: string;
+  provider?: string;
+  model?: string;
+  inputTokens?: number;
+  outputTokens?: number;
+  promptTokens?: number;
+  completionTokens?: number;
+  totalTokens?: number;
+  createdAt?: string;
+}
+
 export interface DailyModelUsageSnapshotDto {
   window?: DailyModelUsageWindowDto;
   promptTokens?: number;
@@ -662,7 +869,8 @@ export interface DailyModelUsageSnapshotDto {
   currency?: string;
   budgetState?: ModelUsageBudgetState;
   updatedAt?: string;
-  records?: unknown[];
+  records?: DailyModelUsageRecordDto[];
+  aggregates?: DailyModelUsageAggregateDto[];
 }
 
 export interface DailyModelUsageResponseDto {
@@ -726,6 +934,35 @@ export interface ConnectorPreviewPanelState {
   safetyStatement: string;
   notice: string;
 }
+
+export type EmailConnectorStatusSource = "local" | "api" | "degraded";
+export type EmailConnectorSyncStatus = "syncing" | "live" | "degraded";
+
+export interface EmailConnectorStatusState {
+  connected: boolean;
+  requiresSetup: boolean;
+  accountEmail: string | null;
+  scopes: string[];
+  requiredScopes: string[];
+  missingScopes: string[];
+  scopesComplete: boolean;
+  missingConfig: string[];
+  source: EmailConnectorStatusSource;
+  syncStatus: EmailConnectorSyncStatus;
+  notice: string;
+}
+
+export type EmailOAuthStartStatus =
+  | "idle"
+  | "starting"
+  | "opened"
+  | "requires_setup"
+  | "failed";
+
+export type GoogleConnectorStatusState = EmailConnectorStatusState;
+export type MicrosoftConnectorStatusState = EmailConnectorStatusState;
+export type GoogleOAuthStartStatus = EmailOAuthStartStatus;
+export type MicrosoftOAuthStartStatus = EmailOAuthStartStatus;
 
 export type WorkflowPreviewPanelSource = "local" | "api" | "degraded";
 export type WorkflowPreviewPanelSyncStatus = "idle" | "syncing" | "live" | "degraded";
@@ -812,6 +1049,8 @@ export interface WorkflowPreviewPanelState {
 export interface ModelUsagePanelState {
   modelSnapshots: Record<ModelRouteMode, ModelSnapshotItem>;
   usageSnapshots: Record<ModelRouteMode, UsageSnapshotItem>;
+  usageAggregates: ModelUsageAggregateItem[];
+  usageRecords: ModelUsageRecordItem[];
   source: ModelUsagePanelSource;
   syncStatus: ModelUsageSyncStatus;
   notice: string;
@@ -848,6 +1087,8 @@ export interface HealthPersistenceSnapshotDto {
   path?: string;
   filePath?: string;
   databaseReady?: boolean;
+  postgresConfigured?: boolean;
+  postgresReady?: boolean;
   futureDatabaseReady?: boolean;
   updatedAt?: string;
   notes?: string[];

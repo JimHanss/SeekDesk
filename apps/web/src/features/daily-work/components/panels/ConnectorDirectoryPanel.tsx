@@ -3,7 +3,9 @@
 import {
   AlertCircle,
   CheckCircle2,
+  ExternalLink,
   Globe,
+  Loader2,
   Lock,
   Send,
   ShieldCheck,
@@ -23,7 +25,11 @@ import type {
   ApprovalStatus,
   ConnectorFilter,
   ConnectorItem,
-  ConnectorPreviewPanelState
+  ConnectorPreviewPanelState,
+  GoogleConnectorStatusState,
+  GoogleOAuthStartStatus,
+  MicrosoftConnectorStatusState,
+  MicrosoftOAuthStartStatus
 } from "../../types";
 import {
   ConnectorPermissionPill,
@@ -36,12 +42,22 @@ interface ConnectorDirectoryPanelProps {
   connectorFilter: ConnectorFilter;
   connectorPreviewPanel: ConnectorPreviewPanelState;
   filteredConnectors: ConnectorItem[];
+  googleConnectorStatus: GoogleConnectorStatusState;
+  googleOAuthStartNotice: string;
+  googleOAuthStartStatus: GoogleOAuthStartStatus;
+  microsoftConnectorStatus: MicrosoftConnectorStatusState;
+  microsoftOAuthStartNotice: string;
+  microsoftOAuthStartStatus: MicrosoftOAuthStartStatus;
   selectedConnector: ConnectorItem | null;
   selectedConnectorApprovalRequests: ApprovalRequestItem[];
   selectedConnectorPreviewStatus: ApprovalStatus;
   onApplyConnectorPrompt: (connector: ConnectorItem) => void;
   onFilterChange: (filter: ConnectorFilter) => void;
+  onRefreshGoogleStatus: () => void;
+  onRefreshMicrosoftStatus: () => void;
   onSelectConnector: (connectorId: string) => void;
+  onStartGoogleOAuth: () => void;
+  onStartMicrosoftOAuth: () => void;
   onUpdateConnectorPreviewDecision: (
     connector: ConnectorItem,
     nextStatus: Exclude<ApprovalStatus, "waiting">
@@ -52,30 +68,248 @@ export function ConnectorDirectoryPanel({
   connectorFilter,
   connectorPreviewPanel,
   filteredConnectors,
+  googleConnectorStatus,
+  googleOAuthStartNotice,
+  googleOAuthStartStatus,
+  microsoftConnectorStatus,
+  microsoftOAuthStartNotice,
+  microsoftOAuthStartStatus,
   selectedConnector,
   selectedConnectorApprovalRequests,
   selectedConnectorPreviewStatus,
   onApplyConnectorPrompt,
   onFilterChange,
+  onRefreshGoogleStatus,
+  onRefreshMicrosoftStatus,
   onSelectConnector,
+  onStartGoogleOAuth,
+  onStartMicrosoftOAuth,
   onUpdateConnectorPreviewDecision
 }: ConnectorDirectoryPanelProps) {
+  const googleOauthBlocked =
+    (googleConnectorStatus.connected && googleConnectorStatus.scopesComplete) ||
+    googleConnectorStatus.syncStatus === "syncing" ||
+    googleOAuthStartStatus === "starting" ||
+    googleConnectorStatus.missingConfig.length > 0;
+  const googleScopeStatus = googleConnectorStatus.scopesComplete
+    ? "complete"
+    : "incomplete";
+  const microsoftOauthBlocked =
+    (microsoftConnectorStatus.connected &&
+      microsoftConnectorStatus.scopesComplete) ||
+    microsoftConnectorStatus.syncStatus === "syncing" ||
+    microsoftOAuthStartStatus === "starting" ||
+    microsoftConnectorStatus.missingConfig.length > 0;
+  const microsoftScopeStatus = microsoftConnectorStatus.scopesComplete
+    ? "complete"
+    : "incomplete";
+
   return (
     <div className="rounded-[8px] border border-teal-100 bg-teal-50 p-3">
       <div className="mb-3 flex flex-col gap-3">
         <div className="flex items-center justify-between gap-3">
           <div className="min-w-0 flex items-center gap-2 text-sm font-medium text-teal-950">
             <Globe className="size-4 shrink-0 text-teal-700" aria-hidden="true" />
-            <span className="min-w-0 break-words">连接器目录</span>
+            <span className="min-w-0 break-words">Connector Directory</span>
           </div>
           <span className="shrink-0 rounded-[999px] bg-white px-2 py-0.5 text-[11px] font-medium text-teal-700">
             {filteredConnectors.length}/{connectorItems.length}
           </span>
         </div>
         <p className="text-xs leading-5 text-teal-700">
-          当前只做目录和权限预演，不读取真实文档、日历、邮件、笔记或团队知识库。
+          Email connectors use user authorization windows to read approved mailbox
+          and calendar context, then create local previews. They never send email
+          or create calendar events.
         </p>
-        <div className="flex flex-wrap gap-2" aria-label="连接器筛选">
+
+        <div
+          className="rounded-[8px] border border-teal-200 bg-white px-3 py-2 text-xs leading-5 text-teal-900"
+          data-google-connector-status={
+            googleConnectorStatus.connected ? "connected" : "requires_setup"
+          }
+          data-google-connector-sync-status={googleConnectorStatus.syncStatus}
+          data-google-scope-status={googleScopeStatus}
+          data-google-missing-scope-count={googleConnectorStatus.missingScopes.length}
+          data-google-oauth-start-status={googleOAuthStartStatus}
+        >
+          <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
+            <div className="min-w-0">
+              <div className="flex flex-wrap items-center gap-2">
+                <span className="font-medium">
+                  Email:{" "}
+                  {googleConnectorStatus.connected ? "authorized" : "requires_setup"}
+                </span>
+                <span className="rounded-[999px] bg-teal-50 px-2 py-0.5 text-[11px] text-teal-700">
+                  {googleConnectorStatus.scopes.length} scopes
+                </span>
+                <span
+                  className={cn(
+                    "rounded-[999px] px-2 py-0.5 text-[11px]",
+                    googleConnectorStatus.scopesComplete
+                      ? "bg-emerald-50 text-emerald-700"
+                      : "bg-orange-50 text-orange-700"
+                  )}
+                >
+                  scopes {googleScopeStatus}
+                </span>
+              </div>
+              <p className="mt-1 text-teal-700">{googleConnectorStatus.notice}</p>
+              {googleConnectorStatus.missingConfig.length > 0 ? (
+                <p className="mt-1 break-words text-orange-700">
+                  Missing: {googleConnectorStatus.missingConfig.join(", ")}
+                </p>
+              ) : null}
+              {googleConnectorStatus.missingScopes.length > 0 ? (
+                <p className="mt-1 break-words text-orange-700">
+                  Missing scopes: {googleConnectorStatus.missingScopes.join(", ")}
+                </p>
+              ) : null}
+              <p className="mt-1 break-words text-[11px] text-slate-600">
+                {googleOAuthStartNotice}
+              </p>
+            </div>
+
+            <div className="flex shrink-0 flex-wrap gap-2">
+              <Button
+                type="button"
+                size="sm"
+                variant="secondary"
+                className="h-8 rounded-[8px] border-teal-200 bg-white text-teal-800 hover:bg-teal-50"
+                data-google-connector-refresh
+                onClick={onRefreshGoogleStatus}
+              >
+                {googleConnectorStatus.syncStatus === "syncing" ? (
+                  <Loader2 className="size-4 animate-spin" aria-hidden="true" />
+                ) : (
+                  <CheckCircle2 className="size-4" aria-hidden="true" />
+                )}
+                Refresh
+              </Button>
+              <Button
+                type="button"
+                size="sm"
+                variant="secondary"
+                disabled={googleOauthBlocked}
+                className="h-8 rounded-[8px] border-teal-200 bg-white text-teal-800 hover:bg-teal-50"
+                data-google-oauth-start
+                data-google-oauth-start-disabled={String(googleOauthBlocked)}
+                onClick={onStartGoogleOAuth}
+              >
+                {googleOAuthStartStatus === "starting" ? (
+                  <Loader2 className="size-4 animate-spin" aria-hidden="true" />
+                ) : (
+                  <ExternalLink className="size-4" aria-hidden="true" />
+                )}
+                {googleConnectorStatus.connected
+                  ? googleConnectorStatus.scopesComplete
+                    ? "Authorized"
+                    : "Refresh scopes"
+                  : googleConnectorStatus.missingConfig.length > 0
+                    ? "Setup needed"
+                    : "Authorize email"}
+              </Button>
+            </div>
+          </div>
+        </div>
+
+        <div
+          className="rounded-[8px] border border-cyan-200 bg-white px-3 py-2 text-xs leading-5 text-cyan-950"
+          data-microsoft-connector-status={
+            microsoftConnectorStatus.connected ? "connected" : "requires_setup"
+          }
+          data-microsoft-connector-sync-status={microsoftConnectorStatus.syncStatus}
+          data-microsoft-scope-status={microsoftScopeStatus}
+          data-microsoft-missing-scope-count={
+            microsoftConnectorStatus.missingScopes.length
+          }
+          data-microsoft-oauth-start-status={microsoftOAuthStartStatus}
+        >
+          <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
+            <div className="min-w-0">
+              <div className="flex flex-wrap items-center gap-2">
+                <span className="font-medium">
+                  Outlook / Microsoft:{" "}
+                  {microsoftConnectorStatus.connected
+                    ? "authorized"
+                    : "requires_setup"}
+                </span>
+                <span className="rounded-[999px] bg-cyan-50 px-2 py-0.5 text-[11px] text-cyan-700">
+                  {microsoftConnectorStatus.scopes.length} scopes
+                </span>
+                <span
+                  className={cn(
+                    "rounded-[999px] px-2 py-0.5 text-[11px]",
+                    microsoftConnectorStatus.scopesComplete
+                      ? "bg-emerald-50 text-emerald-700"
+                      : "bg-orange-50 text-orange-700"
+                  )}
+                >
+                  scopes {microsoftScopeStatus}
+                </span>
+              </div>
+              <p className="mt-1 text-cyan-800">
+                {microsoftConnectorStatus.notice}
+              </p>
+              {microsoftConnectorStatus.missingConfig.length > 0 ? (
+                <p className="mt-1 break-words text-orange-700">
+                  Missing: {microsoftConnectorStatus.missingConfig.join(", ")}
+                </p>
+              ) : null}
+              {microsoftConnectorStatus.missingScopes.length > 0 ? (
+                <p className="mt-1 break-words text-orange-700">
+                  Missing scopes:{" "}
+                  {microsoftConnectorStatus.missingScopes.join(", ")}
+                </p>
+              ) : null}
+              <p className="mt-1 break-words text-[11px] text-slate-600">
+                {microsoftOAuthStartNotice}
+              </p>
+            </div>
+
+            <div className="flex shrink-0 flex-wrap gap-2">
+              <Button
+                type="button"
+                size="sm"
+                variant="secondary"
+                className="h-8 rounded-[8px] border-cyan-200 bg-white text-cyan-800 hover:bg-cyan-50"
+                data-microsoft-connector-refresh
+                onClick={onRefreshMicrosoftStatus}
+              >
+                {microsoftConnectorStatus.syncStatus === "syncing" ? (
+                  <Loader2 className="size-4 animate-spin" aria-hidden="true" />
+                ) : (
+                  <CheckCircle2 className="size-4" aria-hidden="true" />
+                )}
+                Refresh
+              </Button>
+              <Button
+                type="button"
+                size="sm"
+                variant="secondary"
+                disabled={microsoftOauthBlocked}
+                className="h-8 rounded-[8px] border-cyan-200 bg-white text-cyan-800 hover:bg-cyan-50"
+                data-microsoft-oauth-start
+                data-microsoft-oauth-start-disabled={String(microsoftOauthBlocked)}
+                onClick={onStartMicrosoftOAuth}
+              >
+                {microsoftOAuthStartStatus === "starting" ? (
+                  <Loader2 className="size-4 animate-spin" aria-hidden="true" />
+                ) : (
+                  <ExternalLink className="size-4" aria-hidden="true" />
+                )}
+                {microsoftConnectorStatus.connected
+                  ? microsoftConnectorStatus.scopesComplete
+                    ? "Authorized"
+                    : "Refresh scopes"
+                  : microsoftConnectorStatus.missingConfig.length > 0
+                    ? "Setup needed"
+                    : "Authorize Outlook"}
+              </Button>
+            </div>
+          </div>
+        </div>
+
+        <div className="flex flex-wrap gap-2" aria-label="Connector filters">
           {connectorFilters.map((filter) => {
             const isActive = connectorFilter === filter;
 
@@ -164,7 +398,7 @@ export function ConnectorDirectoryPanel({
           <div className="flex items-start justify-between gap-3">
             <div className="min-w-0">
               <div className="text-[11px] font-medium text-teal-700">
-                {selectedConnector.category} 连接器
+                {selectedConnector.category} connector
               </div>
               <div className="mt-1 break-words text-sm font-semibold text-teal-950">
                 {selectedConnector.name}
@@ -177,15 +411,18 @@ export function ConnectorDirectoryPanel({
           </div>
 
           <div className="mt-3 grid gap-2">
-            <StatusRow label="权限状态" value={selectedConnector.permissionState} />
-            <StatusRow label="服务商" value={selectedConnector.provider} />
-            <StatusRow label="目录状态" value={selectedConnector.status} />
+            <StatusRow
+              label="Permission state"
+              value={selectedConnector.permissionState}
+            />
+            <StatusRow label="Provider" value={selectedConnector.provider} />
+            <StatusRow label="Catalog status" value={selectedConnector.status} />
           </div>
 
           <div className="mt-3">
             <div className="mb-2 flex items-center gap-2 text-xs font-medium text-teal-950">
               <ShieldCheck className="size-4 text-teal-700" aria-hidden="true" />
-              可用动作
+              Available Actions
             </div>
             <div className="flex flex-wrap gap-2">
               {selectedConnector.availableActions.map((action) => (
@@ -217,16 +454,16 @@ export function ConnectorDirectoryPanel({
                     aria-hidden="true"
                   />
                   <span className="min-w-0 break-words">
-                    工具调用预览 / 仅预览
+                    Tool Call Preview / Preview Only
                   </span>
                 </div>
                 <p className="mt-1 text-xs leading-5 text-cyan-800">
                   POST /api/daily/connectors/
-                  {connectorPreviewPanel.connectorId}/preview ·{" "}
+                  {connectorPreviewPanel.connectorId}/preview -{" "}
                   {connectorPreviewPanel.action}
                 </p>
                 <p className="mt-1 text-[11px] leading-4 text-cyan-700">
-                  Source: {connectorPreviewPanel.source} · Status:{" "}
+                  Source: {connectorPreviewPanel.source} - Status:{" "}
                   {connectorPreviewPanel.syncStatus}
                 </p>
               </div>
@@ -235,19 +472,19 @@ export function ConnectorDirectoryPanel({
 
             <div className="mt-3 grid gap-2">
               <StatusRow
-                label="关联上下文"
+                label="Related context"
                 value={
                   connectorPreviewPanel.relatedContextItemIds.length > 0
-                    ? connectorPreviewPanel.relatedContextItemIds.join("、")
-                    : "无需上下文"
+                    ? connectorPreviewPanel.relatedContextItemIds.join(", ")
+                    : "No extra context required"
                 }
               />
               <StatusRow
-                label="审批请求"
+                label="Approval requests"
                 value={
                   connectorPreviewPanel.requiredApprovalRequestIds.length > 0
-                    ? connectorPreviewPanel.requiredApprovalRequestIds.join("、")
-                    : "无需审批"
+                    ? connectorPreviewPanel.requiredApprovalRequestIds.join(", ")
+                    : "No approval required"
                 }
               />
             </div>
@@ -293,7 +530,8 @@ export function ConnectorDirectoryPanel({
               </div>
             ) : (
               <p className="mt-3 rounded-[8px] border border-cyan-100 bg-white px-3 py-2 text-xs leading-5 text-cyan-800">
-                该连接器当前仅开放公开引用预览，不需要审批即可生成接入提示。
+                This connector currently exposes public preview prompts only, so
+                no approval is required before generating a local access prompt.
               </p>
             )}
 
@@ -322,7 +560,7 @@ export function ConnectorDirectoryPanel({
                 }}
               >
                 <CheckCircle2 className="size-4" aria-hidden="true" />
-                批准预览
+                Approve preview
               </Button>
               <Button
                 type="button"
@@ -337,7 +575,7 @@ export function ConnectorDirectoryPanel({
                 }}
               >
                 <Square className="size-4" aria-hidden="true" />
-                拒绝预览
+                Deny preview
               </Button>
             </div>
           </div>
@@ -345,7 +583,7 @@ export function ConnectorDirectoryPanel({
           <div className="mt-3 rounded-[8px] border border-teal-100 bg-white px-3 py-2">
             <div className="mb-2 flex items-center gap-2 text-xs font-medium text-teal-950">
               <AlertCircle className="size-4 text-orange-600" aria-hidden="true" />
-              下一步接入提示
+              Next Setup Notes
             </div>
             <ul className="space-y-1">
               {selectedConnector.notes.map((note) => (
@@ -370,10 +608,11 @@ export function ConnectorDirectoryPanel({
             onClick={() => onApplyConnectorPrompt(selectedConnector)}
           >
             <Send className="size-4" aria-hidden="true" />
-            填入接入提示
+            Fill Access Prompt
           </Button>
           <p className="mt-2 text-xs leading-5 text-teal-700">
-            该操作只填充输入框，不连接真实授权、登录或外部服务。
+            This action only fills the assistant input. It does not authorize,
+            sign in, or call external services.
           </p>
         </div>
       ) : null}

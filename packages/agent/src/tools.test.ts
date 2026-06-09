@@ -1,6 +1,12 @@
 import { describe, expect, it } from "vitest";
 
-import { ToolOrchestrator, ToolRegistry } from "./tools.js";
+import {
+  ToolOrchestrator,
+  ToolRegistry,
+  createModelToolDefinitions,
+  fromModelToolName,
+  toModelToolName
+} from "./tools.js";
 
 describe("ToolRegistry", () => {
   it("registers and looks up tool definitions", () => {
@@ -142,6 +148,68 @@ describe("ToolOrchestrator", () => {
         status: "failed",
         error: "unknown_tool"
       })
+    );
+  });
+
+  it("maps model-safe tool names back to internal tool names", async () => {
+    const orchestrator = new ToolOrchestrator(
+      new ToolRegistry([
+        {
+          name: "gmail.search_threads",
+          mode: "daily_work",
+          description: "Search Gmail.",
+          parametersJsonSchema: {
+            type: "object",
+            properties: {}
+          }
+        }
+      ])
+    );
+
+    await expect(
+      orchestrator.orchestrate({
+        name: "gmail_search_threads"
+      })
+    ).resolves.toEqual(
+      expect.objectContaining({
+        name: "gmail.search_threads",
+        status: "completed",
+        mode: "daily_work"
+      })
+    );
+  });
+});
+
+describe("model tool names", () => {
+  it("converts internal dotted names to DeepSeek-compatible names", () => {
+    expect(toModelToolName("gmail.search_threads")).toBe("gmail_search_threads");
+    expect(toModelToolName("calendar.propose_event_preview")).toBe(
+      "calendar_propose_event_preview"
+    );
+  });
+
+  it("emits model-safe tool definitions and resolves them", () => {
+    const registry = new ToolRegistry([
+      {
+        name: "daily.persist_artifact",
+        mode: "daily_work",
+        description: "Persist artifact.",
+        parametersJsonSchema: {
+          type: "object",
+          properties: {}
+        }
+      }
+    ]);
+
+    expect(createModelToolDefinitions(registry)).toEqual([
+      expect.objectContaining({
+        function: expect.objectContaining({
+          name: "daily_persist_artifact"
+        })
+      })
+    ]);
+    expect(fromModelToolName(registry, "daily_persist_artifact")).toBe(
+      "daily.persist_artifact"
     );
   });
 });

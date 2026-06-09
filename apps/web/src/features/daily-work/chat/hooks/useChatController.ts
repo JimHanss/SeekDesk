@@ -5,26 +5,39 @@ import { useEffect, useMemo, useRef, useState } from "react";
 
 import {
   activeMode,
+  createAgentTraceDegradedState,
+  createEmptyAgentTraceState,
   formatChatError,
   initialMessages,
+  mapAgentTraceResponse,
   readAssistantResponse
 } from "../../domain";
 import type {
+  AgentTraceResponseDto,
+  AgentTraceState,
   ChatMessage,
   ChatStatus
 } from "../../types";
 
 interface UseChatControllerOptions {
   apiBaseUrl: string;
+  onActivityChanged?: () => Promise<void> | void;
 }
 
-export function useChatController({ apiBaseUrl }: UseChatControllerOptions) {
+export function useChatController({
+  apiBaseUrl,
+  onActivityChanged
+}: UseChatControllerOptions) {
   const [messages, setMessages] = useState<ChatMessage[]>(initialMessages);
   const [input, setInput] = useState("");
   const [status, setStatus] = useState<ChatStatus>("idle");
   const [error, setError] = useState<string | null>(null);
   const [lastSubmittedPrompt, setLastSubmittedPrompt] = useState<string | null>(
     null
+  );
+  const [activeSessionId, setActiveSessionId] = useState<string | null>(null);
+  const [agentTrace, setAgentTrace] = useState<AgentTraceState>(
+    createEmptyAgentTraceState()
   );
   const abortRef = useRef<AbortController | null>(null);
   const inputRef = useRef<HTMLTextAreaElement | null>(null);
@@ -72,6 +85,13 @@ export function useChatController({ apiBaseUrl }: UseChatControllerOptions) {
     setError(null);
     setLastSubmittedPrompt(prompt);
     setStatus("submitting");
+    setAgentTrace(
+      createEmptyAgentTraceState({
+        sessionId: activeSessionId,
+        syncStatus: "syncing",
+        notice: "Waiting for the model stream to produce an agent trace."
+      })
+    );
     setMessages((current) => [...current, userMessage, assistantMessage]);
 
     try {
@@ -82,6 +102,7 @@ export function useChatController({ apiBaseUrl }: UseChatControllerOptions) {
         },
         body: JSON.stringify({
           mode: activeMode,
+          ...(activeSessionId ? { sessionId: activeSessionId } : {}),
           messages: nextMessages.map((message) => ({
             role: message.role,
             content: message.content
@@ -92,6 +113,24 @@ export function useChatController({ apiBaseUrl }: UseChatControllerOptions) {
 
       if (!response.ok) {
         throw new Error(await formatChatError(response));
+      }
+
+      const responseSessionId =
+        response.headers.get("x-seekdesk-chat-session-id")?.trim() ??
+        activeSessionId;
+      const responseProvider =
+        response.headers.get("x-seekdesk-chat-provider")?.trim() ?? null;
+
+      if (responseSessionId) {
+        setActiveSessionId(responseSessionId);
+        setAgentTrace(
+          createEmptyAgentTraceState({
+            sessionId: responseSessionId,
+            provider: responseProvider,
+            syncStatus: "syncing",
+            notice: "Model stream connected; syncing agent trace after completion."
+          })
+        );
       }
 
       setStatus("streaming");
@@ -108,6 +147,13 @@ export function useChatController({ apiBaseUrl }: UseChatControllerOptions) {
       }
 
       setStatus("idle");
+      if (responseSessionId) {
+        void refreshAgentTrace(responseSessionId, responseProvider).finally(() => {
+          void onActivityChanged?.();
+        });
+      } else {
+        void onActivityChanged?.();
+      }
     } catch (requestError) {
       if (controller.signal.aborted) {
         appendAssistantDelta(
@@ -179,7 +225,47 @@ export function useChatController({ apiBaseUrl }: UseChatControllerOptions) {
     void submitPrompt(lastSubmittedPrompt);
   }
 
+  async function refreshAgentTrace(
+    sessionId = activeSessionId,
+    provider = agentTrace.provider
+  ) {
+    if (!sessionId) {
+      return;
+    }
+
+    setAgentTrace((current) => ({
+      ...current,
+      sessionId,
+      provider,
+      syncStatus: "syncing",
+      notice: "Refreshing agent trace from the API."
+    }));
+
+    try {
+      const response = await fetch(
+        `${apiBaseUrl}/api/chat/sessions/${encodeURIComponent(sessionId)}/trace`
+      );
+
+      if (!response.ok) {
+        throw new Error(`Trace API returned ${response.status}`);
+      }
+
+      const payload = (await response.json()) as AgentTraceResponseDto;
+      setAgentTrace(mapAgentTraceResponse(payload, { sessionId, provider }));
+    } catch (traceError) {
+      setAgentTrace(
+        createAgentTraceDegradedState({
+          sessionId,
+          provider,
+          reason: traceError instanceof Error ? traceError.message : "unknown error"
+        })
+      );
+    }
+  }
+
   return {
+    activeSessionId,
+    agentTrace,
     applyPrompt,
     cancelRequest,
     endpoint,
@@ -191,6 +277,7 @@ export function useChatController({ apiBaseUrl }: UseChatControllerOptions) {
     lastSubmittedPrompt,
     messages,
     messagesEndRef,
+    refreshAgentTrace,
     retryLastPrompt,
     setError,
     setInput,

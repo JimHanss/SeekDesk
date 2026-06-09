@@ -151,7 +151,10 @@ export function mapTemplateDtoToItem(
     prompt: nonEmptyText(template.prompt, "请基于当前上下文继续完成这项日常工作。"),
     artifactType,
     tags,
-    enabled: template.enabled !== false,
+    enabled:
+      template.status !== "archived" &&
+      template.status !== "disabled" &&
+      template.enabled !== false,
     icon: templateIcon({
       category,
       artifactType,

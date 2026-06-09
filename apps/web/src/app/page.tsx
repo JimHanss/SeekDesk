@@ -37,6 +37,7 @@ import {
   useArtifacts,
   useConnectorPreview,
   useDailyContext,
+  useGoogleConnectorStatus,
   useModelUsagePanel,
   usePersistencePanel,
   useSessionHistory,
@@ -111,6 +112,15 @@ export default function Page() {
 
   const apiBaseUrl = useMemo(() => getRuntimeApiBaseUrl().replace(/\/$/, ""), []);
   const {
+    activityConnectionStatus,
+    activityFeedEvents,
+    activityFeedNotice,
+    activityFeedSource,
+    activityLastUpdated,
+    refreshActivityFeed
+  } = useActivityFeed(apiBaseUrl, setSelectedActivityEventId);
+  const {
+    agentTrace,
     applyPrompt,
     cancelRequest,
     endpoint,
@@ -126,12 +136,14 @@ export default function Page() {
     setError,
     setInput,
     status
-  } = useChatController({ apiBaseUrl });
+  } = useChatController({ apiBaseUrl, onActivityChanged: refreshActivityFeed });
   const { templatePanel, setTemplatePanel } = useTemplatePanel(apiBaseUrl);
-  const { contextPanel, setContextPanel } = useDailyContext(
-    apiBaseUrl,
-    setSelectedContextId
-  );
+  const {
+    contextPanel,
+    contextUploadState,
+    setContextPanel,
+    uploadContextFile
+  } = useDailyContext(apiBaseUrl, setSelectedContextId);
   const { approvalPanel, refreshApprovalLedger, setApprovalPanel } =
     useApprovalLedger(apiBaseUrl);
   const {
@@ -149,17 +161,23 @@ export default function Page() {
     selectedArtifactId,
     setSelectedArtifactId
   );
-  const { modelUsagePanel } = useModelUsagePanel(apiBaseUrl);
+  const { modelUsagePanel } = useModelUsagePanel(
+    apiBaseUrl,
+    agentTrace.sessionId
+  );
   const { persistencePanel } = usePersistencePanel(apiBaseUrl);
   const {
-    activityConnectionStatus,
-    activityFeedEvents,
-    activityFeedNotice,
-    activityFeedSource,
-    activityLastUpdated,
-    refreshActivityFeed
-  } = useActivityFeed(apiBaseUrl, setSelectedActivityEventId);
-
+    googleConnectorStatus,
+    googleOAuthStartNotice,
+    googleOAuthStartStatus,
+    microsoftConnectorStatus,
+    microsoftOAuthStartNotice,
+    microsoftOAuthStartStatus,
+    refreshGoogleConnectorStatus,
+    refreshMicrosoftConnectorStatus,
+    startGoogleOAuth,
+    startMicrosoftOAuth
+  } = useGoogleConnectorStatus(apiBaseUrl);
   const activeModelSnapshot = modelUsagePanel.modelSnapshots[modelRouteMode];
   const modelInputPlaceholder =
     modelRouteMode === "fast"
@@ -431,6 +449,13 @@ export default function Page() {
                   <Wand2 className="size-4" aria-hidden="true" />
                   模板
                 </Button>
+                <a
+                  href="/templates"
+                  className="inline-flex h-9 items-center justify-center gap-2 rounded-[6px] border border-slate-200 bg-white px-3 text-sm font-medium text-slate-700 transition-colors duration-200 hover:border-blue-200 hover:bg-blue-50 hover:text-blue-700 focus-visible:outline focus-visible:outline-2 focus-visible:outline-blue-600"
+                >
+                  <Wand2 className="size-4" aria-hidden="true" />
+                  ????
+                </a>
                 <Button
                   type="button"
                   size="sm"
@@ -495,6 +520,7 @@ export default function Page() {
                       modelName={activeModelSnapshot.selectedModel}
                       onDismissError={() => setError(null)}
                       onRetry={retryLastPrompt}
+                      agentTrace={agentTrace}
                       status={status}
                     />
                   </div>
@@ -571,7 +597,9 @@ export default function Page() {
                 <ContextPanel
                   contextItems={contextPanelItems}
                   contextPanel={contextPanel}
+                  contextUploadState={contextUploadState}
                   selectedContextId={selectedContextId}
+                  onUploadContextFile={uploadContextFile}
                   onUseContextItem={useContextAndOpenAssistant}
                 />
               </ModuleStack>
@@ -597,12 +625,26 @@ export default function Page() {
                   connectorFilter={connectorFilter}
                   connectorPreviewPanel={connectorPreviewPanel}
                   filteredConnectors={filteredConnectors}
+                  googleConnectorStatus={googleConnectorStatus}
+                  googleOAuthStartNotice={googleOAuthStartNotice}
+                  googleOAuthStartStatus={googleOAuthStartStatus}
+                  microsoftConnectorStatus={microsoftConnectorStatus}
+                  microsoftOAuthStartNotice={microsoftOAuthStartNotice}
+                  microsoftOAuthStartStatus={microsoftOAuthStartStatus}
                   selectedConnector={selectedConnector}
                   selectedConnectorApprovalRequests={selectedConnectorApprovalRequests}
                   selectedConnectorPreviewStatus={selectedConnectorPreviewStatus}
                   onApplyConnectorPrompt={applyConnectorAndOpenAssistant}
                   onFilterChange={setConnectorFilter}
+                  onRefreshGoogleStatus={() => {
+                    void refreshGoogleConnectorStatus();
+                  }}
+                  onRefreshMicrosoftStatus={() => {
+                    void refreshMicrosoftConnectorStatus();
+                  }}
                   onSelectConnector={setSelectedConnectorId}
+                  onStartGoogleOAuth={startGoogleOAuth}
+                  onStartMicrosoftOAuth={startMicrosoftOAuth}
                   onUpdateConnectorPreviewDecision={updateConnectorPreviewDecision}
                 />
               </ModuleStack>

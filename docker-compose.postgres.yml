@@ -1,0 +1,21 @@
+services:
+  postgres:
+    image: postgres:16-alpine
+    container_name: seekdesk-postgres
+    restart: unless-stopped
+    environment:
+      POSTGRES_DB: ${SEEKDESK_POSTGRES_DB:-seekdesk}
+      POSTGRES_USER: ${SEEKDESK_POSTGRES_USER:-seekdesk}
+      POSTGRES_PASSWORD: ${SEEKDESK_POSTGRES_PASSWORD:-seekdesk_dev_password}
+    ports:
+      - "${SEEKDESK_POSTGRES_HOST:-127.0.0.1}:${SEEKDESK_POSTGRES_PORT:-5432}:5432"
+    volumes:
+      - seekdesk_postgres_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U \"$${POSTGRES_USER}\" -d \"$${POSTGRES_DB}\""]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+
+volumes:
+  seekdesk_postgres_data:

@@ -3,7 +3,7 @@ import * as React from "react";
 import * as domain from "../domain";
 import type * as DailyWorkTypes from "../types";
 
-export function useModelUsagePanel(apiBaseUrl: string) {
+export function useModelUsagePanel(apiBaseUrl: string, sessionId?: string | null) {
   const [modelUsagePanel, setModelUsagePanel] = React.useState<DailyWorkTypes.ModelUsagePanelState>(
     () => domain.createFallbackModelUsagePanelState()
   );
@@ -20,12 +20,15 @@ export function useModelUsagePanel(apiBaseUrl: string) {
       }));
 
       try {
-        const response = await fetch(
-          `${apiBaseUrl}/api/daily/model-usage?mode=${domain.activeMode}`,
-          {
-            signal: controller.signal
-          }
-        );
+        const url = new URL(`${apiBaseUrl}/api/daily/model-usage`);
+        url.searchParams.set("mode", domain.activeMode);
+        if (sessionId) {
+          url.searchParams.set("sessionId", sessionId);
+        }
+
+        const response = await fetch(url.toString(), {
+          signal: controller.signal
+        });
 
         if (!response.ok) {
           throw new Error(`Model usage request failed: ${response.status}`);
@@ -59,7 +62,7 @@ export function useModelUsagePanel(apiBaseUrl: string) {
       isDisposed = true;
       controller.abort();
     };
-  }, [apiBaseUrl])
+  }, [apiBaseUrl, sessionId]);
 
   return { modelUsagePanel };
 }

@@ -49,11 +49,14 @@ async function main() {
     await runApprovalLedgerSmoke(client, apiServer.url);
     await runContextUsePreviewSmoke(client, apiServer.url);
     await runTemplateApplyPreviewSmoke(client, apiServer.url);
+    await runTemplateManagerSmoke(client, apiServer.url);
     await runSessionRestoreSmoke(client, apiServer.url);
     await runArtifactsSmoke(client, apiServer.url);
     await runActivityStreamSmoke(client, apiServer.url);
     await runModelUsageSmoke(client, apiServer.url);
-    await runDataLayerStateSmoke(client);
+    await runDataLayerStateSmoke(client, apiServer.url);
+    await runGoogleConnectorStatusSmoke(client, apiServer.url);
+    await runMicrosoftConnectorStatusSmoke(client, apiServer.url);
     await runApprovalPreviewSmoke(client, apiServer.url);
     await runWorkflowPreviewSmoke(client, apiServer.url);
     await runPostActionRefreshSmoke(client, apiServer.url);
@@ -375,6 +378,7 @@ function findBrowserExecutable() {
       : process.platform === "darwin"
         ? [
             "/Applications/Google Chrome.app/Contents/MacOS/Google Chrome",
+            "/Volumes/SSD/Google Chrome.app/Contents/MacOS/Google Chrome",
             "/Applications/Microsoft Edge.app/Contents/MacOS/Microsoft Edge",
             "/Applications/Chromium.app/Contents/MacOS/Chromium"
           ]
@@ -728,6 +732,13 @@ async function runContextUsePreviewSmoke(client, apiUrl) {
     templateId: "email-draft",
     prompt: "Use customer context carefully."
   });
+  const uploadSnapshot = await uploadTextContextSnapshot(apiUrl);
+  await client.send("Page.navigate", { url: smokePageUrl(apiUrl) });
+  await waitForRuntime(
+    client,
+    "Boolean(document.querySelector('[data-daily-active-view]'))",
+    "daily workspace after context upload"
+  );
 
   await selectDailyView(client, "knowledge");
   const panelState = await waitForValue(
@@ -737,9 +748,11 @@ async function runContextUsePreviewSmoke(client, apiUrl) {
       state.present &&
       state.source === "api" &&
       state.syncStatus === "live" &&
-      state.count >= 5 &&
+      state.count >= 6 &&
       state.hasCustomerEmail &&
-      state.hasMeetingNotes,
+      state.hasMeetingNotes &&
+      state.hasUploadControl &&
+      state.uploadStatus,
     "context API panel state"
   );
 
@@ -769,6 +782,8 @@ async function runContextUsePreviewSmoke(client, apiUrl) {
     name: "context use preview API and UI",
     status: "passed",
     contextItems: contextSnapshot.items.length,
+    uploadedContextItemId: uploadSnapshot.contextItem.id,
+    uploadTokenEstimate: uploadSnapshot.document.tokenEstimate,
     trackedContextItems: trackedContextItems.map((item) => item.id),
     contextItemId: preview.contextItemId,
     permissionState: preview.permissionState,
@@ -852,6 +867,57 @@ async function runTemplateApplyPreviewSmoke(client, apiUrl) {
     requiredApprovalRequestIds: preview.requiredApprovalRequestIds,
     promptValueLength: promptState.valueLength
   });
+}
+
+async function runTemplateManagerSmoke(client, apiUrl) {
+  const url = new URL("/templates", smokeUrl);
+  url.searchParams.set("seekdeskSmokeApiUrl", apiUrl);
+  await client.send("Page.navigate", { url: url.toString() });
+  await waitForRuntime(
+    client,
+    "Boolean(document.querySelector('[data-template-manager-page]'))",
+    "template manager page"
+  );
+
+  const pageState = await waitForValue(
+    client,
+    `(() => {
+      const root = document.querySelector("[data-template-manager-page]");
+      const list = document.querySelector("[data-template-manager-list]");
+      const form = document.querySelector("[data-template-manager-form]");
+      const cards = list ? [...list.querySelectorAll("[data-template-manager-card]")] : [];
+      const text = root ? root.textContent || "" : "";
+      return {
+        present: Boolean(root),
+        status: root ? root.getAttribute("data-template-manager-status") || "" : "",
+        listPresent: Boolean(list),
+        formPresent: Boolean(form),
+        cards: cards.length,
+        hasManagerText: /Template Manager|Agent Template/i.test(text)
+      };
+    })()`,
+    (state) =>
+      state.present &&
+      state.listPresent &&
+      state.formPresent &&
+      state.cards >= 1 &&
+      state.hasManagerText,
+    "template manager shell"
+  );
+
+  checks.push({
+    name: "template manager page",
+    status: "passed",
+    cards: pageState.cards,
+    syncStatus: pageState.status
+  });
+
+  await client.send("Page.navigate", { url: smokePageUrl(apiUrl) });
+  await waitForRuntime(
+    client,
+    "Boolean(document.querySelector('[data-daily-active-view]'))",
+    "daily workspace after template manager"
+  );
 }
 
 async function runSessionRestoreSmoke(client, apiUrl) {
@@ -1019,7 +1085,10 @@ async function runModelUsageSmoke(client, apiUrl) {
       state.source === "api" &&
       (state.status === "live" || state.status === "api") &&
       state.hasDeepSeekText &&
-      state.hasUsageText,
+      state.hasUsageText &&
+      state.hasTokenOnlyText &&
+      state.aggregateCount >= 0 &&
+      state.recordCount >= 0,
     "model usage API panel state"
   );
 
@@ -1029,11 +1098,26 @@ async function runModelUsageSmoke(client, apiUrl) {
     source: pageState.source,
     syncStatus: pageState.status,
     selectedModel: apiSnapshot.config.selectedModel,
-    recordCount: apiSnapshot.usage.records.length
+    recordCount: apiSnapshot.usage.records.length,
+    aggregateCount: apiSnapshot.usage.aggregates.length,
+    pageAggregateCount: pageState.aggregateCount,
+    pageRecordCount: pageState.recordCount
   });
 }
 
-async function runDataLayerStateSmoke(client) {
+async function runDataLayerStateSmoke(client, apiUrl) {
+  const healthSnapshot = await fetchHealthSnapshot(apiUrl);
+  const dataLayer = healthSnapshot.dataLayer || healthSnapshot;
+
+  if (
+    typeof dataLayer.currentLayer !== "string" ||
+    typeof dataLayer.futureDatabaseReady !== "boolean" ||
+    typeof dataLayer.postgresConfigured !== "boolean" ||
+    typeof dataLayer.postgresReady !== "boolean"
+  ) {
+    throw new Error("Health response did not expose the expected data layer fields.");
+  }
+
   await selectDailyView(client, "knowledge");
 
   const pageState = await waitForValue(
@@ -1059,11 +1143,138 @@ async function runDataLayerStateSmoke(client) {
   checks.push({
     name: "data layer state display",
     status: pageState.hasDedicatedState ? "passed" : "fallback-compatible",
+    currentLayer: dataLayer.currentLayer,
+    postgresConfigured: dataLayer.postgresConfigured,
+    postgresReady: dataLayer.postgresReady,
     dedicatedState: pageState.hasDedicatedState,
     activityFeedSource: pageState.activityFeedSource,
     activityConnectionStatus: pageState.activityConnectionStatus,
     modelUsageSource: pageState.modelUsageSource,
     modelUsageStatus: pageState.modelUsageStatus
+  });
+}
+
+async function runGoogleConnectorStatusSmoke(client, apiUrl) {
+  const statusSnapshot = await fetchGoogleConnectorStatusSnapshot(apiUrl);
+
+  if (typeof statusSnapshot.connected !== "boolean") {
+    throw new Error("Google connector status did not expose a connected boolean.");
+  }
+  if (!Array.isArray(statusSnapshot.requiredScopes)) {
+    throw new Error("Google connector status did not expose requiredScopes.");
+  }
+  if (!Array.isArray(statusSnapshot.missingScopes)) {
+    throw new Error("Google connector status did not expose missingScopes.");
+  }
+  if (typeof statusSnapshot.scopesComplete !== "boolean") {
+    throw new Error("Google connector status did not expose scopesComplete.");
+  }
+
+  const apiStatus =
+    statusSnapshot.status ||
+    (statusSnapshot.connected
+      ? "connected"
+      : statusSnapshot.requiresSetup
+        ? "requires_setup"
+        : "degraded");
+
+  if (!["connected", "requires_setup", "degraded"].includes(apiStatus)) {
+    throw new Error(`Unexpected Google connector status: ${apiStatus}`);
+  }
+
+  await selectDailyView(client, "connectors");
+
+  const pageState = await waitForValue(
+    client,
+    googleConnectorStatusExpression(),
+    (state) =>
+      state.present &&
+      ["connected", "requires_setup"].includes(state.status) &&
+      state.syncStatus &&
+      state.refreshPresent &&
+      state.oauthPresent &&
+      state.oauthStartStatus &&
+      state.scopeStatus &&
+      state.textLength > 0,
+    "Google connector status panel"
+  );
+
+  checks.push({
+    name: "google connector status",
+    status: "passed",
+    apiStatus,
+    apiConnected: statusSnapshot.connected,
+    apiScopesComplete: statusSnapshot.scopesComplete,
+    apiMissingScopes: statusSnapshot.missingScopes.length,
+    pageStatus: pageState.status,
+    scopeStatus: pageState.scopeStatus,
+    missingScopeCount: pageState.missingScopeCount,
+    pageSyncStatus: pageState.syncStatus,
+    refreshPresent: pageState.refreshPresent,
+    oauthStartStatus: pageState.oauthStartStatus,
+    oauthStartDisabled: pageState.oauthStartDisabled
+  });
+}
+
+async function runMicrosoftConnectorStatusSmoke(client, apiUrl) {
+  const statusSnapshot = await fetchMicrosoftConnectorStatusSnapshot(apiUrl);
+
+  if (typeof statusSnapshot.connected !== "boolean") {
+    throw new Error("Microsoft connector status did not expose a connected boolean.");
+  }
+  if (!Array.isArray(statusSnapshot.requiredScopes)) {
+    throw new Error("Microsoft connector status did not expose requiredScopes.");
+  }
+  if (!Array.isArray(statusSnapshot.missingScopes)) {
+    throw new Error("Microsoft connector status did not expose missingScopes.");
+  }
+  if (typeof statusSnapshot.scopesComplete !== "boolean") {
+    throw new Error("Microsoft connector status did not expose scopesComplete.");
+  }
+
+  const apiStatus =
+    statusSnapshot.status ||
+    (statusSnapshot.connected
+      ? "connected"
+      : statusSnapshot.requiresSetup
+        ? "requires_setup"
+        : "degraded");
+
+  if (!["connected", "requires_setup", "degraded"].includes(apiStatus)) {
+    throw new Error(`Unexpected Microsoft connector status: ${apiStatus}`);
+  }
+
+  await selectDailyView(client, "connectors");
+
+  const pageState = await waitForValue(
+    client,
+    microsoftConnectorStatusExpression(),
+    (state) =>
+      state.present &&
+      ["connected", "requires_setup"].includes(state.status) &&
+      state.syncStatus &&
+      state.refreshPresent &&
+      state.oauthPresent &&
+      state.oauthStartStatus &&
+      state.scopeStatus &&
+      state.textLength > 0,
+    "Microsoft connector status panel"
+  );
+
+  checks.push({
+    name: "microsoft connector status",
+    status: "passed",
+    apiStatus,
+    apiConnected: statusSnapshot.connected,
+    apiScopesComplete: statusSnapshot.scopesComplete,
+    apiMissingScopes: statusSnapshot.missingScopes.length,
+    pageStatus: pageState.status,
+    scopeStatus: pageState.scopeStatus,
+    missingScopeCount: pageState.missingScopeCount,
+    pageSyncStatus: pageState.syncStatus,
+    refreshPresent: pageState.refreshPresent,
+    oauthStartStatus: pageState.oauthStartStatus,
+    oauthStartDisabled: pageState.oauthStartDisabled
   });
 }
 
@@ -1378,7 +1589,7 @@ async function runChatSendSmoke(client) {
     throw new Error("Chat send smoke could not find a visible chat endpoint.");
   }
 
-  const prompt = `daily_work browser smoke chat send ${Date.now()}`;
+  const prompt = `daily_work browser smoke agent tool trace ${Date.now()}`;
   const apiResponse = await fetchChatTextResponse(endpoint, prompt);
   assertChatTextApiResponse(apiResponse, prompt, "chat API response");
   const responseSignature = apiResponse.body.includes("Mock daily-work AI response")
@@ -1402,6 +1613,25 @@ async function runChatSendSmoke(client) {
       !state.hasErrorText,
     "chat submit API response"
   );
+  const traceState = await waitForValue(
+    client,
+    agentTraceExpression(),
+    (state) =>
+      state.present &&
+      state.status === "live" &&
+      state.hasSession &&
+      state.boundary === "preview-only" &&
+      state.hasToolTraceSelectors &&
+      state.usageRecords > 0 &&
+      state.toolRows > 0 &&
+      state.timelineRows > 0 &&
+      state.timelineCount === state.timelineRows &&
+      state.planRows === state.toolRows &&
+      state.executionRows === state.toolRows &&
+      state.resultRows === state.toolRows &&
+      state.referenceRows === state.toolRows,
+    "agent trace panel after chat"
+  );
 
   checks.push({
     name: "chat submit renders API response",
@@ -1410,6 +1640,44 @@ async function runChatSendSmoke(client) {
     structuredChatDom: pageState.present,
     matchedResponseSignature: pageState.hasResponseSignature,
     responseLength: pageState.responseTextLength
+  });
+  checks.push({
+    name: "agent trace panel",
+    status: "passed",
+    traceStatus: traceState.status,
+    sessionText: traceState.sessionText,
+    usageRecords: traceState.usageRecords,
+    boundary: traceState.boundary,
+    toolRows: traceState.toolRows,
+    planRows: traceState.planRows,
+    executionRows: traceState.executionRows,
+    resultRows: traceState.resultRows,
+    referenceRows: traceState.referenceRows,
+    timelineRows: traceState.timelineRows,
+    timelineReferenceRows: traceState.timelineReferenceRows
+  });
+
+  await selectDailyView(client, "activity");
+  const activityToolAuditState = await waitForValue(
+    client,
+    activityToolAuditExpression(),
+    (state) =>
+      state.present &&
+      state.auditRows > 0 &&
+      state.chips >= state.auditRows &&
+      state.referenceRows > 0 &&
+      state.previewOnlyRows > 0,
+    "activity tool audit after chat"
+  );
+
+  checks.push({
+    name: "activity tool audit",
+    status: "passed",
+    auditRows: activityToolAuditState.auditRows,
+    chips: activityToolAuditState.chips,
+    referenceRows: activityToolAuditState.referenceRows,
+    previewOnlyRows: activityToolAuditState.previewOnlyRows,
+    toolNames: activityToolAuditState.toolNames
   });
 }
 
@@ -1433,16 +1701,44 @@ function activityFeedExpression(expectedTitles) {
   })()`);
 }
 
+function activityToolAuditExpression() {
+  return withSmokeHelpers(`(() => {
+    const root = document.querySelector("[data-activity-feed]");
+    const rows = root ? [...root.querySelectorAll("[data-activity-tool-audit-row]")] : [];
+    const auditRows = rows.filter((row) => row.getAttribute("data-activity-tool-audit-row"));
+    const chips = root ? [...root.querySelectorAll("[data-activity-tool-chip]")] : [];
+    const referenceRows = auditRows.filter((row) =>
+      Boolean(row.getAttribute("data-activity-tool-reference"))
+    );
+    const previewOnlyRows = auditRows.filter(
+      (row) => row.getAttribute("data-activity-tool-boundary") === "preview-only"
+    );
+    return {
+      present: Boolean(root),
+      auditRows: auditRows.length,
+      chips: chips.length,
+      referenceRows: referenceRows.length,
+      previewOnlyRows: previewOnlyRows.length,
+      toolNames: auditRows.map((row) => row.getAttribute("data-activity-tool-audit-row"))
+    };
+  })()`);
+}
+
 function modelUsagePanelExpression() {
   return withSmokeHelpers(`(() => {
     const root = document.querySelector("[data-model-usage-source]");
+    const aggregateRoot = document.querySelector("[data-model-usage-aggregates]");
+    const recordRoot = document.querySelector("[data-model-usage-records]");
     const text = root ? root.textContent || "" : "";
     return {
       present: Boolean(root),
       source: root ? root.getAttribute("data-model-usage-source") || "" : "",
       status: root ? root.getAttribute("data-model-usage-status") || "" : "",
+      aggregateCount: aggregateRoot ? Number(aggregateRoot.getAttribute("data-model-usage-aggregates") || 0) : -1,
+      recordCount: recordRoot ? Number(recordRoot.getAttribute("data-model-usage-records") || 0) : -1,
       hasDeepSeekText: /DeepSeek/i.test(text),
-      hasUsageText: /usage|tokens|prompt|completion|用量|模型/i.test(text)
+      hasUsageText: /usage|tokens|prompt|completion|model|token|DeepSeek/i.test(text),
+      hasTokenOnlyText: /token/i.test(text) && !/\$[0-9]/.test(text)
     };
   })()`);
 }
@@ -1498,6 +1794,50 @@ function dataLayerStateExpression() {
       activityConnectionStatus: activityRoot ? activityRoot.getAttribute("data-activity-connection-status") || "" : "",
       modelUsageSource: modelUsageRoot ? modelUsageRoot.getAttribute("data-model-usage-source") || "" : "",
       modelUsageStatus: modelUsageRoot ? modelUsageRoot.getAttribute("data-model-usage-status") || "" : ""
+    };
+  })()`);
+}
+
+function googleConnectorStatusExpression() {
+  return withSmokeHelpers(`(() => {
+    const root = document.querySelector("[data-google-connector-status]");
+    const refreshButton = document.querySelector("[data-google-connector-refresh]");
+    const oauthButton = document.querySelector("[data-google-oauth-start]");
+    const text = root ? root.textContent || "" : "";
+
+    return {
+      present: Boolean(root),
+      status: root ? root.getAttribute("data-google-connector-status") || "" : "",
+      syncStatus: root ? root.getAttribute("data-google-connector-sync-status") || "" : "",
+      scopeStatus: root ? root.getAttribute("data-google-scope-status") || "" : "",
+      missingScopeCount: root ? Number(root.getAttribute("data-google-missing-scope-count") || 0) : 0,
+      refreshPresent: Boolean(refreshButton),
+      oauthPresent: Boolean(oauthButton),
+      oauthStartStatus: root ? root.getAttribute("data-google-oauth-start-status") || "" : "",
+      oauthStartDisabled: oauthButton ? oauthButton.getAttribute("data-google-oauth-start-disabled") || "" : "",
+      textLength: text.trim().length
+    };
+  })()`);
+}
+
+function microsoftConnectorStatusExpression() {
+  return withSmokeHelpers(`(() => {
+    const root = document.querySelector("[data-microsoft-connector-status]");
+    const refreshButton = document.querySelector("[data-microsoft-connector-refresh]");
+    const oauthButton = document.querySelector("[data-microsoft-oauth-start]");
+    const text = root ? root.textContent || "" : "";
+
+    return {
+      present: Boolean(root),
+      status: root ? root.getAttribute("data-microsoft-connector-status") || "" : "",
+      syncStatus: root ? root.getAttribute("data-microsoft-connector-sync-status") || "" : "",
+      scopeStatus: root ? root.getAttribute("data-microsoft-scope-status") || "" : "",
+      missingScopeCount: root ? Number(root.getAttribute("data-microsoft-missing-scope-count") || 0) : 0,
+      refreshPresent: Boolean(refreshButton),
+      oauthPresent: Boolean(oauthButton),
+      oauthStartStatus: root ? root.getAttribute("data-microsoft-oauth-start-status") || "" : "",
+      oauthStartDisabled: oauthButton ? oauthButton.getAttribute("data-microsoft-oauth-start-disabled") || "" : "",
+      textLength: text.trim().length
     };
   })()`);
 }
@@ -1580,7 +1920,14 @@ function contextPanelExpression() {
       externalEffects: root ? root.getAttribute("data-context-preview-external-effects") || "" : "",
       selectedContextId: root ? root.getAttribute("data-selected-context-id") || "" : "",
       hasCustomerEmail: cards.some((card) => card.getAttribute("data-context-card") === "customer-email"),
-      hasMeetingNotes: cards.some((card) => card.getAttribute("data-context-card") === "meeting-notes")
+      hasMeetingNotes: cards.some((card) => card.getAttribute("data-context-card") === "meeting-notes"),
+      hasUploadControl: Boolean(root.querySelector("input[type='file']")),
+      uploadStatus: root.querySelector("[data-context-upload-status]")
+        ? root.querySelector("[data-context-upload-status]").getAttribute("data-context-upload-status") || ""
+        : "",
+      uploadNotice: root.querySelector("[data-context-upload-notice]")
+        ? root.querySelector("[data-context-upload-notice]").textContent || ""
+        : ""
     };
   })()`);
 }
@@ -2218,6 +2565,49 @@ function chatResponseExpression(prompt, responseSignature) {
   })()`);
 }
 
+function agentTraceExpression() {
+  return withSmokeHelpers(`(() => {
+    const root = document.querySelector("[data-agent-trace-panel]");
+    const session = root ? root.querySelector("[data-agent-trace-session]") : null;
+    const usage = document.querySelector("[data-agent-model-usage-count]");
+    const boundary = document.querySelector("[data-agent-permission-boundary]");
+    const toolRows = root ? [...root.querySelectorAll("[data-agent-tool-call]")] : [];
+    const planRows = root ? [...root.querySelectorAll("[data-agent-tool-plan]")] : [];
+    const executionRows = root ? [...root.querySelectorAll("[data-agent-tool-execution]")] : [];
+    const resultRows = root ? [...root.querySelectorAll("[data-agent-tool-result]")] : [];
+    const referenceRows = root ? [...root.querySelectorAll("[data-agent-tool-reference]")] : [];
+    const timeline = root ? root.querySelector("[data-agent-tool-timeline]") : null;
+    const timelineRows = root ? [...root.querySelectorAll("[data-agent-tool-timeline-row]")] : [];
+    const timelineReferenceRows = root
+      ? [...root.querySelectorAll("[data-agent-tool-timeline-reference]")]
+          .filter((element) => element.getAttribute("data-agent-tool-timeline-reference"))
+      : [];
+    const sessionText = session ? session.textContent || "" : "";
+    return {
+      present: Boolean(root),
+      status: root ? root.getAttribute("data-agent-trace-status") || "" : "",
+      sessionText,
+      hasSession: /Session:\\s+(?!waiting)/.test(sessionText),
+      usageRecords: usage ? Number(usage.getAttribute("data-agent-model-usage-count") || 0) : 0,
+      boundary: boundary ? boundary.getAttribute("data-agent-permission-boundary") || "" : "",
+      toolRows: toolRows.length,
+      planRows: planRows.length,
+      executionRows: executionRows.length,
+      resultRows: resultRows.length,
+      referenceRows: referenceRows.length,
+      timelineCount: timeline ? Number(timeline.getAttribute("data-agent-tool-timeline-count") || 0) : 0,
+      timelineRows: timelineRows.length,
+      timelineReferenceRows: timelineReferenceRows.length,
+      hasToolTraceSelectors:
+        toolRows.length === 0 ||
+        (planRows.length === toolRows.length &&
+          executionRows.length === toolRows.length &&
+          resultRows.length === toolRows.length &&
+          referenceRows.length === toolRows.length)
+    };
+  })()`);
+}
+
 function withSmokeHelpers(expression) {
   return `(() => {
     window.getSmokeInput = function getSmokeInput() {
@@ -2450,6 +2840,59 @@ async function fetchDailyEndpointSnapshot(apiUrl, path) {
   return response.json();
 }
 
+async function fetchHealthSnapshot(apiUrl) {
+  const response = await fetch(new URL("/health", apiUrl).toString(), {
+    headers: {
+      Accept: "application/json"
+    },
+    signal: AbortSignal.timeout(5000)
+  });
+
+  if (!response.ok) {
+    throw new Error(`/health returned HTTP ${response.status}.`);
+  }
+
+  return response.json();
+}
+
+async function fetchGoogleConnectorStatusSnapshot(apiUrl) {
+  const response = await fetch(
+    new URL("/api/connectors/google/status", apiUrl).toString(),
+    {
+      headers: {
+        Accept: "application/json"
+      },
+      signal: AbortSignal.timeout(5000)
+    }
+  );
+
+  if (!response.ok) {
+    throw new Error(`/api/connectors/google/status returned HTTP ${response.status}.`);
+  }
+
+  return response.json();
+}
+
+async function fetchMicrosoftConnectorStatusSnapshot(apiUrl) {
+  const response = await fetch(
+    new URL("/api/connectors/microsoft/status", apiUrl).toString(),
+    {
+      headers: {
+        Accept: "application/json"
+      },
+      signal: AbortSignal.timeout(5000)
+    }
+  );
+
+  if (!response.ok) {
+    throw new Error(
+      `/api/connectors/microsoft/status returned HTTP ${response.status}.`
+    );
+  }
+
+  return response.json();
+}
+
 async function fetchJson(apiUrl, path, payload) {
   const response = await fetch(new URL(path, apiUrl).toString(), {
     method: "POST",
@@ -2466,6 +2909,53 @@ async function fetchJson(apiUrl, path, payload) {
   }
 
   return response.json();
+}
+
+async function uploadTextContextSnapshot(apiUrl) {
+  if (typeof FormData !== "function" || typeof Blob !== "function") {
+    throw new Error("Context upload smoke requires Node.js FormData and Blob globals.");
+  }
+
+  const form = new FormData();
+  form.set(
+    "file",
+    new Blob(["Smoke uploaded context document\nAction: summarize this local text."], {
+      type: "text/plain"
+    }),
+    "smoke-context.txt"
+  );
+  form.set("title", "Smoke context upload");
+  form.set("tags", "smoke,upload");
+
+  const response = await fetch(
+    new URL("/api/daily/context/uploads?mode=daily_work", apiUrl).toString(),
+    {
+      method: "POST",
+      body: form,
+      signal: AbortSignal.timeout(5000)
+    }
+  );
+
+  if (!response.ok) {
+    throw new Error(`/api/daily/context/uploads returned HTTP ${response.status}.`);
+  }
+
+  const snapshot = await response.json();
+  if (
+    snapshot.mode !== "daily_work" ||
+    !snapshot.document ||
+    !snapshot.contextItem ||
+    snapshot.previewOnly !== true ||
+    !Array.isArray(snapshot.externalEffects) ||
+    !snapshot.externalEffects.includes("none") ||
+    snapshot.contextItem.sourceType !== "uploaded_document" ||
+    snapshot.document.fileType !== "txt" ||
+    !(snapshot.document.tokenEstimate > 0)
+  ) {
+    throw new Error("Context upload smoke did not return the expected preview-only document payload.");
+  }
+
+  return snapshot;
 }
 
 async function fetchActivityWebSocketSnapshot(apiUrl) {
@@ -2516,8 +3006,10 @@ function assertActivityEventsSnapshot(snapshot, label, options = {}) {
     throw new Error(`${label} did not include a daily_work events array.`);
   }
 
-  if (snapshot.events.length !== 7) {
-    throw new Error(`${label} included ${snapshot.events.length} event(s), expected 7.`);
+  if (snapshot.events.length < 7) {
+    throw new Error(
+      `${label} included ${snapshot.events.length} event(s), expected at least 7.`
+    );
   }
 
   for (const event of snapshot.events) {
@@ -2558,8 +3050,8 @@ function assertModelUsageSnapshot(snapshot, label) {
     throw new Error(`${label} included unsupported selectedRoute.`);
   }
 
-  if (!snapshot.usage.records.length) {
-    throw new Error(`${label} did not include any usage records.`);
+  if (!Array.isArray(snapshot.usage.aggregates) || snapshot.usage.aggregates.length < 4) {
+    throw new Error(`${label} did not include token usage aggregates.`);
   }
 }
 

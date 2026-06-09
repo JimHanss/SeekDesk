@@ -161,7 +161,7 @@ export function ModelUsagePanel({
             <ShieldCheck className="size-4 text-teal-700" aria-hidden="true" />
             用量快照
           </div>
-          <div className="grid grid-cols-3 gap-2">
+          <div className="grid grid-cols-2 gap-2 md:grid-cols-4">
             <SessionMetric
               label="输入 token"
               value={formatTokenCount(activeUsageSnapshot.inputTokens)}
@@ -194,6 +194,76 @@ export function ModelUsagePanel({
               />
             </div>
           </div>
+        </div>
+      </div>
+
+      <div
+        className="mt-3 grid gap-2 md:grid-cols-4"
+        data-model-usage-aggregates={modelUsagePanel.usageAggregates.length}
+      >
+        {modelUsagePanel.usageAggregates.length > 0 ? (
+          modelUsagePanel.usageAggregates.map((aggregate) => (
+            <div
+              key={aggregate.id}
+              className="rounded-[8px] border border-teal-100 bg-white px-3 py-2"
+            >
+              <div className="truncate text-[11px] font-medium text-teal-700">
+                {aggregate.label}
+              </div>
+              <div className="mt-1 text-sm font-semibold text-teal-950">
+                {formatTokenCount(aggregate.totalTokens)}
+              </div>
+              <div className="mt-1 text-[11px] leading-5 text-slate-600">
+                ?? {formatTokenCount(aggregate.promptTokens)} / ?? {formatTokenCount(aggregate.completionTokens)} / {formatTokenCount(aggregate.recordCount)} ?
+              </div>
+            </div>
+          ))
+        ) : (
+          <div className="rounded-[8px] border border-slate-200 bg-white px-3 py-2 text-xs text-slate-600 md:col-span-4">
+            ???? token ??????????????????????24h?7d ??????
+          </div>
+        )}
+      </div>
+
+      <div
+        className="mt-3 overflow-hidden rounded-[8px] border border-slate-200 bg-white"
+        data-model-usage-records={modelUsagePanel.usageRecords.length}
+      >
+        <div className="border-b border-slate-200 px-3 py-2 text-xs font-medium text-slate-700">
+          ????
+        </div>
+        <div className="overflow-x-auto">
+          <table className="w-full min-w-[620px] text-left text-xs">
+            <thead className="bg-slate-50 text-slate-500">
+              <tr>
+                <th className="px-3 py-2 font-medium">??</th>
+                <th className="px-3 py-2 font-medium">??</th>
+                <th className="px-3 py-2 font-medium">??</th>
+                <th className="px-3 py-2 font-medium">??</th>
+                <th className="px-3 py-2 font-medium">??</th>
+                <th className="px-3 py-2 font-medium">??</th>
+              </tr>
+            </thead>
+            <tbody className="divide-y divide-slate-100 text-slate-700">
+              {modelUsagePanel.usageRecords.slice(0, 8).map((record) => (
+                <tr key={record.id}>
+                  <td className="px-3 py-2">{record.createdAt}</td>
+                  <td className="px-3 py-2">{record.model}</td>
+                  <td className="max-w-40 truncate px-3 py-2">{record.sessionId}</td>
+                  <td className="px-3 py-2">{formatTokenCount(record.promptTokens)}</td>
+                  <td className="px-3 py-2">{formatTokenCount(record.completionTokens)}</td>
+                  <td className="px-3 py-2 font-medium text-teal-800">{formatTokenCount(record.totalTokens)}</td>
+                </tr>
+              ))}
+              {modelUsagePanel.usageRecords.length === 0 ? (
+                <tr>
+                  <td className="px-3 py-3 text-slate-500" colSpan={6}>
+                    ???????
+                  </td>
+                </tr>
+              ) : null}
+            </tbody>
+          </table>
         </div>
       </div>
 

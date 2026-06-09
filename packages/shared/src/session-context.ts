@@ -7,7 +7,8 @@ export const contextSourceTypeSchema = z.enum([
   "project_brief",
   "customer_email",
   "research_links",
-  "team_notes"
+  "team_notes",
+  "uploaded_document"
 ]);
 
 export const contextPermissionStateSchema = z.enum([
@@ -98,6 +99,47 @@ export const dailyContextUsePreviewResponseSchema = z.object({
   preview: dailyContextUsePreviewSchema
 });
 
+export const dailyContextDocumentFileTypeSchema = z.enum([
+  "pdf",
+  "docx",
+  "txt",
+  "md",
+  "csv",
+  "json"
+]);
+
+export const dailyContextDocumentStatusSchema = z.enum(["ready", "failed"]);
+
+export const dailyContextDocumentSchema = z.object({
+  id: z.string(),
+  mode: appModeSchema.default("daily_work"),
+  contextItemId: z.string(),
+  title: z.string(),
+  originalFileName: z.string(),
+  mimeType: z.string(),
+  fileType: dailyContextDocumentFileTypeSchema,
+  fileSizeBytes: z.number().int().nonnegative(),
+  sha256: z.string(),
+  extractedText: z.string(),
+  textPreview: z.string(),
+  tokenEstimate: z.number().int().nonnegative(),
+  status: dailyContextDocumentStatusSchema,
+  error: z.string().optional(),
+  tags: z.array(z.string()).default([]),
+  createdAt: z.string().datetime(),
+  updatedAt: z.string().datetime()
+});
+
+export const dailyContextUploadResponseSchema = z.object({
+  mode: appModeSchema,
+  document: dailyContextDocumentSchema,
+  contextItem: dailyContextItemSchema,
+  previewOnly: z.literal(true).default(true),
+  externalEffects: z.array(z.literal("none")).default(["none"])
+});
+
+export const defaultDailyContextDocuments: DailyContextDocument[] = [];
+
 export const defaultDailyWorkContextItems: DailyContextItem[] = [
   {
     id: "meeting-notes",
@@ -166,4 +208,14 @@ export type DailyContextUsePreview = z.infer<
 >;
 export type DailyContextUsePreviewResponse = z.infer<
   typeof dailyContextUsePreviewResponseSchema
+>;
+export type DailyContextDocumentFileType = z.infer<
+  typeof dailyContextDocumentFileTypeSchema
+>;
+export type DailyContextDocumentStatus = z.infer<
+  typeof dailyContextDocumentStatusSchema
+>;
+export type DailyContextDocument = z.infer<typeof dailyContextDocumentSchema>;
+export type DailyContextUploadResponse = z.infer<
+  typeof dailyContextUploadResponseSchema
 >;

@@ -14,6 +14,7 @@ MVP security defaults:
 Current implemented safeguards:
 
 - `DEEPSEEK_API_KEY` is read only by the API process. The model-usage endpoint reports whether the key is configured but does not return the secret.
+- Run `npm run verify:secrets` before publishing changes that touch environment, connector, or deployment files. It checks that `.env*` files are ignored, no non-example env file is tracked, and common API key shapes are absent from tracked files.
 - The browser consumes daily-work snapshots and model-usage summaries through API routes; it does not connect directly to DeepSeek or private data sources.
 - `coding_agent` requests are accepted only through compatibility paths and do not enable filesystem, shell, Git, or IDE tools in this milestone.
 - Daily activity WebSocket messages are read-only snapshots. They do not execute external actions.

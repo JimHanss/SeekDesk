@@ -86,7 +86,15 @@ export const dailyActivityEventSchema = z.object({
       riskLevel: workflowRiskLevelSchema.optional(),
       permissionState: workflowPermissionStateSchema.optional(),
       externalEffects: z.array(workflowExternalEffectSchema).default(["none"]),
-      artifactType: artifactTypeSchema.optional()
+      artifactType: artifactTypeSchema.optional(),
+      toolName: z.string().optional(),
+      toolPhase: z.enum(["requested", "completed"]).optional(),
+      provider: z.string().optional(),
+      connectorId: z.string().optional(),
+      inputFields: z.array(z.string()).optional(),
+      externalDataSummary: z.string().optional(),
+      resultCount: z.number().int().nonnegative().optional(),
+      reference: z.string().optional()
     })
     .default({
       externalEffects: ["none"]

@@ -10,6 +10,12 @@ export function useDailyContext(
   const [contextPanel, setContextPanel] = React.useState<DailyWorkTypes.ContextPanelState>(() =>
     domain.createFallbackContextPanelState()
   );
+  const [contextUploadState, setContextUploadState] = React.useState<DailyWorkTypes.ContextUploadState>({
+    status: "idle",
+    notice: "Upload a PDF, DOCX, text, Markdown, CSV or JSON file to add it to local context.",
+    documentId: null,
+    tokenEstimate: null
+  });
 
   React.useEffect(() => {
     let isDisposed = false;
@@ -82,5 +88,85 @@ export function useDailyContext(
     };
   }, [apiBaseUrl])
 
-  return { contextPanel, setContextPanel };
+  const uploadContextFile = React.useCallback(
+    async (file: File) => {
+      setContextUploadState({
+        status: "uploading",
+        notice: `Uploading and extracting ${file.name}...`,
+        documentId: null,
+        tokenEstimate: null
+      });
+
+      const formData = new FormData();
+      formData.set("file", file);
+      formData.set("title", file.name.replace(/\.[^.]+$/, ""));
+
+      try {
+        const response = await fetch(
+          `${apiBaseUrl}/api/daily/context/uploads?mode=${domain.activeMode}`,
+          {
+            method: "POST",
+            body: formData
+          }
+        );
+
+        if (!response.ok) {
+          const errorText = await response.text();
+          throw new Error(errorText || `Upload failed: ${response.status}`);
+        }
+
+        const payload = (await response.json()) as DailyWorkTypes.DailyContextUploadResponseDto;
+        const contextItem = payload.contextItem
+          ? domain.mapContextDtoToItem(payload.contextItem, 0)
+          : null;
+
+        setContextPanel((current) => {
+          const nextItems = contextItem
+            ? [
+                contextItem,
+                ...current.items.filter((item) => item.id !== contextItem.id)
+              ]
+            : current.items;
+
+          return {
+            ...current,
+            items: nextItems,
+            source: "api",
+            syncStatus: "live",
+            notice:
+              "Uploaded context document was extracted locally and added to the workspace context list."
+          };
+        });
+
+        if (contextItem) {
+          setSelectedContextId(contextItem.id);
+        }
+
+        setContextUploadState({
+          status: "ready",
+          notice: `Added ${payload.document?.title ?? file.name} (${payload.document?.tokenEstimate ?? 0} estimated tokens).`,
+          documentId: payload.document?.id ?? null,
+          tokenEstimate: payload.document?.tokenEstimate ?? null
+        });
+      } catch (error) {
+        setContextUploadState({
+          status: "error",
+          notice:
+            error instanceof Error
+              ? error.message
+              : "Upload failed before the document could be extracted.",
+          documentId: null,
+          tokenEstimate: null
+        });
+      }
+    },
+    [apiBaseUrl, setSelectedContextId]
+  );
+
+  return {
+    contextPanel,
+    contextUploadState,
+    setContextPanel,
+    uploadContextFile
+  };
 }

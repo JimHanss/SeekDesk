@@ -14,6 +14,7 @@ import type {
   ActivityEventStatus,
   ActivityEventType,
   ActivityFeedSource,
+  ActivityToolAuditItem,
   DailyActivityEventDto,
   DailyActivityNextAction,
   DailyActivityRelatedRefs,
@@ -140,8 +141,10 @@ export function mapDailyActivitySnapshot(payload: DailyActivitySnapshotDto) {
 export function mapDailyActivityEvent(event: DailyActivityEventDto): ActivityEventItem {
   const type = backendEventTypeToActivityType(event.eventType, event.nextAction);
   const relatedObject = event.nextAction?.targetType ?? type;
+  const toolAudit = mapActivityToolAudit(event);
   const relatedLabel =
     event.nextAction?.label ??
+    toolAudit?.reference ??
     firstRelatedRefLabel(event.relatedRefs) ??
     event.actor ??
     "daily_work";
@@ -163,7 +166,41 @@ export function mapDailyActivityEvent(event: DailyActivityEventDto): ActivityEve
     summary: `${event.summary} 来源：${event.actor}`,
     safetyBoundary,
     promptFocus,
-    icon: backendActivityIcon(event.eventType, type)
+    icon: backendActivityIcon(event.eventType, type),
+    ...(toolAudit ? { toolAudit } : {})
+  };
+}
+
+export function mapActivityToolAudit(
+  event: DailyActivityEventDto
+): ActivityToolAuditItem | null {
+  const metadata = event.metadata;
+
+  if (!metadata?.toolName) {
+    return null;
+  }
+
+  return {
+    toolName: metadata.toolName,
+    toolPhase:
+      metadata.toolPhase ??
+      (event.eventType.endsWith(".queued") ? "requested" : "completed"),
+    provider: nullableText(metadata.provider),
+    connectorId: nullableText(metadata.connectorId),
+    inputFields: listTextValues(metadata.inputFields),
+    externalDataSummary:
+      metadata.externalDataSummary ??
+      "Tool activity was recorded without a structured result summary.",
+    resultCount:
+      typeof metadata.resultCount === "number" &&
+      Number.isFinite(metadata.resultCount)
+        ? metadata.resultCount
+        : null,
+    reference: nullableText(metadata.reference),
+    previewOnly: event.safetyBoundary?.previewOnly ?? true,
+    externalEffects: listTextValues(
+      metadata.externalEffects ?? event.safetyBoundary?.externalEffects
+    )
   };
 }
 
@@ -193,6 +230,14 @@ export function isDailyActivityEvent(value: unknown): value is DailyActivityEven
 
 function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null;
+}
+
+function nullableText(value: string | undefined) {
+  return value && value.trim() ? value : null;
+}
+
+function listTextValues(values: string[] | undefined) {
+  return (values ?? []).filter((value) => value.trim());
 }
 
 export function backendEventTypeToActivityType(

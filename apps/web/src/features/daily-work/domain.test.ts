@@ -4,6 +4,9 @@ import {
   activeMode,
   connectorItems,
   createLocalConnectorPreviewState,
+  mapAgentTraceResponse,
+  mapDailyActivitySnapshot,
+  mapDailyModelUsageResponse,
   mapApprovalDecisionStatus,
   mapTemplatePreviewResponse,
   mapTemplatesResponse,
@@ -11,6 +14,7 @@ import {
 } from "./domain";
 import type {
   DailyApprovalDecisionResponseDto,
+  DailyActivitySnapshotDto,
   DailyWorkTemplateApplyPreviewResponseDto,
   DailyWorkTemplatesResponseDto
 } from "./types";
@@ -43,6 +47,80 @@ describe("daily-work domain mappers", () => {
       enabled: true
     });
     expect(template?.tags).toEqual(["email", "stakeholder", "weekly", "extra"]);
+  });
+
+  it("maps token-only model usage aggregates and request records", () => {
+    const panel = mapDailyModelUsageResponse({
+      mode: activeMode,
+      config: {
+        mode: activeMode,
+        provider: "deepseek",
+        baseUrl: "https://api.deepseek.com",
+        fastModel: "deepseek-chat",
+        proModel: "deepseek-reasoner",
+        selectedRoute: "fast",
+        thinkingMode: "disabled",
+        streamUsageEnabled: true,
+        configured: true
+      },
+      usage: {
+        promptTokens: 100,
+        completionTokens: 40,
+        totalTokens: 140,
+        budgetState: "tracking_only",
+        updatedAt: "2026-06-09T00:00:00.000Z",
+        aggregates: [
+          {
+            id: "current_session",
+            label: "Current session",
+            promptTokens: 100,
+            completionTokens: 40,
+            totalTokens: 140,
+            recordCount: 1
+          }
+        ],
+        records: [
+          {
+            id: "usage-1",
+            sessionId: "session-1",
+            provider: "deepseek",
+            model: "deepseek-chat",
+            promptTokens: 100,
+            completionTokens: 40,
+            totalTokens: 140,
+            createdAt: "2026-06-09T00:00:00.000Z"
+          }
+        ]
+      }
+    });
+
+    expect(panel).toMatchObject({
+      source: "api",
+      syncStatus: "live",
+      usageAggregates: [
+        expect.objectContaining({
+          id: "current_session",
+          totalTokens: 140,
+          recordCount: 1
+        })
+      ],
+      usageRecords: [
+        expect.objectContaining({
+          id: "usage-1",
+          sessionId: "session-1",
+          totalTokens: 140
+        })
+      ]
+    });
+    expect(panel.usageSnapshots.fast).toEqual(
+      expect.objectContaining({
+        inputTokens: 100,
+        outputTokens: 40,
+        totalTokens: 140,
+        callCount: 1,
+        estimatedCost: "token-only"
+      })
+    );
   });
 
   it("rejects template responses for other modes", () => {
@@ -114,6 +192,173 @@ describe("daily-work domain mappers", () => {
     expect(preview.requiredApprovalRequestIds).toEqual(
       connector.requiredApprovalIds
     );
+  });
+
+  it("maps agent trace responses into visible tool and usage state", () => {
+    const trace = mapAgentTraceResponse(
+      {
+        mode: activeMode,
+        sessionId: "session-1",
+        toolCalls: [
+          {
+            id: "call-1",
+            name: "gmail.search_threads",
+            status: "completed",
+            inputJson: { query: "from:customer" },
+            outputJson: { threads: [] },
+            previewOnly: true,
+            permissionRequired: false,
+            createdAt: "2026-06-08T00:00:00.000Z",
+            completedAt: "2026-06-08T00:00:01.000Z"
+          }
+        ],
+        toolActivityEvents: [
+          {
+            id: "daily-event-agent-tool-session-1-call-1-completed",
+            mode: activeMode,
+            eventType: "workflow.preview.completed",
+            status: "completed",
+            timestamp: "2026-06-08T00:00:01.000Z",
+            title: "Agent tool completed",
+            summary: "Agent read Gmail thread metadata.",
+            actor: "daily-work-agent",
+            relatedRefs: {
+              sessionIds: ["session-1"],
+              artifactIds: [],
+              connectorIds: ["customer-email"],
+              templateIds: [],
+              workflowIds: [],
+              actionQueueItemIds: [],
+              approvalRequestIds: [],
+              contextItemIds: []
+            },
+            safetyBoundary: {
+              previewOnly: true,
+              externalEffects: ["none"],
+              statement: "Preview-only tool execution."
+            },
+            nextAction: null,
+            metadata: {
+              toolName: "gmail.search_threads",
+              toolPhase: "completed",
+              provider: "gmail",
+              connectorId: "customer-email",
+              inputFields: ["query"],
+              externalDataSummary: "0 Gmail thread metadata result(s).",
+              resultCount: 0,
+              reference: "gmail-thread:thread-1"
+            }
+          }
+        ],
+        modelUsageRecords: [
+          {
+            id: "usage-1",
+            provider: "deepseek",
+            model: "deepseek-chat",
+            promptTokens: 10,
+            completionTokens: 5,
+            totalTokens: 15,
+            createdAt: "2026-06-08T00:00:02.000Z"
+          }
+        ],
+        permissionBoundary: {
+          previewOnly: true,
+          externalEffects: ["none"],
+          statement: "No external effects."
+        }
+      },
+      { sessionId: "fallback-session", provider: "deepseek" }
+    );
+
+    expect(trace).toMatchObject({
+      sessionId: "session-1",
+      provider: "deepseek",
+      syncStatus: "live",
+      toolCalls: [
+        expect.objectContaining({
+          name: "gmail.search_threads",
+          status: "completed",
+          previewOnly: true
+        })
+      ],
+      toolActivityEvents: [
+        expect.objectContaining({
+          toolName: "gmail.search_threads",
+          toolPhase: "completed",
+          externalDataSummary: "0 Gmail thread metadata result(s).",
+          reference: "gmail-thread:thread-1",
+          previewOnly: true
+        })
+      ],
+      modelUsageSummary: expect.objectContaining({
+        provider: "deepseek",
+        totalTokens: 15,
+        recordCount: 1
+      }),
+      permissionBoundary: expect.objectContaining({
+        previewOnly: true,
+        statement: "No external effects."
+      })
+    });
+  });
+
+  it("maps activity tool audit metadata into visible event state", () => {
+    const [event] = mapDailyActivitySnapshot({
+      type: "daily.activity.snapshot",
+      mode: activeMode,
+      events: [
+        {
+          id: "daily-event-agent-tool-session-call-completed",
+          mode: activeMode,
+          eventType: "workflow.preview.completed",
+          status: "completed",
+          timestamp: "2026-06-08T00:00:00.000Z",
+          title: "Agent tool completed",
+          summary: "Agent persisted local artifact.",
+          actor: "daily-work-agent",
+          relatedRefs: {
+            sessionIds: ["session-1"],
+            artifactIds: ["artifact-1"],
+            connectorIds: [],
+            templateIds: [],
+            workflowIds: [],
+            actionQueueItemIds: [],
+            approvalRequestIds: [],
+            contextItemIds: []
+          },
+          safetyBoundary: {
+            previewOnly: true,
+            externalEffects: ["none"],
+            statement: "Preview-only tool execution."
+          },
+          nextAction: null,
+          metadata: {
+            toolName: "daily.persist_artifact",
+            toolPhase: "completed",
+            provider: "seekdesk",
+            inputFields: ["title", "content"],
+            externalDataSummary:
+              "Local SeekDesk artifact persisted for review; no external provider write.",
+            resultCount: 1,
+            reference: "artifact:artifact-1"
+          }
+        }
+      ]
+    } satisfies DailyActivitySnapshotDto);
+
+    expect(event).toMatchObject({
+      relatedLabel: "artifact:artifact-1",
+      toolAudit: {
+        toolName: "daily.persist_artifact",
+        toolPhase: "completed",
+        provider: "seekdesk",
+        inputFields: ["title", "content"],
+        resultCount: 1,
+        reference: "artifact:artifact-1",
+        previewOnly: true,
+        externalEffects: ["none"]
+      }
+    });
   });
 
   it("maps approval API decisions into UI ledger states", () => {

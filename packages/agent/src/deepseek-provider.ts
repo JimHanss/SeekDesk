@@ -2,6 +2,7 @@ import { getModeSystemMessage } from "./provider.js";
 import type {
   DeepSeekModelConfig,
   ModelChatRequest,
+  ModelMessage,
   ModelProvider,
   ModelStreamChunk
 } from "./provider.js";
@@ -9,12 +10,35 @@ import type {
 interface DeepSeekStreamDelta {
   content?: string;
   reasoning_content?: string;
+  tool_calls?: DeepSeekToolCallDelta[];
 }
 
 interface DeepSeekStreamChunk {
+  usage?: {
+    prompt_tokens?: number;
+    completion_tokens?: number;
+    total_tokens?: number;
+  } | null;
   choices?: Array<{
     delta?: DeepSeekStreamDelta;
+    finish_reason?: string | null;
   }>;
+}
+
+interface DeepSeekToolCallDelta {
+  index?: number;
+  id?: string;
+  type?: "function";
+  function?: {
+    name?: string;
+    arguments?: string;
+  };
+}
+
+interface PendingToolCall {
+  id?: string;
+  name?: string;
+  argumentsText: string;
 }
 
 export class DeepSeekModelProvider implements ModelProvider {
@@ -35,8 +59,16 @@ export class DeepSeekModelProvider implements ModelProvider {
         },
         body: JSON.stringify({
           model: this.config.model,
-          messages: [getModeSystemMessage(request.mode), ...request.messages],
+          messages: [getModeSystemMessage(request.mode), ...request.messages].map(
+            toDeepSeekMessage
+          ),
           stream: true,
+          ...(request.tools?.length
+            ? {
+                tools: request.tools,
+                tool_choice: request.toolChoice ?? "auto"
+              }
+            : {}),
           stream_options: this.config.includeUsage
             ? {
                 include_usage: true
@@ -60,6 +92,7 @@ export class DeepSeekModelProvider implements ModelProvider {
 
     const reader = response.body.getReader();
     const decoder = new TextDecoder();
+    const toolCalls = new ToolCallAccumulator();
     let buffer = "";
 
     while (true) {
@@ -73,34 +106,42 @@ export class DeepSeekModelProvider implements ModelProvider {
       buffer = lines.pop() ?? "";
 
       for (const line of lines) {
-        const chunk = parseSseLine(line);
-        if (chunk) {
-          yield chunk;
-        }
+        yield* processSseLine(line, toolCalls);
       }
     }
 
     buffer += decoder.decode();
     for (const line of buffer.split(/\r?\n/)) {
-      const chunk = parseSseLine(line);
-      if (chunk) {
-        yield chunk;
-      }
+      yield* processSseLine(line, toolCalls);
     }
 
+    yield* toolCalls.flush();
     yield { type: "done" };
   }
 }
 
-function parseSseLine(line: string): ModelStreamChunk | null {
+function toDeepSeekMessage(message: ModelMessage) {
+  return {
+    role: message.role,
+    content: message.content,
+    ...(message.name ? { name: message.name } : {}),
+    ...(message.toolCallId ? { tool_call_id: message.toolCallId } : {}),
+    ...(message.toolCalls?.length ? { tool_calls: message.toolCalls } : {})
+  };
+}
+
+function processSseLine(
+  line: string,
+  toolCalls: ToolCallAccumulator
+): ModelStreamChunk[] {
   const trimmed = line.trim();
   if (!trimmed.startsWith("data:")) {
-    return null;
+    return [];
   }
 
   const data = trimmed.slice("data:".length).trim();
   if (!data || data === "[DONE]") {
-    return null;
+    return [];
   }
 
   let parsed: DeepSeekStreamChunk;
@@ -112,15 +153,110 @@ function parseSseLine(line: string): ModelStreamChunk | null {
       `DeepSeek stream parse failed: ${message}; data=${data.slice(0, 160)}`
     );
   }
-  const delta = parsed.choices?.[0]?.delta;
-  const text = delta?.content ?? delta?.reasoning_content ?? "";
+  const chunks: ModelStreamChunk[] = [];
 
-  if (!text) {
-    return null;
+  if (parsed.usage) {
+    chunks.push({
+      type: "usage",
+      usage: {
+        promptTokens: parsed.usage.prompt_tokens ?? 0,
+        completionTokens: parsed.usage.completion_tokens ?? 0,
+        totalTokens:
+          parsed.usage.total_tokens ??
+          (parsed.usage.prompt_tokens ?? 0) +
+            (parsed.usage.completion_tokens ?? 0)
+      }
+    });
   }
 
-  return {
-    type: "text-delta",
-    delta: text
-  };
+  for (const choice of parsed.choices ?? []) {
+    const delta = choice.delta;
+
+    if (delta?.content) {
+      chunks.push({
+        type: "text-delta",
+        delta: delta.content
+      });
+    }
+
+    if (delta?.reasoning_content) {
+      chunks.push({
+        type: "reasoning-delta",
+        delta: delta.reasoning_content
+      });
+    }
+
+    if (delta?.tool_calls?.length) {
+      toolCalls.consume(delta.tool_calls);
+    }
+
+    if (choice.finish_reason === "tool_calls") {
+      chunks.push(...toolCalls.flush());
+    }
+  }
+
+  return chunks;
+}
+
+class ToolCallAccumulator {
+  private readonly calls = new Map<number, PendingToolCall>();
+
+  consume(deltas: DeepSeekToolCallDelta[]) {
+    for (const delta of deltas) {
+      const index = delta.index ?? 0;
+      const current = this.calls.get(index) ?? {
+        argumentsText: ""
+      };
+
+      if (delta.id) {
+        current.id = delta.id;
+      }
+
+      if (delta.function?.name) {
+        current.name = delta.function.name;
+      }
+
+      if (delta.function?.arguments) {
+        current.argumentsText += delta.function.arguments;
+      }
+
+      this.calls.set(index, current);
+    }
+  }
+
+  flush(): ModelStreamChunk[] {
+    const chunks: ModelStreamChunk[] = [];
+
+    for (const call of [...this.calls.values()]) {
+      if (!call.name) {
+        continue;
+      }
+
+      chunks.push({
+        type: "tool-call",
+        ...(call.id ? { id: call.id } : {}),
+        name: call.name,
+        inputJson: parseToolArguments(call.argumentsText),
+        rawArguments: call.argumentsText
+      });
+    }
+
+    this.calls.clear();
+    return chunks;
+  }
+}
+
+function parseToolArguments(rawArguments: string): unknown {
+  const trimmed = rawArguments.trim();
+  if (!trimmed) {
+    return {};
+  }
+
+  try {
+    return JSON.parse(trimmed) as unknown;
+  } catch {
+    return {
+      rawArguments: trimmed
+    };
+  }
 }

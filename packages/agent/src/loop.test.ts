@@ -6,6 +6,7 @@ import type {
   ModelProvider,
   ModelStreamChunk
 } from "./provider.js";
+import { ToolOrchestrator, ToolRegistry } from "./tools.js";
 
 describe("runAgentLoop", () => {
   it("adds read-only daily-work session and context before provider streaming", async () => {
@@ -23,7 +24,11 @@ describe("runAgentLoop", () => {
         approvalRequestIds: [],
         connectorIds: [],
         workflowIds: []
-      }
+      },
+      contextSummaryLines: [
+        "Context item project-brief: Project Brief; summary=Current scope.",
+        "Connector customer-email: Customer Email; provider=gmail; status=available."
+      ]
     });
 
     expect(result.status).toBe("completed");
@@ -52,6 +57,12 @@ describe("runAgentLoop", () => {
     );
     expect(provider.request?.messages[0]?.content).toContain(
       "Context item ids: project-brief, meeting-notes"
+    );
+    expect(provider.request?.messages[0]?.content).toContain(
+      "Context item project-brief: Project Brief"
+    );
+    expect(provider.request?.messages[0]?.content).toContain(
+      "Connector customer-email: Customer Email"
     );
     expect(provider.request?.messages[0]?.content).toContain(
       "Do not execute tools"
@@ -89,6 +100,68 @@ describe("runAgentLoop", () => {
       { type: "done" }
     ]);
   });
+
+  it("preserves assistant tool calls before sending tool results to the next turn", async () => {
+    const provider = new ToolCallingProvider();
+    const orchestrator = new ToolOrchestrator(
+      new ToolRegistry([
+        {
+          name: "daily.persist_artifact",
+          mode: "daily_work",
+          description: "Persist a local daily-work artifact."
+        }
+      ])
+    );
+
+    const result = await runAgentLoop({
+      provider,
+      prompt: "persist an artifact",
+      maxTurns: 2,
+      orchestrator
+    });
+
+    expect(result.chunks).toEqual([
+      {
+        type: "tool-call",
+        id: "call-1",
+        name: "daily_persist_artifact",
+        inputJson: {
+          title: "Trace"
+        },
+        rawArguments: "{\"title\":\"Trace\"}"
+      },
+      expect.objectContaining({
+        type: "tool-result",
+        id: "call-1",
+        name: "daily.persist_artifact"
+      }),
+      { type: "text-delta", delta: "done" },
+      { type: "done" }
+    ]);
+    expect(provider.requests[1]?.messages).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          role: "assistant",
+          content: "",
+          toolCalls: [
+            {
+              id: "call-1",
+              type: "function",
+              function: {
+                name: "daily_persist_artifact",
+                arguments: "{\"title\":\"Trace\"}"
+              }
+            }
+          ]
+        }),
+        expect.objectContaining({
+          role: "tool",
+          toolCallId: "call-1",
+          name: "daily_persist_artifact"
+        })
+      ])
+    );
+  });
 });
 
 class CapturingProvider implements ModelProvider {
@@ -99,6 +172,38 @@ class CapturingProvider implements ModelProvider {
     yield {
       type: "text-delta",
       delta: "ok"
+    };
+    yield {
+      type: "done"
+    };
+  }
+}
+
+class ToolCallingProvider implements ModelProvider {
+  readonly requests: ModelChatRequest[] = [];
+
+  async *streamChat(request: ModelChatRequest): AsyncIterable<ModelStreamChunk> {
+    this.requests.push(request);
+
+    if (this.requests.length === 1) {
+      yield {
+        type: "tool-call",
+        id: "call-1",
+        name: "daily_persist_artifact",
+        inputJson: {
+          title: "Trace"
+        },
+        rawArguments: "{\"title\":\"Trace\"}"
+      };
+      yield {
+        type: "done"
+      };
+      return;
+    }
+
+    yield {
+      type: "text-delta",
+      delta: "done"
     };
     yield {
       type: "done"
