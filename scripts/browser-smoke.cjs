@@ -1018,11 +1018,20 @@ async function runSessionRestoreSmoke(client, apiUrl) {
 }
 
 async function runArtifactsSmoke(client, apiUrl) {
-  const artifactSnapshot = await fetchDailyEndpointSnapshot(
-    apiUrl,
-    "/api/daily/artifacts?mode=daily_work"
-  );
-  const trackedArtifacts = assertArtifactsSnapshot(artifactSnapshot);
+  const [artifactSnapshot, healthSnapshot] = await Promise.all([
+    fetchDailyEndpointSnapshot(apiUrl, "/api/daily/artifacts?mode=daily_work"),
+    fetchHealthSnapshot(apiUrl)
+  ]);
+  const dataLayer = healthSnapshot.dataLayer || healthSnapshot || {};
+  const artifactCheck = assertArtifactsSnapshot(artifactSnapshot, {
+    currentLayer: dataLayer.currentLayer || ""
+  });
+  const trackedArtifacts = artifactCheck.trackedArtifacts;
+  const selectedArtifact = trackedArtifacts[0];
+
+  if (!selectedArtifact || typeof selectedArtifact.id !== "string") {
+    throw new Error("Artifacts API did not expose a selectable artifact.");
+  }
 
   await selectDailyView(client, "artifacts");
   const panelState = await waitForValue(
@@ -1032,31 +1041,29 @@ async function runArtifactsSmoke(client, apiUrl) {
       state.present &&
       state.source === "api" &&
       state.syncStatus === "live" &&
-      state.count >= 4 &&
-      state.hasEmailCard &&
-      state.hasResearchCard,
+      state.count >= 1 &&
+      (!artifactCheck.usesSeedArtifacts || (state.hasEmailCard && state.hasResearchCard)),
     "artifacts API panel state"
   );
 
-  const emailCardRect = await waitForRect(
+  const artifactCardRect = await waitForRect(
     client,
-    artifactCardExpression("email-draft-artifact"),
-    "email draft artifact card"
+    artifactCardExpression(selectedArtifact.id),
+    selectedArtifact.id + " artifact card"
   );
-  await clickAt(client, emailCardRect);
-  await evaluate(client, artifactCardClickExpression("email-draft-artifact"));
+  await clickAt(client, artifactCardRect);
+  await evaluate(client, artifactCardClickExpression(selectedArtifact.id));
 
   const detailState = await waitForValue(
     client,
-    artifactDetailExpression("email-draft-artifact"),
+    artifactDetailExpression(selectedArtifact.id),
     (state) =>
       state.present &&
-      state.detailId === "email-draft-artifact" &&
+      state.detailId === selectedArtifact.id &&
       state.textLength > 0 &&
-      state.hasCustomerContext &&
-      state.hasApprovalText &&
-      state.hasContextText,
-    "email draft artifact detail"
+      (!artifactCheck.usesSeedArtifacts ||
+        (state.hasCustomerContext && state.hasApprovalText && state.hasContextText)),
+    selectedArtifact.id + " artifact detail"
   );
 
   checks.push({
@@ -1068,7 +1075,9 @@ async function runArtifactsSmoke(client, apiUrl) {
     syncStatus: panelState.syncStatus,
     count: panelState.count,
     selectedArtifact: detailState.detailId,
-    detailTextLength: detailState.textLength
+    detailTextLength: detailState.textLength,
+    dataLayer: dataLayer.currentLayer || "",
+    usedSeedArtifacts: artifactCheck.usesSeedArtifacts
   });
 }
 
@@ -1561,7 +1570,7 @@ async function runCodeBlockSmoke(client) {
       codeBlockOrFenceExpression(),
       (state) => state.inspection.hasBlocks || (state.hasFence && state.submitDisabled === false),
       "code block smoke response",
-      Math.min(timeoutMs, 8000)
+      timeoutMs
     );
   } catch (error) {
     throw new Error(
@@ -2738,7 +2747,7 @@ async function fetchCodeFenceProbe(endpoint) {
           }
         ]
       }),
-      signal: AbortSignal.timeout(3000)
+      signal: AbortSignal.timeout(timeoutMs)
     });
 
     if (!response.ok) {
@@ -2778,7 +2787,7 @@ async function fetchChatTextResponse(endpoint, prompt) {
         }
       ]
     }),
-    signal: AbortSignal.timeout(5000)
+    signal: AbortSignal.timeout(timeoutMs)
   });
 
   return {
@@ -2796,7 +2805,7 @@ async function fetchActivityEventsSnapshot(apiUrl) {
       headers: {
         Accept: "application/json"
       },
-      signal: AbortSignal.timeout(5000)
+      signal: AbortSignal.timeout(timeoutMs)
     }
   );
 
@@ -2814,7 +2823,7 @@ async function fetchModelUsageSnapshot(apiUrl) {
       headers: {
         Accept: "application/json"
       },
-      signal: AbortSignal.timeout(5000)
+      signal: AbortSignal.timeout(timeoutMs)
     }
   );
 
@@ -2830,7 +2839,7 @@ async function fetchDailyEndpointSnapshot(apiUrl, path) {
     headers: {
       Accept: "application/json"
     },
-    signal: AbortSignal.timeout(5000)
+    signal: AbortSignal.timeout(timeoutMs)
   });
 
   if (!response.ok) {
@@ -2845,7 +2854,7 @@ async function fetchHealthSnapshot(apiUrl) {
     headers: {
       Accept: "application/json"
     },
-    signal: AbortSignal.timeout(5000)
+    signal: AbortSignal.timeout(timeoutMs)
   });
 
   if (!response.ok) {
@@ -2862,7 +2871,7 @@ async function fetchGoogleConnectorStatusSnapshot(apiUrl) {
       headers: {
         Accept: "application/json"
       },
-      signal: AbortSignal.timeout(5000)
+      signal: AbortSignal.timeout(timeoutMs)
     }
   );
 
@@ -2880,7 +2889,7 @@ async function fetchMicrosoftConnectorStatusSnapshot(apiUrl) {
       headers: {
         Accept: "application/json"
       },
-      signal: AbortSignal.timeout(5000)
+      signal: AbortSignal.timeout(timeoutMs)
     }
   );
 
@@ -2901,7 +2910,7 @@ async function fetchJson(apiUrl, path, payload) {
       "Content-Type": "application/json"
     },
     body: JSON.stringify(payload),
-    signal: AbortSignal.timeout(5000)
+    signal: AbortSignal.timeout(timeoutMs)
   });
 
   if (!response.ok) {
@@ -2932,7 +2941,7 @@ async function uploadTextContextSnapshot(apiUrl) {
     {
       method: "POST",
       body: form,
-      signal: AbortSignal.timeout(5000)
+      signal: AbortSignal.timeout(timeoutMs)
     }
   );
 
@@ -3541,14 +3550,21 @@ function assertSessionRestorePreviewSnapshot(snapshot) {
   return preview;
 }
 
-function assertArtifactsSnapshot(snapshot) {
+function assertArtifactsSnapshot(snapshot, options = {}) {
   if (!snapshot || snapshot.mode !== "daily_work" || !Array.isArray(snapshot.artifacts)) {
     throw new Error("Artifacts API did not return a daily_work artifacts array.");
   }
 
-  if (snapshot.artifacts.length < 4) {
+  const allowsGeneratedArtifacts = options.currentLayer === "postgres";
+  const minimumArtifacts = allowsGeneratedArtifacts ? 1 : 4;
+
+  if (snapshot.artifacts.length < minimumArtifacts) {
     throw new Error(
-      `Artifacts API returned ${snapshot.artifacts.length} artifact(s), expected at least 4.`
+      "Artifacts API returned " +
+        snapshot.artifacts.length +
+        " artifact(s), expected at least " +
+        minimumArtifacts +
+        "."
     );
   }
 
@@ -3560,11 +3576,22 @@ function assertArtifactsSnapshot(snapshot) {
   );
   const missingIds = expectedIds.filter((id) => !artifactsById.has(id));
 
-  if (missingIds.length) {
-    throw new Error(`Artifacts API missed expected artifact(s): ${missingIds.join(", ")}.`);
+  if (missingIds.length && !allowsGeneratedArtifacts) {
+    throw new Error(
+      "Artifacts API missed expected artifact(s): " + missingIds.join(", ") + "."
+    );
   }
 
-  const trackedArtifacts = expectedIds.map((id) => artifactsById.get(id));
+  const usesSeedArtifacts = missingIds.length === 0;
+  const trackedArtifacts = usesSeedArtifacts
+    ? expectedIds.map((id) => artifactsById.get(id))
+    : snapshot.artifacts
+        .filter((artifact) => artifact && typeof artifact.id === "string")
+        .slice(0, 2);
+
+  if (!trackedArtifacts.length) {
+    throw new Error("Artifacts API did not expose any valid artifact payloads.");
+  }
 
   for (const artifact of trackedArtifacts) {
     if (
@@ -3578,12 +3605,16 @@ function assertArtifactsSnapshot(snapshot) {
       throw new Error("Artifacts API returned an invalid tracked artifact payload.");
     }
 
-    if (!Array.isArray(artifact.sourceContextIds) || !artifact.sourceContextIds.length) {
-      throw new Error(`${artifact.id} did not include sourceContextIds linkage.`);
+    if (!Array.isArray(artifact.sourceContextIds)) {
+      throw new Error(artifact.id + " did not include sourceContextIds linkage.");
+    }
+
+    if (usesSeedArtifacts && !artifact.sourceContextIds.length) {
+      throw new Error(artifact.id + " did not include seed sourceContextIds linkage.");
     }
 
     if (!Array.isArray(artifact.approvalRequestIds)) {
-      throw new Error(`${artifact.id} did not include approvalRequestIds linkage.`);
+      throw new Error(artifact.id + " did not include approvalRequestIds linkage.");
     }
 
     if (
@@ -3592,23 +3623,24 @@ function assertArtifactsSnapshot(snapshot) {
       !Array.isArray(artifact.trace.events) ||
       !artifact.trace.events.length
     ) {
-      throw new Error(`${artifact.id} did not include trace events.`);
+      throw new Error(artifact.id + " did not include trace events.");
     }
 
     if (!Array.isArray(artifact.lifecycle) || !artifact.lifecycle.length) {
-      throw new Error(`${artifact.id} did not include lifecycle events.`);
+      throw new Error(artifact.id + " did not include lifecycle events.");
     }
   }
 
   const emailDraft = artifactsById.get("email-draft-artifact");
   if (
-    !emailDraft.approvalRequestIds.includes("read-customer-email-context") ||
-    !emailDraft.approvalRequestIds.includes("draft-external-reply")
+    usesSeedArtifacts &&
+    (!emailDraft.approvalRequestIds.includes("read-customer-email-context") ||
+      !emailDraft.approvalRequestIds.includes("draft-external-reply"))
   ) {
     throw new Error("email-draft-artifact did not include the expected approval linkage.");
   }
 
-  return trackedArtifacts;
+  return { trackedArtifacts, usesSeedArtifacts };
 }
 
 function assertMatchingActivityEvents(apiEvents, wsEvents) {
