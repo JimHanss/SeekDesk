@@ -162,15 +162,15 @@ function wantsHtmlResponse(request: FastifyRequest) {
 
 function renderGoogleOAuthCallbackHtml(payload: GoogleOAuthCallbackPayload) {
   const title = payload.connected
-    ? "Google Connected"
+    ? "Email Authorized"
     : payload.requiresSetup
-      ? "Google OAuth Setup Required"
-      : "Google OAuth Failed";
+      ? "Email Authorization Setup Required"
+      : "Email Authorization Failed";
   const summary = payload.connected
-    ? `Connected${payload.accountEmail ? ` as ${payload.accountEmail}` : ""}.`
+    ? `Authorized${payload.accountEmail ? ` as ${payload.accountEmail}` : ""}.`
     : payload.requiresSetup
-      ? "Google OAuth is not fully configured yet."
-      : payload.description ?? payload.error ?? "Google OAuth could not complete.";
+      ? "Email authorization is not fully configured yet."
+      : payload.description ?? payload.error ?? "Email authorization could not complete.";
   const detail =
     payload.missingConfig && payload.missingConfig.length > 0
       ? `Missing config: ${payload.missingConfig.join(", ")}`
@@ -180,7 +180,12 @@ function renderGoogleOAuthCallbackHtml(payload: GoogleOAuthCallbackPayload) {
   const message = {
     type: "seekdesk.google_oauth_callback",
     provider: "google",
-    connected: payload.connected
+    connected: payload.connected,
+    ...(payload.accountEmail ? { accountEmail: payload.accountEmail } : {}),
+    ...(payload.scopes ? { scopes: payload.scopes } : {}),
+    ...(payload.updatedAt ? { updatedAt: payload.updatedAt } : {}),
+    ...(payload.error ? { error: payload.error } : {}),
+    ...(payload.requiresSetup ? { requiresSetup: payload.requiresSetup } : {})
   };
 
   return `<!doctype html>
@@ -245,13 +250,14 @@ function renderGoogleOAuthCallbackHtml(payload: GoogleOAuthCallbackPayload) {
       <h1>${escapeHtml(title)}</h1>
       <p>${escapeHtml(summary)}</p>
       <p>${escapeHtml(detail)}</p>
-      <p>Return to SeekDesk and refresh the Google connector status. This callback never sends email or creates calendar events.</p>
+      <p>Return to SeekDesk. The main window will refresh the email connector status automatically. This callback never sends email or creates calendar events.</p>
       <button type="button" onclick="window.close()">Close this tab</button>
     </main>
     <script>
       if (window.opener) {
         window.opener.postMessage(${JSON.stringify(message)}, "*");
       }
+      ${payload.connected ? "window.setTimeout(() => window.close(), 900);" : ""}
     </script>
   </body>
 </html>`;

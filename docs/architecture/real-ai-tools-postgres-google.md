@@ -106,6 +106,24 @@ Required env:
 Refresh tokens never reach the frontend. Tokens are encrypted with AES-256-GCM before
 repository storage.
 
+Frontend email authorization uses the same routes as a user-facing popup flow:
+
+1. The connector panel calls `/api/connectors/google/oauth/start`.
+2. The browser opens the returned Google consent URL in a separate authorization
+   window.
+3. The user signs in with the mailbox account they want SeekDesk to read and
+   approves the requested Gmail/Calendar scopes.
+4. Google redirects to `/api/connectors/google/oauth/callback`.
+5. The callback exchanges the authorization code server-side, stores encrypted
+   tokens through the repository, posts a non-secret completion message back to
+   the opener window, and auto-closes when the browser allows it.
+6. The main window refreshes `/api/connectors/google/status`. It also polls as a
+   fallback in case popup messaging is blocked.
+
+The frontend never asks for a mailbox password and never receives access tokens
+or refresh tokens. It only sees connection status, account email, granted scope
+names, and setup errors.
+
 `/api/connectors/google/status` also reports authorization completeness:
 
 - `requiredScopes`: Gmail readonly, Gmail compose, and Calendar readonly scopes.

@@ -96,8 +96,9 @@ export function ConnectorDirectoryPanel({
           </span>
         </div>
         <p className="text-xs leading-5 text-teal-700">
-          Google connectors read authorized Gmail and Calendar data, then create
-          local previews. They never send email or create calendar events.
+          Email connectors use user authorization windows to read approved mailbox
+          and calendar context, then create local previews. They never send email
+          or create calendar events.
         </p>
 
         <div
@@ -114,8 +115,8 @@ export function ConnectorDirectoryPanel({
             <div className="min-w-0">
               <div className="flex flex-wrap items-center gap-2">
                 <span className="font-medium">
-                  Google:{" "}
-                  {googleConnectorStatus.connected ? "connected" : "requires_setup"}
+                  Email:{" "}
+                  {googleConnectorStatus.connected ? "authorized" : "requires_setup"}
                 </span>
                 <span className="rounded-[999px] bg-teal-50 px-2 py-0.5 text-[11px] text-teal-700">
                   {googleConnectorStatus.scopes.length} scopes
@@ -180,11 +181,11 @@ export function ConnectorDirectoryPanel({
                 )}
                 {googleConnectorStatus.connected
                   ? googleConnectorStatus.scopesComplete
-                    ? "Connected"
+                    ? "Authorized"
                     : "Refresh scopes"
                   : googleConnectorStatus.missingConfig.length > 0
                     ? "Setup needed"
-                    : "Open OAuth"}
+                    : "Authorize email"}
               </Button>
             </div>
           </div>

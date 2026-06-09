@@ -279,7 +279,7 @@ describe("api server", () => {
     await app.close();
   });
 
-  it("returns a browser-friendly Google OAuth callback setup page", async () => {
+  it("returns a browser-friendly email authorization callback setup page", async () => {
     const app = await buildServer();
     const response = await app.inject({
       method: "GET",
@@ -291,9 +291,52 @@ describe("api server", () => {
 
     expect(response.statusCode).toBe(503);
     expect(response.headers["content-type"]).toContain("text/html");
-    expect(response.body).toContain("Google OAuth Setup Required");
+    expect(response.body).toContain("Email Authorization Setup Required");
     expect(response.body).toContain("GOOGLE_CLIENT_ID");
     expect(response.body).toContain("seekdesk.google_oauth_callback");
+
+    await app.close();
+  });
+
+  it("starts a user-facing email authorization flow with offline scoped consent", async () => {
+    process.env.GOOGLE_CLIENT_ID = "google-client-id";
+    process.env.GOOGLE_CLIENT_SECRET = "google-client-secret";
+    process.env.GOOGLE_REDIRECT_URI =
+      "http://127.0.0.1:4000/api/connectors/google/oauth/callback";
+    process.env.GOOGLE_TOKEN_ENCRYPTION_KEY = "test-token-encryption-key";
+
+    const app = await buildServer();
+    const response = await app.inject({
+      method: "GET",
+      url: "/api/connectors/google/oauth/start?workspaceId=workspace-seekdesk"
+    });
+
+    expect(response.statusCode).toBe(200);
+    expect(response.json()).toEqual(
+      expect.objectContaining({
+        provider: "google",
+        authorizationUrl: "https://accounts.google.test/oauth",
+        scopes: expect.arrayContaining([
+          "https://www.googleapis.com/auth/gmail.readonly",
+          "https://www.googleapis.com/auth/gmail.compose",
+          "https://www.googleapis.com/auth/calendar.readonly"
+        ]),
+        state: expect.any(String)
+      })
+    );
+    expect(googleApiMock.oauthGenerateAuthUrl).toHaveBeenCalledWith(
+      expect.objectContaining({
+        access_type: "offline",
+        prompt: "consent",
+        include_granted_scopes: true,
+        scope: expect.arrayContaining([
+          "https://www.googleapis.com/auth/gmail.readonly",
+          "https://www.googleapis.com/auth/gmail.compose",
+          "https://www.googleapis.com/auth/calendar.readonly"
+        ]),
+        state: expect.any(String)
+      })
+    );
 
     await app.close();
   });

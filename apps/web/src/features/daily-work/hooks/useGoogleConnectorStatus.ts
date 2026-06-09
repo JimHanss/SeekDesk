@@ -42,8 +42,10 @@ export function useGoogleConnectorStatus(apiBaseUrl: string) {
   const [googleOAuthStartStatus, setGoogleOAuthStartStatus] =
     React.useState<GoogleOAuthStartStatus>("idle");
   const [googleOAuthStartNotice, setGoogleOAuthStartNotice] = React.useState(
-    "Configure Google OAuth, then open the consent screen from this panel."
+    "Connect email in a secure Google consent window. SeekDesk never asks for your mailbox password."
   );
+  const oauthPopupRef = React.useRef<Window | null>(null);
+  const oauthPollingRef = React.useRef<number | null>(null);
 
   const refreshGoogleConnectorStatus = React.useCallback(
     async (signal?: AbortSignal) => {
@@ -77,7 +79,7 @@ export function useGoogleConnectorStatus(apiBaseUrl: string) {
         scopesComplete
       });
 
-      setGoogleConnectorStatus({
+      const nextStatus: GoogleConnectorStatusState = {
         connected,
         requiresSetup,
         accountEmail: payload.accountEmail ?? null,
@@ -89,29 +91,33 @@ export function useGoogleConnectorStatus(apiBaseUrl: string) {
         source: "api",
         syncStatus: "live",
         notice
-      });
+      };
+
+      setGoogleConnectorStatus(nextStatus);
 
       if (connected && scopesComplete) {
         setGoogleOAuthStartStatus("idle");
         setGoogleOAuthStartNotice(
-          "Google is connected. Real Gmail and Calendar read tools can run in preview-only mode."
+          "Email is authorized. Real Gmail and Calendar read tools can run in preview-only mode."
         );
       } else if (connected && missingScopes.length > 0) {
         setGoogleOAuthStartStatus("idle");
         setGoogleOAuthStartNotice(
-          "Google is connected but needs updated consent for the missing Gmail/Calendar scopes. Reopen OAuth to refresh scopes."
+          "Email is connected but needs updated consent for the missing Gmail/Calendar scopes. Reopen authorization to refresh scopes."
         );
       } else if (missingConfig.length > 0) {
         setGoogleOAuthStartStatus("requires_setup");
         setGoogleOAuthStartNotice(
-          `Add ${missingConfig.join(", ")} to .env.local, restart the API, then start OAuth.`
+          `Add ${missingConfig.join(", ")} to .env.local, restart the API, then start email authorization.`
         );
       } else {
         setGoogleOAuthStartStatus("idle");
         setGoogleOAuthStartNotice(
-          "Google OAuth is configured. Open the consent screen to connect an account."
+          "Email authorization is configured. Open the consent window to connect an account."
         );
       }
+
+      return nextStatus;
     },
     [apiBaseUrl]
   );
@@ -151,7 +157,7 @@ export function useGoogleConnectorStatus(apiBaseUrl: string) {
 
   const refreshGoogleConnectorStatusSafely = React.useCallback(async () => {
     try {
-      await refreshGoogleConnectorStatus();
+      return await refreshGoogleConnectorStatus();
     } catch {
       setGoogleConnectorStatus({
         ...fallbackStatus,
@@ -164,8 +170,66 @@ export function useGoogleConnectorStatus(apiBaseUrl: string) {
       setGoogleOAuthStartNotice(
         "Google connector status could not be refreshed."
       );
+      return null;
     }
   }, [refreshGoogleConnectorStatus]);
+
+  const stopOAuthStatusPolling = React.useCallback(() => {
+    if (oauthPollingRef.current !== null) {
+      window.clearInterval(oauthPollingRef.current);
+      oauthPollingRef.current = null;
+    }
+  }, []);
+
+  const startOAuthStatusPolling = React.useCallback(() => {
+    stopOAuthStatusPolling();
+    const startedAt = Date.now();
+
+    oauthPollingRef.current = window.setInterval(() => {
+      void (async () => {
+        const nextStatus = await refreshGoogleConnectorStatusSafely();
+        const popupClosed = oauthPopupRef.current?.closed === true;
+
+        if (nextStatus?.connected && nextStatus.scopesComplete) {
+          stopOAuthStatusPolling();
+          setGoogleOAuthStartStatus("idle");
+          setGoogleOAuthStartNotice(
+            "Email authorization completed. The connector status is live."
+          );
+          return;
+        }
+
+        if (popupClosed) {
+          stopOAuthStatusPolling();
+          setGoogleOAuthStartStatus(nextStatus?.connected ? "idle" : "failed");
+          setGoogleOAuthStartNotice(
+            nextStatus?.connected
+              ? "Email authorization window closed. Connector status refreshed."
+              : "Email authorization window closed before the account was connected."
+          );
+          return;
+        }
+
+        if (Date.now() - startedAt > 120_000) {
+          stopOAuthStatusPolling();
+          setGoogleOAuthStartStatus("idle");
+          setGoogleOAuthStartNotice(
+            "Email authorization is still pending. Finish consent in the popup, then refresh connector status."
+          );
+          return;
+        }
+
+        if (nextStatus && !nextStatus.connected) {
+          setGoogleOAuthStartStatus("opened");
+          setGoogleOAuthStartNotice(
+            "Email authorization window is open. Approve access there; this panel will refresh automatically."
+          );
+        }
+      })();
+    }, 2500);
+  }, [refreshGoogleConnectorStatusSafely, stopOAuthStatusPolling]);
+
+  React.useEffect(() => stopOAuthStatusPolling, [stopOAuthStatusPolling]);
 
   React.useEffect(() => {
     function handleMessage(event: MessageEvent) {
@@ -178,6 +242,10 @@ export function useGoogleConnectorStatus(apiBaseUrl: string) {
         return;
       }
 
+      stopOAuthStatusPolling();
+      setGoogleOAuthStartNotice(
+        "Email authorization callback received. Refreshing connector status."
+      );
       void refreshGoogleConnectorStatusSafely();
     }
 
@@ -186,11 +254,11 @@ export function useGoogleConnectorStatus(apiBaseUrl: string) {
     return () => {
       window.removeEventListener("message", handleMessage);
     };
-  }, [refreshGoogleConnectorStatusSafely]);
+  }, [refreshGoogleConnectorStatusSafely, stopOAuthStatusPolling]);
 
   const startGoogleOAuth = React.useCallback(async () => {
     setGoogleOAuthStartStatus("starting");
-    setGoogleOAuthStartNotice("Requesting a Google OAuth consent URL.");
+    setGoogleOAuthStartNotice("Requesting a secure email authorization URL.");
 
     try {
       const response = await fetch(
@@ -215,10 +283,26 @@ export function useGoogleConnectorStatus(apiBaseUrl: string) {
         throw new Error("Google OAuth start did not return an authorization URL.");
       }
 
-      window.open(payload.authorizationUrl, "_blank", "noopener,noreferrer");
+      const popup = window.open(
+        payload.authorizationUrl,
+        "seekdesk-email-authorization",
+        createOAuthPopupFeatures()
+      );
+
+      if (!popup) {
+        setGoogleOAuthStartStatus("failed");
+        setGoogleOAuthStartNotice(
+          "The browser blocked the email authorization popup. Allow popups for SeekDesk and try again."
+        );
+        return;
+      }
+
+      oauthPopupRef.current = popup;
+      popup.focus();
+      startOAuthStatusPolling();
       setGoogleOAuthStartStatus("opened");
       setGoogleOAuthStartNotice(
-        "Google consent opened in a new tab. After approving access, return here and refresh connector status."
+        "Email authorization opened in a new window. After approving access, this panel will refresh automatically."
       );
     } catch (error) {
       setGoogleOAuthStartStatus("failed");
@@ -228,7 +312,7 @@ export function useGoogleConnectorStatus(apiBaseUrl: string) {
           : "Google OAuth start failed unexpectedly."
       );
     }
-  }, [apiBaseUrl]);
+  }, [apiBaseUrl, startOAuthStatusPolling]);
 
   return {
     googleConnectorStatus,
@@ -247,16 +331,37 @@ function buildGoogleConnectorNotice(input: {
   scopesComplete: boolean;
 }) {
   if (input.connected && input.scopesComplete) {
-    return `Google connected${input.accountEmail ? ` as ${input.accountEmail}` : ""}.`;
+    return `Email authorized${input.accountEmail ? ` as ${input.accountEmail}` : ""}.`;
   }
 
   if (input.connected && input.missingScopes.length > 0) {
-    return `Google connected but missing required scopes: ${input.missingScopes.join(", ")}.`;
+    return `Email authorized but missing required scopes: ${input.missingScopes.join(", ")}.`;
   }
 
   if (input.missingConfig.length > 0) {
     return `Google OAuth is missing ${input.missingConfig.join(", ")}.`;
   }
 
-  return "Google OAuth is configured; connect an account before Gmail or Calendar reads can run.";
+  return "Email authorization is configured; connect an account before Gmail or Calendar reads can run.";
+}
+
+function createOAuthPopupFeatures() {
+  const width = 560;
+  const height = 720;
+  const left = Math.max(0, Math.round(window.screenX + (window.outerWidth - width) / 2));
+  const top = Math.max(0, Math.round(window.screenY + (window.outerHeight - height) / 2));
+
+  return [
+    "popup=yes",
+    `width=${width}`,
+    `height=${height}`,
+    `left=${left}`,
+    `top=${top}`,
+    "menubar=no",
+    "toolbar=no",
+    "location=yes",
+    "status=no",
+    "resizable=yes",
+    "scrollbars=yes"
+  ].join(",");
 }
