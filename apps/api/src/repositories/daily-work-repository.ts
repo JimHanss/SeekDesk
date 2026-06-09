@@ -4,6 +4,7 @@ import { join } from "node:path";
 import {
   dailyActivityEventSchema,
   dailyApprovalRequestSchema,
+  dailyContextDocumentSchema,
   dailyContextItemSchema,
   dailyWorkArtifactSchema,
   dailyWorkConnectorSchema,
@@ -12,6 +13,7 @@ import {
   dailyWorkTemplateSchema,
   dailyWorkWorkflowSchema,
   defaultDailyActivityEvents,
+  defaultDailyContextDocuments,
   defaultDailyWorkApprovalRequests,
   defaultDailyWorkArtifacts,
   defaultDailyWorkConnectors,
@@ -21,6 +23,7 @@ import {
   defaultDailyWorkflows,
   type DailyActivityEvent,
   type DailyApprovalRequest,
+  type DailyContextDocument,
   type DailyContextItem,
   type DailyWorkArtifact,
   type DailyWorkConnector,
@@ -37,6 +40,7 @@ import { PostgresDailyWorkRepository } from "./postgres-daily-work-repository.js
 type JsonCollectionKey =
   | "templates"
   | "context"
+  | "contextDocuments"
   | "approvals"
   | "artifacts"
   | "sessions"
@@ -81,6 +85,7 @@ export interface DailyWorkConnectorAccount {
 const jsonFileNames: Record<JsonCollectionKey, string> = {
   templates: "templates.json",
   context: "context.json",
+  contextDocuments: "context-documents.json",
   approvals: "approvals.json",
   artifacts: "artifacts.json",
   sessions: "sessions.json",
@@ -91,7 +96,11 @@ const jsonFileNames: Record<JsonCollectionKey, string> = {
 
 export interface DailyWorkRepository {
   listTemplates(): Promise<DailyWorkTemplate[]>;
+  upsertTemplate(template: DailyWorkTemplate): Promise<DailyWorkTemplate>;
   listContextItems(): Promise<DailyContextItem[]>;
+  upsertContextItem(item: DailyContextItem): Promise<DailyContextItem>;
+  listContextDocuments(): Promise<DailyContextDocument[]>;
+  upsertContextDocument(document: DailyContextDocument): Promise<DailyContextDocument>;
   listApprovalRequests(): Promise<DailyApprovalRequest[]>;
   listArtifacts(): Promise<DailyWorkArtifact[]>;
   listSessionSummaries(): Promise<DailyWorkSessionSummary[]>;
@@ -136,6 +145,7 @@ export class DailyWorkRepositoryDataError extends Error {
 export class SeedDailyWorkRepository implements DailyWorkRepository {
   private readonly templates = cloneJson(defaultDailyWorkTemplates);
   private readonly contextItems = cloneJson(defaultDailyWorkContextItems);
+  private readonly contextDocuments = cloneJson(defaultDailyContextDocuments);
   private readonly approvalRequests = cloneJson(defaultDailyWorkApprovalRequests);
   private readonly artifacts = cloneJson(defaultDailyWorkArtifacts);
   private readonly sessionDetails = cloneJson(defaultDailyWorkSessionDetails);
@@ -150,8 +160,33 @@ export class SeedDailyWorkRepository implements DailyWorkRepository {
     return cloneJson(this.templates);
   }
 
+  async upsertTemplate(template: DailyWorkTemplate) {
+    const parsed = dailyWorkTemplateSchema.parse(template);
+    replaceById(this.templates, parsed);
+
+    return cloneJson(parsed);
+  }
+
   async listContextItems() {
     return cloneJson(this.contextItems);
+  }
+
+  async upsertContextItem(item: DailyContextItem) {
+    const parsed = dailyContextItemSchema.parse(item);
+    replaceById(this.contextItems, parsed);
+
+    return cloneJson(parsed);
+  }
+
+  async listContextDocuments() {
+    return cloneJson(this.contextDocuments);
+  }
+
+  async upsertContextDocument(document: DailyContextDocument) {
+    const parsed = dailyContextDocumentSchema.parse(document);
+    replaceById(this.contextDocuments, parsed);
+
+    return cloneJson(parsed);
   }
 
   async listApprovalRequests() {
@@ -280,12 +315,51 @@ export class JsonDailyWorkRepository implements DailyWorkRepository {
     );
   }
 
+  async upsertTemplate(template: DailyWorkTemplate) {
+    const parsed = dailyWorkTemplateSchema.parse(template);
+    const templates = await this.listTemplates();
+    replaceById(templates, parsed);
+    await this.writeCollection("templates", dailyWorkTemplateSchema.array(), templates);
+
+    return cloneJson(parsed);
+  }
+
   async listContextItems() {
     return this.readCollection(
       "context",
       dailyContextItemSchema.array(),
       () => this.seedRepository.listContextItems()
     );
+  }
+
+  async upsertContextItem(item: DailyContextItem) {
+    const parsed = dailyContextItemSchema.parse(item);
+    const contextItems = await this.listContextItems();
+    replaceById(contextItems, parsed);
+    await this.writeCollection("context", dailyContextItemSchema.array(), contextItems);
+
+    return cloneJson(parsed);
+  }
+
+  async listContextDocuments() {
+    return this.readCollection(
+      "contextDocuments",
+      dailyContextDocumentSchema.array(),
+      () => this.seedRepository.listContextDocuments()
+    );
+  }
+
+  async upsertContextDocument(document: DailyContextDocument) {
+    const parsed = dailyContextDocumentSchema.parse(document);
+    const documents = await this.listContextDocuments();
+    replaceById(documents, parsed);
+    await this.writeCollection(
+      "contextDocuments",
+      dailyContextDocumentSchema.array(),
+      documents
+    );
+
+    return cloneJson(parsed);
   }
 
   async listApprovalRequests() {

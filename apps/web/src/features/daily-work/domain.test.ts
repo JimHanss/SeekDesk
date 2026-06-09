@@ -6,6 +6,7 @@ import {
   createLocalConnectorPreviewState,
   mapAgentTraceResponse,
   mapDailyActivitySnapshot,
+  mapDailyModelUsageResponse,
   mapApprovalDecisionStatus,
   mapTemplatePreviewResponse,
   mapTemplatesResponse,
@@ -46,6 +47,80 @@ describe("daily-work domain mappers", () => {
       enabled: true
     });
     expect(template?.tags).toEqual(["email", "stakeholder", "weekly", "extra"]);
+  });
+
+  it("maps token-only model usage aggregates and request records", () => {
+    const panel = mapDailyModelUsageResponse({
+      mode: activeMode,
+      config: {
+        mode: activeMode,
+        provider: "deepseek",
+        baseUrl: "https://api.deepseek.com",
+        fastModel: "deepseek-chat",
+        proModel: "deepseek-reasoner",
+        selectedRoute: "fast",
+        thinkingMode: "disabled",
+        streamUsageEnabled: true,
+        configured: true
+      },
+      usage: {
+        promptTokens: 100,
+        completionTokens: 40,
+        totalTokens: 140,
+        budgetState: "tracking_only",
+        updatedAt: "2026-06-09T00:00:00.000Z",
+        aggregates: [
+          {
+            id: "current_session",
+            label: "Current session",
+            promptTokens: 100,
+            completionTokens: 40,
+            totalTokens: 140,
+            recordCount: 1
+          }
+        ],
+        records: [
+          {
+            id: "usage-1",
+            sessionId: "session-1",
+            provider: "deepseek",
+            model: "deepseek-chat",
+            promptTokens: 100,
+            completionTokens: 40,
+            totalTokens: 140,
+            createdAt: "2026-06-09T00:00:00.000Z"
+          }
+        ]
+      }
+    });
+
+    expect(panel).toMatchObject({
+      source: "api",
+      syncStatus: "live",
+      usageAggregates: [
+        expect.objectContaining({
+          id: "current_session",
+          totalTokens: 140,
+          recordCount: 1
+        })
+      ],
+      usageRecords: [
+        expect.objectContaining({
+          id: "usage-1",
+          sessionId: "session-1",
+          totalTokens: 140
+        })
+      ]
+    });
+    expect(panel.usageSnapshots.fast).toEqual(
+      expect.objectContaining({
+        inputTokens: 100,
+        outputTokens: 40,
+        totalTokens: 140,
+        callCount: 1,
+        estimatedCost: "token-only"
+      })
+    );
   });
 
   it("rejects template responses for other modes", () => {

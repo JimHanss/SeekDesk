@@ -138,9 +138,23 @@ export interface DailyWorkTemplateDto {
   title?: string;
   description?: string;
   prompt?: string;
+  systemPrompt?: string;
+  promptTemplate?: string;
+  defaultModelRoute?: ModelRouteMode;
+  allowedToolNames?: string[];
+  contextPolicy?: {
+    maxContextTokens?: number;
+    includeSelectedContext?: boolean;
+    includeRecentSession?: boolean;
+    includeArtifacts?: boolean;
+  };
+  status?: string;
   artifactType?: string;
   tags?: string[];
   enabled?: boolean;
+  version?: number;
+  createdAt?: string;
+  updatedAt?: string;
 }
 
 export interface DailyWorkTemplatesResponseDto {
@@ -475,6 +489,40 @@ export interface DailyContextUsePreviewResponseDto {
   preview?: DailyContextUsePreviewDto;
 }
 
+export interface DailyContextDocumentDto {
+  id?: string;
+  contextItemId?: string;
+  title?: string;
+  originalFileName?: string;
+  mimeType?: string;
+  fileType?: string;
+  fileSizeBytes?: number;
+  sha256?: string;
+  textPreview?: string;
+  tokenEstimate?: number;
+  status?: string;
+  tags?: string[];
+  createdAt?: string;
+  updatedAt?: string;
+}
+
+export interface DailyContextUploadResponseDto {
+  mode?: AppMode;
+  document?: DailyContextDocumentDto;
+  contextItem?: DailyContextItemDto;
+  previewOnly?: boolean;
+  externalEffects?: string[];
+}
+
+export type ContextUploadStatus = "idle" | "uploading" | "ready" | "error";
+
+export interface ContextUploadState {
+  status: ContextUploadStatus;
+  notice: string;
+  documentId: string | null;
+  tokenEstimate: number | null;
+}
+
 export interface ContextPreviewPanelState {
   contextItemId: string;
   source: ContextPreviewSource;
@@ -737,11 +785,34 @@ export interface UsageSnapshotItem {
   inputTokens: number;
   outputTokens: number;
   totalTokens: number;
+  callCount: number;
   estimatedCost: string;
   budgetState: string;
   budgetLevel: ModelUsageBudgetState;
   updatedAt: string;
   notes: string[];
+}
+
+export interface ModelUsageAggregateItem {
+  id: string;
+  label: string;
+  promptTokens: number;
+  completionTokens: number;
+  totalTokens: number;
+  recordCount: number;
+  startedAt?: string;
+  endedAt?: string;
+}
+
+export interface ModelUsageRecordItem {
+  id: string;
+  sessionId: string;
+  provider: string;
+  model: string;
+  promptTokens: number;
+  completionTokens: number;
+  totalTokens: number;
+  createdAt: string;
 }
 
 export interface DailyModelConfigSnapshotDto {
@@ -765,6 +836,30 @@ export interface DailyModelUsageWindowDto {
   endedAt?: string;
 }
 
+export interface DailyModelUsageAggregateDto {
+  id?: string;
+  label?: string;
+  promptTokens?: number;
+  completionTokens?: number;
+  totalTokens?: number;
+  recordCount?: number;
+  startedAt?: string;
+  endedAt?: string;
+}
+
+export interface DailyModelUsageRecordDto {
+  id?: string;
+  sessionId?: string;
+  provider?: string;
+  model?: string;
+  inputTokens?: number;
+  outputTokens?: number;
+  promptTokens?: number;
+  completionTokens?: number;
+  totalTokens?: number;
+  createdAt?: string;
+}
+
 export interface DailyModelUsageSnapshotDto {
   window?: DailyModelUsageWindowDto;
   promptTokens?: number;
@@ -774,7 +869,8 @@ export interface DailyModelUsageSnapshotDto {
   currency?: string;
   budgetState?: ModelUsageBudgetState;
   updatedAt?: string;
-  records?: unknown[];
+  records?: DailyModelUsageRecordDto[];
+  aggregates?: DailyModelUsageAggregateDto[];
 }
 
 export interface DailyModelUsageResponseDto {
@@ -953,6 +1049,8 @@ export interface WorkflowPreviewPanelState {
 export interface ModelUsagePanelState {
   modelSnapshots: Record<ModelRouteMode, ModelSnapshotItem>;
   usageSnapshots: Record<ModelRouteMode, UsageSnapshotItem>;
+  usageAggregates: ModelUsageAggregateItem[];
+  usageRecords: ModelUsageRecordItem[];
   source: ModelUsagePanelSource;
   syncStatus: ModelUsageSyncStatus;
   notice: string;

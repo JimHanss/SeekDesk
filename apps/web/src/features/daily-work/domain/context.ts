@@ -209,6 +209,8 @@ export function contextSourceLabel(sourceType: string, tags: string[]) {
       return `公开资料 API${tagText}`;
     case "team_notes":
       return `团队知识 API${tagText}`;
+    case "uploaded_document":
+      return `Uploaded document API${tagText}`;
     default:
       return `工作区上下文 API${tagText}`;
   }
@@ -226,6 +228,8 @@ export function contextSourceTypeLabel(sourceType: string) {
       return "研究链接";
     case "team_notes":
       return "团队备忘";
+    case "uploaded_document":
+      return "Uploaded document";
     default:
       return sourceType;
   }

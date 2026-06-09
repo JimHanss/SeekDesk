@@ -1,9 +1,13 @@
 import { activeMode } from "./base";
 import type {
+  DailyModelUsageAggregateDto,
+  DailyModelUsageRecordDto,
   DailyModelUsageResponseDto,
   DailyModelUsageWindowDto,
   ModelRouteMode,
   ModelSnapshotItem,
+  ModelUsageAggregateItem,
+  ModelUsageRecordItem,
   ModelUsageBudgetState,
   ModelUsagePanelState,
   ModelUsageSyncStatus,
@@ -55,32 +59,34 @@ export const modelSnapshots: Record<ModelRouteMode, ModelSnapshotItem> = {
 export const usageSnapshots: Record<ModelRouteMode, UsageSnapshotItem> = {
   fast: {
     id: "fast",
-    usageWindow: "示例：当前会话预估",
+    usageWindow: "sample: current session",
     inputTokens: 18420,
     outputTokens: 6110,
     totalTokens: 24530,
-    estimatedCost: "估算 $0.04",
-    budgetState: "示例预算正常，未接真实余额",
+    callCount: 3,
+    estimatedCost: "token-only",
+    budgetState: "token tracking",
     budgetLevel: "tracking_only",
-    updatedAt: "示例：今天 10:40",
+    updatedAt: "sample: today 10:40",
     notes: [
-      "usage 字段示例包含 prompt、completion、total tokens。",
-      "成本仅用于前端占位展示，不作为账单或预算依据。"
+      "Usage snapshot includes prompt, completion and total tokens.",
+      "This panel shows tokens only, not billing or balance."
     ]
   },
   pro: {
     id: "pro",
-    usageWindow: "示例：当前会话预估",
+    usageWindow: "sample: current session",
     inputTokens: 23880,
     outputTokens: 9280,
     totalTokens: 33160,
-    estimatedCost: "估算 $0.18",
-    budgetState: "示例预算关注，未接真实余额",
+    callCount: 5,
+    estimatedCost: "token-only",
+    budgetState: "token tracking",
     budgetLevel: "tracking_only",
-    updatedAt: "示例：今天 10:40",
+    updatedAt: "sample: today 10:40",
     notes: [
-      "深度模式示例会展示更高 token 与成本估算。",
-      "余额、安全阈值和实际计费尚未接入。"
+      "Pro mode sample shows a larger token footprint.",
+      "Billing, balance and cost are intentionally hidden."
     ]
   }
 };
@@ -89,6 +95,8 @@ export function createFallbackModelUsagePanelState(): ModelUsagePanelState {
   return {
     modelSnapshots,
     usageSnapshots,
+    usageAggregates: [],
+    usageRecords: [],
     source: "fallback",
     syncStatus: "syncing",
     notice:
@@ -118,10 +126,13 @@ export function mapDailyModelUsageResponse(
   const outputTokens = nonNegativeNumber(usage?.completionTokens);
   const totalTokens =
     nonNegativeNumber(usage?.totalTokens) || inputTokens + outputTokens;
-  const estimatedCost = formatEstimatedCost(
-    nonNegativeNumber(usage?.estimatedCostUsd),
-    usage?.currency
+  const usageAggregates = mapModelUsageAggregates(usage?.aggregates);
+  const usageRecords = mapModelUsageRecords(usage?.records);
+  const currentAggregate = usageAggregates.find(
+    (aggregate) => aggregate.id === "current_session"
   );
+  const recordCount = currentAggregate?.recordCount ?? usageRecords.length;
+  const estimatedCost = "token-only";
   const budgetLevel = normalizeBudgetState(usage?.budgetState);
   const usageWindow = formatUsageWindow(usage?.window);
   const routeNote =
@@ -136,10 +147,11 @@ export function mapDailyModelUsageResponse(
       : "stream usage 未开启，流式响应可能不返回 usage 块。"
   ];
   const usageNotes = [
-    "后端返回的是 daily_work rolling window 聚合用量，fast/pro 切换不代表独立账单。",
+    "Backend returns daily_work token aggregates and request details.",
     configured
-      ? "DeepSeek API 密钥已在后端配置；前端不会展示或接触密钥。"
-      : "后端未配置 DeepSeek API 密钥；当前用量仍是模拟追踪快照。"
+      ? "DeepSeek API key is configured server-side; the frontend never reads it."
+      : "DeepSeek API key is not configured; usage remains a simulated snapshot.",
+    "Token-only view: no cost, billing or balance is displayed."
   ];
   const nextModelSnapshots = (["fast", "pro"] as const).reduce(
     (snapshots, route) => {
@@ -171,6 +183,7 @@ export function mapDailyModelUsageResponse(
         inputTokens,
         outputTokens,
         totalTokens,
+        callCount: recordCount,
         estimatedCost,
         budgetState: budgetStateLabel(budgetLevel),
         budgetLevel,
@@ -186,6 +199,8 @@ export function mapDailyModelUsageResponse(
   return {
     modelSnapshots: nextModelSnapshots,
     usageSnapshots: nextUsageSnapshots,
+    usageAggregates,
+    usageRecords,
     source: "api",
     syncStatus: "live",
     notice:
@@ -271,9 +286,57 @@ export function formatProviderLabel(provider: string | undefined) {
   return provider?.toLowerCase() === "deepseek" ? "DeepSeek" : nonEmptyText(provider, "DeepSeek");
 }
 
-export function formatEstimatedCost(value: number, currency: string | undefined) {
-  const currencyLabel = currency === "USD" || !currency ? "$" : `${currency} `;
-  return `估算 ${currencyLabel}${value.toFixed(4)}`;
+export function mapModelUsageAggregates(
+  aggregates: DailyModelUsageAggregateDto[] | undefined
+): ModelUsageAggregateItem[] {
+  return (aggregates ?? []).map((aggregate, index) => {
+    const promptTokens = nonNegativeNumber(aggregate.promptTokens);
+    const completionTokens = nonNegativeNumber(aggregate.completionTokens);
+    const item: ModelUsageAggregateItem = {
+      id: nonEmptyText(aggregate.id, `usage-aggregate-${index + 1}`),
+      label: nonEmptyText(aggregate.label, "Token window"),
+      promptTokens,
+      completionTokens,
+      totalTokens:
+        nonNegativeNumber(aggregate.totalTokens) ||
+        promptTokens + completionTokens,
+      recordCount: nonNegativeNumber(aggregate.recordCount)
+    };
+
+    if (aggregate.startedAt) {
+      item.startedAt = aggregate.startedAt;
+    }
+    if (aggregate.endedAt) {
+      item.endedAt = aggregate.endedAt;
+    }
+
+    return item;
+  });
+}
+
+export function mapModelUsageRecords(
+  records: DailyModelUsageRecordDto[] | undefined
+): ModelUsageRecordItem[] {
+  return (records ?? []).map((record, index) => {
+    const promptTokens = nonNegativeNumber(
+      record.promptTokens ?? record.inputTokens
+    );
+    const completionTokens = nonNegativeNumber(
+      record.completionTokens ?? record.outputTokens
+    );
+
+    return {
+      id: nonEmptyText(record.id, `usage-record-${index + 1}`),
+      sessionId: nonEmptyText(record.sessionId, "unknown-session"),
+      provider: formatProviderLabel(record.provider),
+      model: nonEmptyText(record.model, "unknown-model"),
+      promptTokens,
+      completionTokens,
+      totalTokens:
+        nonNegativeNumber(record.totalTokens) || promptTokens + completionTokens,
+      createdAt: formatModelUsageUpdatedAt(record.createdAt)
+    };
+  });
 }
 
 export function formatUsageWindow(window: DailyModelUsageWindowDto | undefined) {
@@ -331,13 +394,13 @@ export function buildModelSwitchPrompt(
     )}，thinking ${modelSnapshot.thinkingMode}，stream usage ${
       modelSnapshot.streamUsageEnabled ? "enabled" : "disabled"
     }。`,
-    `用量快照：${usageSnapshot.usageWindow}，输入 ${formatTokenCount(
+    `Usage snapshot: ${usageSnapshot.usageWindow}, input ${formatTokenCount(
       usageSnapshot.inputTokens
-    )} tokens，输出 ${formatTokenCount(
+    )} tokens, output ${formatTokenCount(
       usageSnapshot.outputTokens
-    )} tokens，合计 ${formatTokenCount(usageSnapshot.totalTokens)} tokens，${
-      usageSnapshot.estimatedCost
-    }。`,
+    )} tokens, total ${formatTokenCount(usageSnapshot.totalTokens)} tokens, calls ${formatTokenCount(
+      usageSnapshot.callCount
+    )}.`,
     "说明：当前页面固定消费 daily_work；coding_agent 仅作为兼容边界，不在这里切换。"
   ].join("\n");
 }

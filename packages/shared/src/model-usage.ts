@@ -28,6 +28,7 @@ export const modelUsageRecordSchema = z.object({
   model: z.string(),
   inputTokens: z.number().int().nonnegative().default(0),
   outputTokens: z.number().int().nonnegative().default(0),
+  totalTokens: z.number().int().nonnegative().optional(),
   estimatedCostUsd: z.number().nonnegative().optional(),
   createdAt: z.string()
 });
@@ -53,6 +54,17 @@ export const dailyModelConfigSnapshotSchema = z.object({
   notes: z.array(z.string()).default([])
 });
 
+export const dailyModelUsageAggregateSchema = z.object({
+  id: z.string(),
+  label: z.string(),
+  promptTokens: z.number().int().nonnegative(),
+  completionTokens: z.number().int().nonnegative(),
+  totalTokens: z.number().int().nonnegative(),
+  recordCount: z.number().int().nonnegative(),
+  startedAt: z.string().datetime().optional(),
+  endedAt: z.string().datetime().optional()
+});
+
 export const dailyModelUsageSnapshotSchema = z.object({
   window: dailyModelUsageWindowSchema,
   promptTokens: z.number().int().nonnegative(),
@@ -62,7 +74,8 @@ export const dailyModelUsageSnapshotSchema = z.object({
   currency: z.literal("USD"),
   budgetState: modelUsageBudgetStateSchema,
   updatedAt: z.string().datetime(),
-  records: z.array(modelUsageRecordSchema)
+  records: z.array(modelUsageRecordSchema),
+  aggregates: z.array(dailyModelUsageAggregateSchema).default([])
 });
 
 export const dailyModelUsageResponseSchema = z.object({
@@ -85,6 +98,9 @@ export type DailyModelUsageWindow = z.infer<
 export type DailyModelConfigSnapshot = z.infer<
   typeof dailyModelConfigSnapshotSchema
 >;
+export type DailyModelUsageAggregate = z.infer<
+  typeof dailyModelUsageAggregateSchema
+>;
 export type DailyModelUsageSnapshot = z.infer<
   typeof dailyModelUsageSnapshotSchema
 >;
@@ -102,6 +118,9 @@ export interface DailyModelUsageResponseOptions {
   thinkingMode?: string | undefined;
   streamUsageEnabled?: boolean | string | undefined;
   updatedAt?: string | undefined;
+  records?: ModelUsageRecord[] | undefined;
+  sessionId?: string | undefined;
+  now?: Date | undefined;
 }
 
 const defaultBaseUrl = "https://api.deepseek.com";
@@ -180,9 +199,10 @@ export function createDailyModelUsageResponse(
       : "DEEPSEEK_API_KEY is not configured; mock usage data is shown."
   );
 
-  const records = defaultDailyModelUsageRecords.map((record) => ({
+  const records = (options.records ?? defaultDailyModelUsageRecords).map((record) => ({
     ...record,
-    model: selectedModel
+    model: record.model || selectedModel,
+    totalTokens: record.totalTokens ?? record.inputTokens + record.outputTokens
   }));
 
   return dailyModelUsageResponseSchema.parse({
@@ -203,7 +223,9 @@ export function createDailyModelUsageResponse(
     usage: createUsageSnapshot({
       records,
       budgetState: configured ? "within_budget" : "tracking_only",
-      updatedAt: options.updatedAt
+      updatedAt: options.updatedAt,
+      sessionId: options.sessionId,
+      now: options.now
     })
   });
 }
@@ -240,7 +262,8 @@ function createDisabledDailyModelUsageResponse(
       currency: "USD",
       budgetState: "disabled",
       updatedAt,
-      records: []
+      records: [],
+      aggregates: []
     }
   };
 }
@@ -249,6 +272,8 @@ function createUsageSnapshot(options: {
   records: ModelUsageRecord[];
   budgetState: ModelUsageBudgetState;
   updatedAt?: string | undefined;
+  sessionId?: string | undefined;
+  now?: Date | undefined;
 }): DailyModelUsageSnapshot {
   const promptTokens = options.records.reduce(
     (total, record) => total + record.inputTokens,
@@ -271,9 +296,62 @@ function createUsageSnapshot(options: {
     estimatedCostUsd: Number(estimatedCostUsd.toFixed(6)),
     currency: "USD",
     budgetState: options.budgetState,
-    updatedAt: options.updatedAt ?? defaultUpdatedAt,
-    records: options.records
+    updatedAt: options.updatedAt ?? new Date().toISOString(),
+    records: options.records,
+    aggregates: createUsageAggregates(
+      options.records,
+      options.now ?? new Date(),
+      options.sessionId
+    )
   };
+}
+
+function createUsageAggregates(
+  records: ModelUsageRecord[],
+  now: Date,
+  sessionId?: string
+) {
+  const endedAt = now.toISOString();
+  const dayStart = new Date(now.getTime() - 24 * 60 * 60 * 1000);
+  const weekStart = new Date(now.getTime() - 7 * 24 * 60 * 60 * 1000);
+
+  return [
+    createAggregate(
+      "current_session",
+      "Current session",
+      sessionId ? records.filter((record) => record.sessionId === sessionId) : []
+    ),
+    createAggregate("24h", "Last 24 hours", filterRecordsSince(records, dayStart), dayStart.toISOString(), endedAt),
+    createAggregate("7d", "Last 7 days", filterRecordsSince(records, weekStart), weekStart.toISOString(), endedAt),
+    createAggregate("all", "All time", records)
+  ];
+}
+
+function createAggregate(
+  id: string,
+  label: string,
+  records: ModelUsageRecord[],
+  startedAt?: string,
+  endedAt?: string
+) {
+  const promptTokens = records.reduce((total, record) => total + record.inputTokens, 0);
+  const completionTokens = records.reduce((total, record) => total + record.outputTokens, 0);
+
+  return {
+    id,
+    label,
+    promptTokens,
+    completionTokens,
+    totalTokens: promptTokens + completionTokens,
+    recordCount: records.length,
+    ...(startedAt ? { startedAt } : {}),
+    ...(endedAt ? { endedAt } : {})
+  };
+}
+
+function filterRecordsSince(records: ModelUsageRecord[], startedAt: Date) {
+  const startMs = startedAt.getTime();
+  return records.filter((record) => new Date(record.createdAt).getTime() >= startMs);
 }
 
 function resolveDeepSeekModel(

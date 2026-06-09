@@ -18,6 +18,7 @@ import {
   type ToolCallRecord,
   type ToolModelUsageRecord
 } from "@seekdesk/shared";
+import multipart from "@fastify/multipart";
 import websocket from "@fastify/websocket";
 import Fastify, {
   type FastifyReply,
@@ -56,6 +57,7 @@ export async function buildServer(options?: {
   });
 
   await app.register(websocket);
+  await app.register(multipart);
 
   app.addHook("onRequest", async (request, reply) => {
     applyCorsHeaders(request, reply);

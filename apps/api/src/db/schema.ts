@@ -16,6 +16,7 @@ export const workspaces = pgTable("workspaces", {
 
 export const dailyWorkTemplates = createPayloadTable("daily_work_templates");
 export const dailyWorkContextItems = createPayloadTable("daily_work_context_items");
+export const dailyWorkContextDocuments = createPayloadTable("daily_work_context_documents");
 export const dailyWorkApprovals = createPayloadTable("daily_work_approvals");
 export const dailyWorkArtifacts = createPayloadTable("daily_work_artifacts");
 export const dailyWorkSessions = createPayloadTable("daily_work_sessions");

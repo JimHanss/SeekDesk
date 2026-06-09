@@ -1,4 +1,6 @@
 
+import { randomUUID } from "node:crypto";
+
 import {
   connectorActionPreviewRequestSchema,
   createDailyActivityEventResponse,
@@ -7,6 +9,10 @@ import {
   dailyContextUsePreviewRequestSchema,
   dailyWorkSessionRestorePreviewRequestSchema,
   dailyWorkTemplateApplyPreviewRequestSchema,
+  dailyWorkTemplateCreateRequestSchema,
+  dailyWorkTemplateDuplicateRequestSchema,
+  dailyWorkTemplateSchema,
+  dailyWorkTemplateUpdateRequestSchema,
   dailyWorkWorkflowPreviewRequestSchema,
   type ConnectorActionPreviewResponse,
   type DailyActivityEventResponse,
@@ -14,6 +20,7 @@ import {
   type DailyApprovalDecisionResponse,
   type DailyApprovalRequestsResponse,
   type DailyContextResponse,
+  type DailyContextUploadResponse,
   type DailyContextUsePreviewResponse,
   type DailyModelUsageResponse,
   type DailyWorkArtifactResponse,
@@ -66,12 +73,21 @@ import {
   normalizeAppMode,
   selectWorkflowPreviewAction
 } from "../services/daily-work-service.js";
+import {
+  ContextDocumentParseError,
+  createContextDocumentFromUpload,
+  maxContextUploadBytes
+} from "../services/daily-work-context-documents.js";
 
 export async function registerDailyWorkRoutes(
   app: FastifyInstance,
   dailyWorkRepository: DailyWorkRepository
 ) {
   app.options("/api/daily/context", async (_request, reply) =>
+      reply.code(204).send()
+    );
+
+  app.options("/api/daily/context/uploads", async (_request, reply) =>
       reply.code(204).send()
     );
 
@@ -91,6 +107,15 @@ export async function registerDailyWorkRoutes(
 
   app.options("/api/daily/templates", async (_request, reply) =>
       reply.code(204).send()
+    );
+
+  app.options("/api/daily/templates/:templateId", async (_request, reply) =>
+      reply.code(204).send()
+    );
+
+  app.options(
+      "/api/daily/templates/:templateId/duplicate",
+      async (_request, reply) => reply.code(204).send()
     );
 
   app.options(
@@ -166,6 +191,76 @@ export async function registerDailyWorkRoutes(
           mode,
           items: await filterDailyWorkContextItems(dailyWorkRepository, mode)
         };
+      }
+    );
+
+  app.post(
+      "/api/daily/context/uploads",
+      async (request, reply): Promise<DailyContextUploadResponse | void> => {
+        if (!request.isMultipart()) {
+          reply.code(400).send({
+            mode: "daily_work",
+            error: "Context upload requires multipart/form-data."
+          });
+          return;
+        }
+
+        try {
+          const upload = await request.file({
+            limits: {
+              fileSize: maxContextUploadBytes,
+              files: 1,
+              fields: 8
+            }
+          });
+
+          if (!upload) {
+            reply.code(400).send({
+              mode: "daily_work",
+              error: "No file was uploaded."
+            });
+            return;
+          }
+
+          const title = readMultipartField(upload.fields, "title");
+          const result = await createContextDocumentFromUpload({
+            buffer: await upload.toBuffer(),
+            originalFileName: upload.filename,
+            mimeType: upload.mimetype,
+            ...(title ? { title } : {}),
+            tags: readMultipartTags(upload.fields)
+          });
+          await dailyWorkRepository.upsertContextDocument(result.document);
+          await dailyWorkRepository.upsertContextItem(result.contextItem);
+
+          return {
+            mode: "daily_work",
+            document: result.document,
+            contextItem: result.contextItem,
+            previewOnly: true,
+            externalEffects: ["none"]
+          };
+        } catch (error) {
+          if (error instanceof ContextDocumentParseError) {
+            reply.code(400).send({
+              mode: "daily_work",
+              error: error.code,
+              message: error.message
+            });
+            return;
+          }
+
+          if (isMultipartFileTooLargeError(error)) {
+            reply.code(413).send({
+              mode: "daily_work",
+              error: "file_too_large",
+              maxBytes: maxContextUploadBytes
+            });
+            return;
+          }
+
+          throw error;
+        }
       }
     );
 
@@ -307,15 +402,176 @@ export async function registerDailyWorkRoutes(
       }
     );
 
-  app.get<{ Querystring: { mode?: string } }>(
+  app.get<{ Querystring: { mode?: string; activeOnly?: string } }>(
       "/api/daily/templates",
       async (request): Promise<DailyWorkTemplatesResponse> => {
         const mode = normalizeAppMode(request.query.mode);
+        const templates = await filterDailyWorkTemplates(dailyWorkRepository, mode);
 
         return {
           mode,
-          templates: await filterDailyWorkTemplates(dailyWorkRepository, mode)
+          templates:
+            request.query.activeOnly === "true"
+              ? templates.filter((template) => template.status === "active" && template.enabled)
+              : templates
         };
+      }
+    );
+
+  app.post<{ Body: unknown }>(
+      "/api/daily/templates",
+      async (request, reply) => {
+        const parsed = dailyWorkTemplateCreateRequestSchema.safeParse(
+          request.body ?? {}
+        );
+        if (!parsed.success) {
+          reply
+            .code(400)
+            .send(
+              createValidationError("Invalid template create request.", parsed.error.issues)
+            );
+          return;
+        }
+
+        const mode = normalizeAppMode(parsed.data.mode);
+        if (mode !== "daily_work") {
+          reply.code(400).send({
+            mode,
+            error: "Templates are only editable in daily_work mode."
+          });
+          return;
+        }
+
+        const now = new Date().toISOString();
+        const template = dailyWorkTemplateSchema.parse({
+          ...parsed.data,
+          id: createTemplateId(parsed.data.title),
+          mode,
+          createdAt: now,
+          updatedAt: now,
+          version: 1,
+          status: parsed.data.enabled === false ? "disabled" : parsed.data.status
+        });
+        await dailyWorkRepository.upsertTemplate(template);
+
+        return { mode, template };
+      }
+    );
+
+  app.patch<{ Params: { templateId: string }; Body: unknown }>(
+      "/api/daily/templates/:templateId",
+      async (request, reply) => {
+        const parsed = dailyWorkTemplateUpdateRequestSchema.safeParse(
+          request.body ?? {}
+        );
+        if (!parsed.success) {
+          reply
+            .code(400)
+            .send(
+              createValidationError("Invalid template update request.", parsed.error.issues)
+            );
+          return;
+        }
+
+        const mode = normalizeAppMode(parsed.data.mode);
+        const existing = (await dailyWorkRepository.listTemplates()).find(
+          (template) => template.id === request.params.templateId && template.status !== "archived"
+        );
+        if (mode !== "daily_work" || !existing) {
+          reply.code(existing ? 400 : 404).send({
+            mode,
+            error: existing
+              ? "Templates are only editable in daily_work mode."
+              : "Daily-work template not found."
+          });
+          return;
+        }
+
+        const template = dailyWorkTemplateSchema.parse({
+          ...existing,
+          ...parsed.data,
+          id: existing.id,
+          mode,
+          createdAt: existing.createdAt,
+          updatedAt: new Date().toISOString(),
+          version: existing.version + 1,
+          status: parsed.data.enabled === false ? "disabled" : (parsed.data.status ?? existing.status)
+        });
+        await dailyWorkRepository.upsertTemplate(template);
+
+        return { mode, template };
+      }
+    );
+
+  app.post<{ Params: { templateId: string }; Body: unknown }>(
+      "/api/daily/templates/:templateId/duplicate",
+      async (request, reply) => {
+        const parsed = dailyWorkTemplateDuplicateRequestSchema.safeParse(
+          request.body ?? {}
+        );
+        if (!parsed.success) {
+          reply
+            .code(400)
+            .send(
+              createValidationError("Invalid template duplicate request.", parsed.error.issues)
+            );
+          return;
+        }
+
+        const mode = normalizeAppMode(parsed.data.mode);
+        const existing = (await filterDailyWorkTemplates(dailyWorkRepository, mode)).find(
+          (template) => template.id === request.params.templateId
+        );
+        if (!existing) {
+          reply.code(404).send({ mode, error: "Daily-work template not found." });
+          return;
+        }
+
+        const now = new Date().toISOString();
+        const title = parsed.data.title ?? `${existing.title} Copy`;
+        const template = dailyWorkTemplateSchema.parse({
+          ...existing,
+          id: createTemplateId(title),
+          title,
+          status: "active",
+          enabled: true,
+          version: 1,
+          createdAt: now,
+          updatedAt: now
+        });
+        await dailyWorkRepository.upsertTemplate(template);
+
+        return { mode, template };
+      }
+    );
+
+  app.delete<{ Params: { templateId: string }; Querystring: { mode?: string } }>(
+      "/api/daily/templates/:templateId",
+      async (request, reply) => {
+        const mode = normalizeAppMode(request.query.mode);
+        const existing = (await dailyWorkRepository.listTemplates()).find(
+          (template) => template.id === request.params.templateId && template.status !== "archived"
+        );
+        if (mode !== "daily_work" || !existing) {
+          reply.code(existing ? 400 : 404).send({
+            mode,
+            error: existing
+              ? "Templates are only editable in daily_work mode."
+              : "Daily-work template not found."
+          });
+          return;
+        }
+
+        const template = dailyWorkTemplateSchema.parse({
+          ...existing,
+          status: "archived",
+          enabled: false,
+          version: existing.version + 1,
+          updatedAt: new Date().toISOString()
+        });
+        await dailyWorkRepository.upsertTemplate(template);
+
+        return { mode, template };
       }
     );
 
@@ -396,12 +652,15 @@ export async function registerDailyWorkRoutes(
       }
     );
 
-  app.get<{ Querystring: { mode?: string } }>(
+  app.get<{ Querystring: { mode?: string; sessionId?: string } }>(
       "/api/daily/model-usage",
       async (request): Promise<DailyModelUsageResponse> => {
         const mode = normalizeAppMode(request.query.mode);
+        const records = await dailyWorkRepository.listModelUsageRecords({
+          limit: 200
+        });
 
-        return createDailyModelUsageSnapshot(mode);
+        return createDailyModelUsageSnapshot(mode, records, request.query.sessionId);
       }
     );
 
@@ -826,4 +1085,54 @@ export async function registerDailyWorkRoutes(
         return response;
       }
     );
+}
+
+function readMultipartField(fields: unknown, name: string) {
+  const value = readMultipartRawField(fields, name);
+  return value ? String(value).trim() : undefined;
+}
+
+function readMultipartTags(fields: unknown) {
+  const value = readMultipartRawField(fields, "tags");
+  if (!value) {
+    return [];
+  }
+
+  return String(value)
+    .split(",")
+    .map((tag) => tag.trim())
+    .filter(Boolean)
+    .slice(0, 12);
+}
+
+function readMultipartRawField(fields: unknown, name: string) {
+  if (!fields || typeof fields !== "object") {
+    return undefined;
+  }
+
+  const field = (fields as Record<string, unknown>)[name];
+  if (!field || typeof field !== "object") {
+    return undefined;
+  }
+
+  const value = (field as { value?: unknown }).value;
+  return typeof value === "string" ? value : undefined;
+}
+
+function isMultipartFileTooLargeError(error: unknown) {
+  return (
+    error instanceof Error &&
+    (error.name === "RequestFileTooLargeError" ||
+      error.message.toLowerCase().includes("request file too large"))
+  );
+}
+
+function createTemplateId(title: string) {
+  const slug = title
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, "-")
+    .replace(/^-+|-+$/g, "")
+    .slice(0, 48);
+
+  return `agent-template-${slug || "template"}-${randomUUID().slice(0, 8)}`;
 }

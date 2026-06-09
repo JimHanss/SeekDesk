@@ -397,6 +397,123 @@ describe("api server", () => {
     await app.close();
   });
 
+  it("creates, updates, duplicates, and softly archives daily-work templates", async () => {
+    const app = await buildServer();
+
+    const createResponse = await app.inject({
+      method: "POST",
+      url: "/api/daily/templates",
+      payload: {
+        mode: "daily_work",
+        category: "planning",
+        title: "Quarterly Plan",
+        description: "Plan the next quarter.",
+        prompt: "Create a quarterly plan.",
+        systemPrompt: "Stay in daily_work mode.",
+        promptTemplate: "{{input}}",
+        defaultModelRoute: "pro",
+        allowedToolNames: ["daily.persist_artifact"],
+        contextPolicy: {
+          maxContextTokens: 8000,
+          includeSelectedContext: true,
+          includeRecentSession: true,
+          includeArtifacts: false
+        },
+        artifactType: "task_list",
+        tags: ["planning"],
+        enabled: true
+      }
+    });
+    const created = createResponse.json().template;
+
+    expect(createResponse.statusCode).toBe(200);
+    expect(created).toEqual(
+      expect.objectContaining({
+        mode: "daily_work",
+        status: "active",
+        version: 1,
+        defaultModelRoute: "pro",
+        allowedToolNames: ["daily.persist_artifact"]
+      })
+    );
+    expect(created.id).toMatch(/^agent-template-quarterly-plan-/);
+    const createdTemplateId = created.id as string;
+
+    const updateResponse = await app.inject({
+      method: "PATCH",
+      url: `/api/daily/templates/${createdTemplateId}`,
+      payload: {
+        mode: "daily_work",
+        description: "Updated plan description.",
+        enabled: false
+      }
+    });
+
+    expect(updateResponse.statusCode).toBe(200);
+    expect(updateResponse.json().template).toEqual(
+      expect.objectContaining({
+        id: createdTemplateId,
+        description: "Updated plan description.",
+        status: "disabled",
+        enabled: false,
+        version: 2
+      })
+    );
+
+    const duplicateResponse = await app.inject({
+      method: "POST",
+      url: `/api/daily/templates/${createdTemplateId}/duplicate`,
+      payload: {
+        mode: "daily_work",
+        title: "Quarterly Plan Copy"
+      }
+    });
+
+    expect(duplicateResponse.statusCode).toBe(200);
+    expect(duplicateResponse.json().template).toEqual(
+      expect.objectContaining({
+        id: expect.stringMatching(/^agent-template-quarterly-plan-copy-/),
+        status: "active",
+        enabled: true,
+        version: 1
+      })
+    );
+
+    const archiveResponse = await app.inject({
+      method: "DELETE",
+      url: `/api/daily/templates/${createdTemplateId}?mode=daily_work`
+    });
+
+    expect(archiveResponse.statusCode).toBe(200);
+    expect(archiveResponse.json().template).toEqual(
+      expect.objectContaining({
+        id: createdTemplateId,
+        status: "archived",
+        enabled: false,
+        version: 3
+      })
+    );
+
+    const activeOnlyResponse = await app.inject({
+      method: "GET",
+      url: "/api/daily/templates?activeOnly=true"
+    });
+
+    expect(activeOnlyResponse.statusCode).toBe(200);
+    expect(activeOnlyResponse.json().templates).toEqual(
+      expect.not.arrayContaining([
+        expect.objectContaining({ id: createdTemplateId })
+      ])
+    );
+    expect(activeOnlyResponse.json().templates).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({ id: duplicateResponse.json().template.id })
+      ])
+    );
+
+    await app.close();
+  });
+
   it("reads daily-work templates from the configured JSON data directory", async () => {
     const dataDir = await mkdtemp(join(tmpdir(), "seekdesk-api-data-"));
     process.env.SEEKDESK_DATA_DIR = dataDir;
@@ -2293,24 +2410,36 @@ describe("api server", () => {
           id: "daily-work-rolling-24h",
           label: "Last 24 hours"
         }),
-        promptTokens: 2240,
-        completionTokens: 730,
-        totalTokens: 2970,
-        estimatedCostUsd: 0.0029,
+        promptTokens: 0,
+        completionTokens: 0,
+        totalTokens: 0,
+        estimatedCostUsd: 0,
         currency: "USD",
         budgetState: "tracking_only",
-        records: expect.arrayContaining([
+        records: [],
+        aggregates: expect.arrayContaining([
           expect.objectContaining({
-            id: "daily-model-usage-email-draft",
-            provider: "deepseek",
-            model: "deepseek-v4-flash",
-            inputTokens: 1280,
-            outputTokens: 420
+            id: "current_session",
+            label: "Current session",
+            totalTokens: 0,
+            recordCount: 0
+          }),
+          expect.objectContaining({
+            id: "24h",
+            label: "Last 24 hours"
+          }),
+          expect.objectContaining({
+            id: "7d",
+            label: "Last 7 days"
+          }),
+          expect.objectContaining({
+            id: "all",
+            label: "All time"
           })
         ])
       })
     });
-    expect(body.usage.records).toHaveLength(2);
+    expect(body.usage.records).toHaveLength(0);
 
     await app.close();
   });
@@ -2346,10 +2475,13 @@ describe("api server", () => {
       })
     );
     expect(body.usage.budgetState).toBe("within_budget");
-    expect(body.usage.records).toEqual(
+    expect(body.usage.records).toEqual([]);
+    expect(body.usage.aggregates).toEqual(
       expect.arrayContaining([
         expect.objectContaining({
-          model: "deepseek-v4-pro"
+          id: "all",
+          recordCount: 0,
+          totalTokens: 0
         })
       ])
     );

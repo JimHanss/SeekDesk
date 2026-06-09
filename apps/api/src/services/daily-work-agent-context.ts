@@ -2,6 +2,7 @@ import type {
   ChatContext,
   ChatRequest,
   DailyApprovalRequest,
+  DailyContextDocument,
   DailyContextItem,
   DailyWorkArtifact,
   DailyWorkConnector,
@@ -29,6 +30,7 @@ export async function createDailyWorkAgentContext(input: {
   const context = normalizeChatContext(input.chatRequest.context);
   const [
     contextItems,
+    contextDocuments,
     artifacts,
     approvalRequests,
     connectors,
@@ -40,6 +42,7 @@ export async function createDailyWorkAgentContext(input: {
     sessionModelUsageRecords
   ] = await Promise.all([
     input.repository.listContextItems(),
+    input.repository.listContextDocuments(),
     input.repository.listArtifacts(),
     input.repository.listApprovalRequests(),
     input.repository.listConnectors(),
@@ -66,6 +69,7 @@ export async function createDailyWorkAgentContext(input: {
       ...summarizeToolTrace(sessionToolCalls),
       ...summarizeModelUsage(sessionModelUsageRecords),
       ...summarizeContextItems(contextItems, context.contextItemIds),
+      ...summarizeContextDocuments(contextDocuments, context.contextItemIds),
       ...summarizeArtifacts(artifacts, context.artifactIds),
       ...summarizeApprovals(approvalRequests, context.approvalRequestIds),
       ...summarizeConnectors(connectors, context.connectorIds),
@@ -223,6 +227,61 @@ function summarizeContextItems(
         `Context item ${item.id}: ${item.title}; source=${item.sourceType}; permission=${item.permissionState}; summary=${truncateText(item.summary, 240)}`
     )
   ];
+}
+
+function summarizeContextDocuments(
+  documents: DailyContextDocument[],
+  requestedContextItemIds: string[],
+  maxTokens = 12000
+) {
+  const readyDocuments = documents.filter(
+    (document) => document.status === "ready" && document.extractedText.trim()
+  );
+  if (!readyDocuments.length) {
+    return ["Uploaded context documents: none available."];
+  }
+
+  const requested = new Set(requestedContextItemIds);
+  const selected = [...readyDocuments].sort((a, b) => {
+    const aRequested = requested.has(a.contextItemId) ? 0 : 1;
+    const bRequested = requested.has(b.contextItemId) ? 0 : 1;
+    if (aRequested !== bRequested) {
+      return aRequested - bRequested;
+    }
+
+    return b.updatedAt.localeCompare(a.updatedAt);
+  });
+  const lines = [
+    `Uploaded context documents: ${readyDocuments.length} ready; budget=${maxTokens} estimated tokens.`
+  ];
+  let usedTokens = 0;
+
+  for (const document of selected) {
+    if (usedTokens >= maxTokens) {
+      lines.push("Uploaded context budget exhausted; remaining documents omitted.");
+      break;
+    }
+
+    const remaining = maxTokens - usedTokens;
+    const allowedChars = Math.max(0, remaining * 4);
+    const text = document.extractedText.slice(0, allowedChars);
+    const tokenEstimate = Math.min(document.tokenEstimate, estimateTokens(text));
+    const truncated = text.length < document.extractedText.length;
+    usedTokens += tokenEstimate;
+    lines.push(
+      `Document ${document.contextItemId}: title=${document.title}; file=${document.originalFileName}; type=${document.fileType}; tokens=${document.tokenEstimate}; selected=${requested.has(document.contextItemId)}; injectedTokens=${tokenEstimate}; truncated=${truncated}; preview=${truncateText(document.textPreview, 220)}`
+    );
+    if (text.trim()) {
+      lines.push(`Document text excerpt ${document.contextItemId}: ${truncateText(text, 1800)}`);
+    }
+  }
+
+  lines.push(`Uploaded context injected token estimate: ${usedTokens}/${maxTokens}.`);
+  return lines;
+}
+
+function estimateTokens(text: string) {
+  return Math.ceil(text.length / 4);
 }
 
 function summarizeArtifacts(

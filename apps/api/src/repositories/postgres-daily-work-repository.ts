@@ -5,6 +5,7 @@ import { Pool } from "pg";
 import {
   dailyActivityEventSchema,
   dailyApprovalRequestSchema,
+  dailyContextDocumentSchema,
   dailyContextItemSchema,
   dailyWorkArtifactSchema,
   dailyWorkConnectorSchema,
@@ -16,6 +17,7 @@ import {
   toolCallRecordSchema,
   toolModelUsageRecordSchema,
   defaultDailyActivityEvents,
+  defaultDailyContextDocuments,
   defaultDailyWorkApprovalRequests,
   defaultDailyWorkArtifacts,
   defaultDailyWorkConnectors,
@@ -25,8 +27,11 @@ import {
   defaultDailyWorkflows,
   type DailyActivityEvent,
   type DailyApprovalRequest,
+  type DailyContextDocument,
+  type DailyContextItem,
   type DailyWorkArtifact,
   type DailyWorkSessionDetail,
+  type DailyWorkTemplate,
   type DailyWorkSessionMessage,
   type ToolCallRecord,
   type ToolModelUsageRecord
@@ -44,6 +49,7 @@ import type {
 type PayloadTable =
   | typeof schema.dailyWorkTemplates
   | typeof schema.dailyWorkContextItems
+  | typeof schema.dailyWorkContextDocuments
   | typeof schema.dailyWorkApprovals
   | typeof schema.dailyWorkArtifacts
   | typeof schema.dailyWorkSessions
@@ -74,12 +80,41 @@ export class PostgresDailyWorkRepository implements DailyWorkRepository {
     );
   }
 
+  async upsertTemplate(template: DailyWorkTemplate) {
+    const parsed = dailyWorkTemplateSchema.parse(template);
+    await this.upsertPayload(schema.dailyWorkTemplates, parsed.id, parsed);
+
+    return cloneJson(parsed);
+  }
+
   async listContextItems() {
     return this.listPayloadCollection(
       schema.dailyWorkContextItems,
       dailyContextItemSchema.array(),
       async () => cloneJson(defaultDailyWorkContextItems)
     );
+  }
+
+  async upsertContextItem(item: DailyContextItem) {
+    const parsed = dailyContextItemSchema.parse(item);
+    await this.upsertPayload(schema.dailyWorkContextItems, parsed.id, parsed);
+
+    return cloneJson(parsed);
+  }
+
+  async listContextDocuments() {
+    return this.listPayloadCollection(
+      schema.dailyWorkContextDocuments,
+      dailyContextDocumentSchema.array(),
+      async () => cloneJson(defaultDailyContextDocuments)
+    );
+  }
+
+  async upsertContextDocument(document: DailyContextDocument) {
+    const parsed = dailyContextDocumentSchema.parse(document);
+    await this.upsertPayload(schema.dailyWorkContextDocuments, parsed.id, parsed);
+
+    return cloneJson(parsed);
   }
 
   async listApprovalRequests() {

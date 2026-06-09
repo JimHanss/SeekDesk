@@ -1,6 +1,7 @@
 import { z } from "zod";
 
 import { appModeSchema } from "./app-modes.js";
+import { modelRouteSchema } from "./model-usage.js";
 
 export const templateCategorySchema = z.enum([
   "triage",
@@ -94,6 +95,19 @@ export const dailyWorkArtifactTraceSchema = z.object({
   events: z.array(dailyWorkArtifactTraceEventSchema).default([])
 });
 
+export const dailyWorkTemplateStatusSchema = z.enum([
+  "active",
+  "disabled",
+  "archived"
+]);
+
+export const dailyWorkTemplateContextPolicySchema = z.object({
+  maxContextTokens: z.number().int().positive().max(50000).default(12000),
+  includeSelectedContext: z.boolean().default(true),
+  includeRecentSession: z.boolean().default(true),
+  includeArtifacts: z.boolean().default(true)
+});
+
 export const dailyWorkTemplateSchema = z.object({
   id: z.string(),
   mode: appModeSchema.default("daily_work"),
@@ -101,9 +115,23 @@ export const dailyWorkTemplateSchema = z.object({
   title: z.string(),
   description: z.string(),
   prompt: z.string(),
+  systemPrompt: z.string().default(""),
+  promptTemplate: z.string().optional(),
+  defaultModelRoute: modelRouteSchema.default("fast"),
+  allowedToolNames: z.array(z.string()).default(["daily.persist_artifact"]),
+  contextPolicy: dailyWorkTemplateContextPolicySchema.default({
+    maxContextTokens: 12000,
+    includeSelectedContext: true,
+    includeRecentSession: true,
+    includeArtifacts: true
+  }),
+  status: dailyWorkTemplateStatusSchema.default("active"),
   artifactType: artifactTypeSchema.optional(),
   tags: z.array(z.string()).default([]),
-  enabled: z.boolean().default(true)
+  enabled: z.boolean().default(true),
+  version: z.number().int().positive().default(1),
+  createdAt: z.string().datetime().default(() => new Date().toISOString()),
+  updatedAt: z.string().datetime().default(() => new Date().toISOString())
 });
 
 export const dailyWorkArtifactSchema = z.object({
@@ -131,6 +159,37 @@ export const dailyWorkArtifactSchema = z.object({
 export const dailyWorkTemplatesResponseSchema = z.object({
   mode: appModeSchema,
   templates: z.array(dailyWorkTemplateSchema)
+});
+
+export const dailyWorkTemplateCreateRequestSchema = z.object({
+  mode: appModeSchema.default("daily_work"),
+  category: templateCategorySchema,
+  title: z.string().trim().min(1).max(120),
+  description: z.string().trim().min(1).max(500),
+  prompt: z.string().trim().min(1).max(10000),
+  systemPrompt: z.string().trim().max(4000).default(""),
+  promptTemplate: z.string().trim().max(10000).optional(),
+  defaultModelRoute: modelRouteSchema.default("fast"),
+  allowedToolNames: z.array(z.string().trim().min(1)).max(30).default(["daily.persist_artifact"]),
+  contextPolicy: dailyWorkTemplateContextPolicySchema.default({
+    maxContextTokens: 12000,
+    includeSelectedContext: true,
+    includeRecentSession: true,
+    includeArtifacts: true
+  }),
+  artifactType: artifactTypeSchema.optional(),
+  tags: z.array(z.string().trim().min(1).max(80)).max(20).default([]),
+  status: dailyWorkTemplateStatusSchema.default("active"),
+  enabled: z.boolean().default(true)
+});
+
+export const dailyWorkTemplateUpdateRequestSchema = dailyWorkTemplateCreateRequestSchema
+  .partial()
+  .extend({ mode: appModeSchema.default("daily_work") });
+
+export const dailyWorkTemplateDuplicateRequestSchema = z.object({
+  mode: appModeSchema.default("daily_work"),
+  title: z.string().trim().min(1).max(120).optional()
 });
 
 export const dailyWorkArtifactsResponseSchema = z.object({
@@ -203,7 +262,7 @@ export const dailyWorkTemplateApplyPreviewResponseSchema = z.object({
   preview: dailyWorkTemplateApplyPreviewSchema
 });
 
-export const defaultDailyWorkTemplates: DailyWorkTemplate[] = [
+export const defaultDailyWorkTemplates: DailyWorkTemplate[] = dailyWorkTemplateSchema.array().parse([
   {
     id: "email-draft",
     mode: "daily_work",
@@ -282,7 +341,7 @@ export const defaultDailyWorkTemplates: DailyWorkTemplate[] = [
     tags: ["knowledge", "qa", "context"],
     enabled: true
   }
-] as const as DailyWorkTemplate[];
+]);
 
 export const defaultDailyWorkArtifacts: DailyWorkArtifact[] = [
   {
@@ -532,7 +591,22 @@ export const defaultDailyWorkArtifacts: DailyWorkArtifact[] = [
   }
 ] as const as DailyWorkArtifact[];
 
+export type DailyWorkTemplateStatus = z.infer<
+  typeof dailyWorkTemplateStatusSchema
+>;
+export type DailyWorkTemplateContextPolicy = z.infer<
+  typeof dailyWorkTemplateContextPolicySchema
+>;
 export type DailyWorkTemplate = z.infer<typeof dailyWorkTemplateSchema>;
+export type DailyWorkTemplateCreateRequest = z.infer<
+  typeof dailyWorkTemplateCreateRequestSchema
+>;
+export type DailyWorkTemplateUpdateRequest = z.infer<
+  typeof dailyWorkTemplateUpdateRequestSchema
+>;
+export type DailyWorkTemplateDuplicateRequest = z.infer<
+  typeof dailyWorkTemplateDuplicateRequestSchema
+>;
 export type DailyWorkArtifact = z.infer<typeof dailyWorkArtifactSchema>;
 export type DailyWorkTemplatesResponse = z.infer<
   typeof dailyWorkTemplatesResponseSchema

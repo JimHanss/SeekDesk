@@ -21,7 +21,7 @@ export function useTemplatePanel(apiBaseUrl: string) {
 
       try {
         const response = await fetch(
-          `${apiBaseUrl}/api/daily/templates?mode=${domain.activeMode}`,
+          `${apiBaseUrl}/api/daily/templates?mode=${domain.activeMode}&activeOnly=true`,
           {
             signal: controller.signal
           }

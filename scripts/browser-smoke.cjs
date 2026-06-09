@@ -49,6 +49,7 @@ async function main() {
     await runApprovalLedgerSmoke(client, apiServer.url);
     await runContextUsePreviewSmoke(client, apiServer.url);
     await runTemplateApplyPreviewSmoke(client, apiServer.url);
+    await runTemplateManagerSmoke(client, apiServer.url);
     await runSessionRestoreSmoke(client, apiServer.url);
     await runArtifactsSmoke(client, apiServer.url);
     await runActivityStreamSmoke(client, apiServer.url);
@@ -730,6 +731,7 @@ async function runContextUsePreviewSmoke(client, apiUrl) {
     templateId: "email-draft",
     prompt: "Use customer context carefully."
   });
+  const uploadSnapshot = await uploadTextContextSnapshot(apiUrl);
 
   await selectDailyView(client, "knowledge");
   const panelState = await waitForValue(
@@ -739,9 +741,11 @@ async function runContextUsePreviewSmoke(client, apiUrl) {
       state.present &&
       state.source === "api" &&
       state.syncStatus === "live" &&
-      state.count >= 5 &&
+      state.count >= 6 &&
       state.hasCustomerEmail &&
-      state.hasMeetingNotes,
+      state.hasMeetingNotes &&
+      state.hasUploadControl &&
+      state.uploadStatus,
     "context API panel state"
   );
 
@@ -771,6 +775,8 @@ async function runContextUsePreviewSmoke(client, apiUrl) {
     name: "context use preview API and UI",
     status: "passed",
     contextItems: contextSnapshot.items.length,
+    uploadedContextItemId: uploadSnapshot.contextItem.id,
+    uploadTokenEstimate: uploadSnapshot.document.tokenEstimate,
     trackedContextItems: trackedContextItems.map((item) => item.id),
     contextItemId: preview.contextItemId,
     permissionState: preview.permissionState,
@@ -854,6 +860,57 @@ async function runTemplateApplyPreviewSmoke(client, apiUrl) {
     requiredApprovalRequestIds: preview.requiredApprovalRequestIds,
     promptValueLength: promptState.valueLength
   });
+}
+
+async function runTemplateManagerSmoke(client, apiUrl) {
+  const url = new URL("/templates", smokeUrl);
+  url.searchParams.set("seekdeskSmokeApiUrl", apiUrl);
+  await client.send("Page.navigate", { url: url.toString() });
+  await waitForRuntime(
+    client,
+    "Boolean(document.querySelector('[data-template-manager-page]'))",
+    "template manager page"
+  );
+
+  const pageState = await waitForValue(
+    client,
+    `(() => {
+      const root = document.querySelector("[data-template-manager-page]");
+      const list = document.querySelector("[data-template-manager-list]");
+      const form = document.querySelector("[data-template-manager-form]");
+      const cards = list ? [...list.querySelectorAll("[data-template-manager-card]")] : [];
+      const text = root ? root.textContent || "" : "";
+      return {
+        present: Boolean(root),
+        status: root ? root.getAttribute("data-template-manager-status") || "" : "",
+        listPresent: Boolean(list),
+        formPresent: Boolean(form),
+        cards: cards.length,
+        hasManagerText: /Template Manager|Agent Template/i.test(text)
+      };
+    })()`,
+    (state) =>
+      state.present &&
+      state.listPresent &&
+      state.formPresent &&
+      state.cards >= 1 &&
+      state.hasManagerText,
+    "template manager shell"
+  );
+
+  checks.push({
+    name: "template manager page",
+    status: "passed",
+    cards: pageState.cards,
+    syncStatus: pageState.status
+  });
+
+  await client.send("Page.navigate", { url: smokePageUrl(apiUrl) });
+  await waitForRuntime(
+    client,
+    "Boolean(document.querySelector('[data-daily-active-view]'))",
+    "daily workspace after template manager"
+  );
 }
 
 async function runSessionRestoreSmoke(client, apiUrl) {
@@ -1021,7 +1078,10 @@ async function runModelUsageSmoke(client, apiUrl) {
       state.source === "api" &&
       (state.status === "live" || state.status === "api") &&
       state.hasDeepSeekText &&
-      state.hasUsageText,
+      state.hasUsageText &&
+      state.hasTokenOnlyText &&
+      state.aggregateCount >= 0 &&
+      state.recordCount >= 0,
     "model usage API panel state"
   );
 
@@ -1031,7 +1091,10 @@ async function runModelUsageSmoke(client, apiUrl) {
     source: pageState.source,
     syncStatus: pageState.status,
     selectedModel: apiSnapshot.config.selectedModel,
-    recordCount: apiSnapshot.usage.records.length
+    recordCount: apiSnapshot.usage.records.length,
+    aggregateCount: apiSnapshot.usage.aggregates.length,
+    pageAggregateCount: pageState.aggregateCount,
+    pageRecordCount: pageState.recordCount
   });
 }
 
@@ -1845,7 +1908,14 @@ function contextPanelExpression() {
       externalEffects: root ? root.getAttribute("data-context-preview-external-effects") || "" : "",
       selectedContextId: root ? root.getAttribute("data-selected-context-id") || "" : "",
       hasCustomerEmail: cards.some((card) => card.getAttribute("data-context-card") === "customer-email"),
-      hasMeetingNotes: cards.some((card) => card.getAttribute("data-context-card") === "meeting-notes")
+      hasMeetingNotes: cards.some((card) => card.getAttribute("data-context-card") === "meeting-notes"),
+      hasUploadControl: Boolean(root.querySelector("input[type='file']")),
+      uploadStatus: root.querySelector("[data-context-upload-status]")
+        ? root.querySelector("[data-context-upload-status]").getAttribute("data-context-upload-status") || ""
+        : "",
+      uploadNotice: root.querySelector("[data-context-upload-notice]")
+        ? root.querySelector("[data-context-upload-notice]").textContent || ""
+        : ""
     };
   })()`);
 }
@@ -2829,6 +2899,53 @@ async function fetchJson(apiUrl, path, payload) {
   return response.json();
 }
 
+async function uploadTextContextSnapshot(apiUrl) {
+  if (typeof FormData !== "function" || typeof Blob !== "function") {
+    throw new Error("Context upload smoke requires Node.js FormData and Blob globals.");
+  }
+
+  const form = new FormData();
+  form.set(
+    "file",
+    new Blob(["Smoke uploaded context document\nAction: summarize this local text."], {
+      type: "text/plain"
+    }),
+    "smoke-context.txt"
+  );
+  form.set("title", "Smoke context upload");
+  form.set("tags", "smoke,upload");
+
+  const response = await fetch(
+    new URL("/api/daily/context/uploads?mode=daily_work", apiUrl).toString(),
+    {
+      method: "POST",
+      body: form,
+      signal: AbortSignal.timeout(5000)
+    }
+  );
+
+  if (!response.ok) {
+    throw new Error(`/api/daily/context/uploads returned HTTP ${response.status}.`);
+  }
+
+  const snapshot = await response.json();
+  if (
+    snapshot.mode !== "daily_work" ||
+    !snapshot.document ||
+    !snapshot.contextItem ||
+    snapshot.previewOnly !== true ||
+    !Array.isArray(snapshot.externalEffects) ||
+    !snapshot.externalEffects.includes("none") ||
+    snapshot.contextItem.sourceType !== "uploaded_document" ||
+    snapshot.document.fileType !== "txt" ||
+    !(snapshot.document.tokenEstimate > 0)
+  ) {
+    throw new Error("Context upload smoke did not return the expected preview-only document payload.");
+  }
+
+  return snapshot;
+}
+
 async function fetchActivityWebSocketSnapshot(apiUrl) {
   const wsUrl = activityWebSocketUrl(apiUrl);
   return new Promise((resolve, reject) => {
@@ -2921,8 +3038,8 @@ function assertModelUsageSnapshot(snapshot, label) {
     throw new Error(`${label} included unsupported selectedRoute.`);
   }
 
-  if (!snapshot.usage.records.length) {
-    throw new Error(`${label} did not include any usage records.`);
+  if (!Array.isArray(snapshot.usage.aggregates) || snapshot.usage.aggregates.length < 4) {
+    throw new Error(`${label} did not include token usage aggregates.`);
   }
 }
 

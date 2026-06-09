@@ -20,6 +20,7 @@ import {
   type DailyWorkTemplate,
   type DailyWorkTemplateApplyPreviewResponse,
   type DailyWorkWorkflow,
+  type ToolModelUsageRecord,
   type DailyWorkWorkflowPreviewResponse,
   type WorkflowActionQueueItem,
   type WorkflowLinkedContext
@@ -1356,7 +1357,9 @@ export async function filterDailyWorkTemplates(
     return [];
   }
 
-  return repository.listTemplates();
+  return (await repository.listTemplates()).filter(
+    (template) => template.status !== "archived"
+  );
 }
 
 export async function filterDailyWorkTemplate(
@@ -1511,10 +1514,25 @@ export async function filterDailyWorkApprovalRequests(
 }
 
 export function createDailyModelUsageSnapshot(
-  mode: AppMode
+  mode: AppMode,
+  records: ToolModelUsageRecord[] = [],
+  sessionId?: string
 ): DailyModelUsageResponse {
   return createDailyModelUsageResponse({
     mode,
+    records: records
+      .filter((record) => record.provider === "deepseek")
+      .map((record) => ({
+        id: record.id,
+        sessionId: record.sessionId ?? "unknown-session",
+        provider: "deepseek" as const,
+        model: record.model,
+        inputTokens: record.promptTokens,
+        outputTokens: record.completionTokens,
+        totalTokens: record.totalTokens,
+        createdAt: record.createdAt
+      })),
+    ...(sessionId ? { sessionId } : {}),
     configured: hasDeepSeekApiKey(),
     baseUrl: process.env.DEEPSEEK_BASE_URL,
     fastModel: process.env.DEEPSEEK_MODEL_FAST,
