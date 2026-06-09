@@ -18,10 +18,12 @@ try {
     port,
     skipSecrets: Boolean(args.skipSecrets),
     skipMigrate: Boolean(args.skipMigrate),
+    coreOnly: Boolean(args.coreOnly),
     requireGoogle: Boolean(args.requireGoogle),
     requireGoogleConfigured: Boolean(args.requireGoogleConfigured),
     requireGoogleConnected:
-      Boolean(args.requireGoogleConnected) || Boolean(args.requireGoogle),
+      !Boolean(args.coreOnly) &&
+      (Boolean(args.requireGoogleConnected) || Boolean(args.requireGoogle)),
     showAuthorizationUrl: Boolean(args.showAuthorizationUrl),
     keepRunning: Boolean(args.keepRunning)
   });
@@ -33,6 +35,7 @@ try {
         host,
         repo,
         port,
+        coreOnly: Boolean(args.coreOnly),
         requireGoogle: Boolean(args.requireGoogle),
         skipSecrets: Boolean(args.skipSecrets),
         keepRunning: Boolean(args.keepRunning)
@@ -97,6 +100,7 @@ function createRemoteScript(input) {
     "--",
     "--base-url",
     baseUrl,
+    input.coreOnly ? "--core-only" : null,
     input.requireGoogle ? "--require-google" : null
   ]
     .filter(Boolean)
@@ -111,6 +115,10 @@ function createRemoteScript(input) {
   const migrateBlock = input.skipMigrate
     ? `echo '{"step":"db:migrate","status":"skipped"}'`
     : `npm run db:migrate`;
+  const googleReadinessBlock = input.coreOnly
+    ? `echo '{"step":"google-oauth","status":"skipped","reason":"core_only"}'`
+    : `echo '{"step":"google-oauth","status":"checking"}'
+npm ${readinessArgs}`;
   const keepRunningNote = input.keepRunning
     ? `echo '{"status":"api_kept_running","baseUrl":"${baseUrl}","pidFile":"${pidFile}","logFile":"${logFile}"}'`
     : "";
@@ -165,8 +173,7 @@ for attempt in $(seq 1 30); do
   sleep 1
 done
 
-echo '{"step":"google-oauth","status":"checking"}'
-npm ${readinessArgs}
+${googleReadinessBlock}
 
 echo '{"step":"real-agent","status":"checking"}'
 npm ${realAgentArgs}
@@ -180,7 +187,7 @@ function parseArgs(argv) {
   const parsed = {};
 
   for (let index = 0; index < argv.length; index += 1) {
-    const arg = argv[index];
+    const arg = argv[index]?.trim();
 
     if (arg === "--help" || arg === "-h") {
       parsed.help = true;
@@ -212,6 +219,11 @@ function parseArgs(argv) {
 
     if (arg === "--skip-secrets") {
       parsed.skipSecrets = true;
+      continue;
+    }
+
+    if (arg === "--core-only") {
+      parsed.coreOnly = true;
       continue;
     }
 
@@ -280,7 +292,7 @@ Runs the remote SeekDesk real-agent verification flow over SSH:
   1. run npm run verify:secrets unless --skip-secrets is set
   2. optionally run npm run db:migrate
   3. start a temporary API with remote .env.postgres + .env.local
-  4. run npm run verify:google-oauth
+  4. run npm run verify:google-oauth unless --core-only is set
   5. run npm run verify:real-agent
   6. clean up the temporary API unless --keep-running is set
 
@@ -291,6 +303,7 @@ Options:
   --port <port>                  Remote API port. Default: 45100
   --skip-secrets                 Skip npm run verify:secrets.
   --skip-migrate                 Skip npm run db:migrate.
+  --core-only                    Skip OAuth checks and verify only DeepSeek/Postgres/local preview tools.
   --require-google               Also require Gmail/Calendar real read tools and complete Google scopes.
   --require-google-configured    Fail unless Google OAuth env config is complete.
   --require-google-connected     Fail unless a Google account is connected with all required scopes.

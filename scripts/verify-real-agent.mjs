@@ -3,6 +3,7 @@
 const args = parseArgs(process.argv.slice(2));
 const baseUrl = trimTrailingSlash(args.baseUrl ?? "http://127.0.0.1:4000");
 const requireGoogle = args.requireGoogle ?? false;
+const coreOnly = args.coreOnly ?? false;
 const gmailQuery = args.gmailQuery ?? "newer_than:30d";
 const calendarId = args.calendarId ?? "primary";
 const now = new Date();
@@ -11,6 +12,7 @@ const timeMax = new Date(now.getTime() + 7 * 24 * 60 * 60 * 1000).toISOString();
 
 const summary = {
   baseUrl,
+  mode: coreOnly ? "core_only" : "full",
   health: null,
   google: null,
   artifact: null,
@@ -26,35 +28,41 @@ try {
     "Real-agent verification requires a ready Postgres data layer."
   );
 
-  summary.artifact = await verifyArtifactTool();
-  summary.google = await readJson("/api/connectors/google/status");
-  const missingScopes = normalizeStringList(summary.google?.missingScopes);
+  summary.artifact = await verifyArtifactTool({ assertCoreOnly: coreOnly });
 
-  if (summary.google?.connected && missingScopes.length === 0) {
-    summary.googleTools = await verifyGoogleReadTools();
-  } else if (summary.google?.connected && missingScopes.length > 0) {
-    if (requireGoogle) {
-      throw new Error(
-        `Google connector is connected but missing required scopes: ${missingScopes.join(", ")}. Reopen OAuth consent.`
-      );
-    }
-    summary.googleTools = {
-      status: "skipped",
-      reason: "google_connector_missing_scopes",
-      missingScopes
-    };
-  } else if (requireGoogle) {
-    const missing = Array.isArray(summary.google?.missingConfig)
-      ? ` Missing config: ${summary.google.missingConfig.join(", ")}.`
-      : "";
-    throw new Error(`Google connector is not connected.${missing}`);
+  if (coreOnly) {
+    summary.google = { status: "skipped", reason: "core_only" };
+    summary.googleTools = { status: "skipped", reason: "core_only" };
   } else {
-    summary.googleTools = {
-      status: "skipped",
-      reason: "google_connector_not_connected",
-      missingConfig: summary.google?.missingConfig ?? [],
-      missingScopes
-    };
+    summary.google = await readJson("/api/connectors/google/status");
+    const missingScopes = normalizeStringList(summary.google?.missingScopes);
+
+    if (summary.google?.connected && missingScopes.length === 0) {
+      summary.googleTools = await verifyGoogleReadTools();
+    } else if (summary.google?.connected && missingScopes.length > 0) {
+      if (requireGoogle) {
+        throw new Error(
+          `Google connector is connected but missing required scopes: ${missingScopes.join(", ")}. Reopen OAuth consent.`
+        );
+      }
+      summary.googleTools = {
+        status: "skipped",
+        reason: "google_connector_missing_scopes",
+        missingScopes
+      };
+    } else if (requireGoogle) {
+      const missing = Array.isArray(summary.google?.missingConfig)
+        ? ` Missing config: ${summary.google.missingConfig.join(", ")}.`
+        : "";
+      throw new Error(`Google connector is not connected.${missing}`);
+    } else {
+      summary.googleTools = {
+        status: "skipped",
+        reason: "google_connector_not_connected",
+        missingConfig: summary.google?.missingConfig ?? [],
+        missingScopes
+      };
+    }
   }
 
   console.log(JSON.stringify({ status: "passed", ...summary }, null, 2));
@@ -73,7 +81,7 @@ try {
   process.exit(1);
 }
 
-async function verifyArtifactTool() {
+async function verifyArtifactTool(options = {}) {
   const response = await sendChat({
     prompt:
       "Use the daily.persist_artifact tool to save a short daily work brief titled Real agent verification. Keep it preview-only and mention this verifies DeepSeek, Postgres, tool tracing, and artifact persistence.",
@@ -85,6 +93,9 @@ async function verifyArtifactTool() {
   });
   const trace = await readTrace(response.sessionId);
   const toolCalls = trace.toolCalls ?? [];
+  if (options.assertCoreOnly) {
+    assertNoConnectorToolCalls(toolCalls);
+  }
   const artifactTool = toolCalls.find(
     (tool) =>
       tool.name === "daily.persist_artifact" && tool.status === "completed"
@@ -383,6 +394,24 @@ async function readJson(path) {
   }
 }
 
+function assertNoConnectorToolCalls(toolCalls) {
+  const connectorToolCalls = toolCalls.filter((tool) => {
+    const name = typeof tool.name === "string" ? tool.name : "";
+    return (
+      name.startsWith("gmail.") ||
+      name.startsWith("calendar.") ||
+      name.startsWith("outlook.")
+    );
+  });
+
+  assert(
+    connectorToolCalls.length === 0,
+    `Core-only verification unexpectedly called connector tools: ${connectorToolCalls
+      .map((tool) => tool.name)
+      .join(", ")}.`
+  );
+}
+
 function summarizeToolCalls(toolCalls) {
   return toolCalls.map((tool) => ({
     name: tool.name,
@@ -442,7 +471,12 @@ function parseArgs(argv) {
   const parsed = {};
 
   for (let index = 0; index < argv.length; index += 1) {
-    const arg = argv[index];
+    const arg = argv[index]?.trim();
+
+    if (arg === "--core-only") {
+      parsed.coreOnly = true;
+      continue;
+    }
 
     if (arg === "--require-google") {
       parsed.requireGoogle = true;
@@ -492,6 +526,7 @@ function printHelp() {
 
 Options:
   --base-url <url>       API base URL. Default: http://127.0.0.1:4000
+  --core-only           Verify only DeepSeek, Postgres, daily.persist_artifact, and trace persistence.
   --require-google      Fail if Google is not connected with all required scopes.
   --gmail-query <query> Gmail query for the real read verification.
   --calendar-id <id>    Calendar id for event listing. Default: primary
