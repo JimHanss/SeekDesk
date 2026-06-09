@@ -839,7 +839,10 @@ export interface ConnectorPreviewPanelState {
   notice: string;
 }
 
-export interface GoogleConnectorStatusState {
+export type EmailConnectorStatusSource = "local" | "api" | "degraded";
+export type EmailConnectorSyncStatus = "syncing" | "live" | "degraded";
+
+export interface EmailConnectorStatusState {
   connected: boolean;
   requiresSetup: boolean;
   accountEmail: string | null;
@@ -848,17 +851,22 @@ export interface GoogleConnectorStatusState {
   missingScopes: string[];
   scopesComplete: boolean;
   missingConfig: string[];
-  source: "local" | "api" | "degraded";
-  syncStatus: "syncing" | "live" | "degraded";
+  source: EmailConnectorStatusSource;
+  syncStatus: EmailConnectorSyncStatus;
   notice: string;
 }
 
-export type GoogleOAuthStartStatus =
+export type EmailOAuthStartStatus =
   | "idle"
   | "starting"
   | "opened"
   | "requires_setup"
   | "failed";
+
+export type GoogleConnectorStatusState = EmailConnectorStatusState;
+export type MicrosoftConnectorStatusState = EmailConnectorStatusState;
+export type GoogleOAuthStartStatus = EmailOAuthStartStatus;
+export type MicrosoftOAuthStartStatus = EmailOAuthStartStatus;
 
 export type WorkflowPreviewPanelSource = "local" | "api" | "degraded";
 export type WorkflowPreviewPanelSyncStatus = "idle" | "syncing" | "live" | "degraded";

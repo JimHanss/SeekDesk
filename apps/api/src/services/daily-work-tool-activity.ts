@@ -77,6 +77,14 @@ function inferToolConnectorIds(toolName: ToolCallRecord["name"]) {
     return ["team-calendar"];
   }
 
+  if (toolName.startsWith("outlook.calendar.")) {
+    return ["team-calendar"];
+  }
+
+  if (toolName.startsWith("outlook.")) {
+    return ["customer-email"];
+  }
+
   return [];
 }
 
@@ -117,19 +125,35 @@ function summarizeToolResult(
   }
 
   if (Array.isArray(output.messages)) {
-    return `Agent read Gmail thread metadata: ${output.messages.length} message metadata record(s). Attachments and sends remained disabled.`;
+    const provider = typeof output.provider === "string" ? output.provider : "";
+
+    return provider === "outlook"
+      ? `Agent read Outlook message metadata: ${output.messages.length} message result(s). Attachments and sends remained disabled.`
+      : `Agent read Gmail thread metadata: ${output.messages.length} message metadata record(s). Attachments and sends remained disabled.`;
   }
 
   if (Array.isArray(output.events)) {
-    return `Agent read Google Calendar metadata: ${output.events.length} event result(s). No calendar event was created or changed.`;
+    const provider = typeof output.provider === "string" ? output.provider : "";
+
+    return provider === "outlook_calendar"
+      ? `Agent read Outlook Calendar metadata: ${output.events.length} event result(s). No calendar event was created or changed.`
+      : `Agent read Google Calendar metadata: ${output.events.length} event result(s). No calendar event was created or changed.`;
   }
 
   if (output.draftPayloadPreview) {
-    return "Agent created a local Gmail draft payload preview. SeekDesk did not call Gmail drafts.create or send.";
+    const provider = typeof output.provider === "string" ? output.provider : "";
+
+    return provider === "outlook"
+      ? "Agent created a local Outlook draft payload preview. SeekDesk did not call Microsoft Graph message create or send."
+      : "Agent created a local Gmail draft payload preview. SeekDesk did not call Gmail drafts.create or send.";
   }
 
   if (output.eventPayloadPreview) {
-    return "Agent created a local Calendar event JSON preview. SeekDesk did not call Calendar events.insert.";
+    const provider = typeof output.provider === "string" ? output.provider : "";
+
+    return provider === "outlook_calendar"
+      ? "Agent created a local Outlook Calendar event JSON preview. SeekDesk did not call Microsoft Graph event create."
+      : "Agent created a local Calendar event JSON preview. SeekDesk did not call Calendar events.insert.";
   }
 
   if (typeof output.artifactId === "string") {
@@ -204,6 +228,15 @@ function summarizeOutputForMetadata(outputJson: unknown, error: string | undefin
   }
 
   if (Array.isArray(output.messages)) {
+    if (provider === "outlook") {
+      return {
+        provider,
+        externalDataSummary: `${output.messages.length} Outlook message metadata result(s).`,
+        resultCount: output.messages.length,
+        reference: firstReference(output.messages, "outlook-message")
+      };
+    }
+
     return {
       provider,
       externalDataSummary: `${output.messages.length} Gmail message metadata record(s).`,
@@ -216,6 +249,15 @@ function summarizeOutputForMetadata(outputJson: unknown, error: string | undefin
   }
 
   if (Array.isArray(output.events)) {
+    if (provider === "outlook_calendar") {
+      return {
+        provider,
+        externalDataSummary: `${output.events.length} Outlook Calendar event metadata result(s).`,
+        resultCount: output.events.length,
+        reference: firstReference(output.events, "outlook-calendar-event")
+      };
+    }
+
     return {
       provider,
       externalDataSummary: `${output.events.length} Google Calendar event metadata result(s).`,
@@ -225,6 +267,18 @@ function summarizeOutputForMetadata(outputJson: unknown, error: string | undefin
   }
 
   if (output.draftPayloadPreview) {
+    if (provider === "outlook") {
+      return {
+        provider,
+        externalDataSummary:
+          "Local Outlook draft payload preview; no Microsoft Graph message create or send call.",
+        reference:
+          typeof output.conversationId === "string" && output.conversationId.trim()
+            ? `outlook-conversation:${output.conversationId}`
+            : undefined
+      };
+    }
+
     return {
       provider,
       externalDataSummary:
@@ -237,6 +291,18 @@ function summarizeOutputForMetadata(outputJson: unknown, error: string | undefin
   }
 
   if (output.eventPayloadPreview) {
+    if (provider === "outlook_calendar") {
+      return {
+        provider,
+        externalDataSummary:
+          "Local Outlook Calendar event JSON preview; no Microsoft Graph event create call.",
+        reference:
+          typeof output.calendarId === "string" && output.calendarId.trim()
+            ? `outlook-calendar:${output.calendarId}`
+            : undefined
+      };
+    }
+
     return {
       provider,
       externalDataSummary:

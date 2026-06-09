@@ -31,6 +31,7 @@ import {
 } from "./repositories/daily-work-repository.js";
 import { registerDailyWorkRoutes } from "./routes/daily-work-routes.js";
 import { registerGoogleConnectorRoutes } from "./routes/google-connector-routes.js";
+import { registerMicrosoftConnectorRoutes } from "./routes/microsoft-connector-routes.js";
 import {
   createDailyModelUsageSnapshot,
   filterDailyActivityEvents
@@ -64,6 +65,7 @@ export async function buildServer(options?: {
 
   await registerDailyWorkRoutes(app, dailyWorkRepository);
   await registerGoogleConnectorRoutes(app, dailyWorkRepository);
+  await registerMicrosoftConnectorRoutes(app, dailyWorkRepository);
 
   app.get("/health", async () => ({
     status: "ok",

@@ -13,6 +13,7 @@ import type {
 
 import type { DailyWorkRepository } from "../repositories/daily-work-repository.js";
 import { getGoogleConnectionStatus } from "./google-connector-service.js";
+import { getMicrosoftConnectionStatus } from "./microsoft-connector-service.js";
 
 export interface DailyWorkAgentContext {
   context: ChatContext;
@@ -34,6 +35,7 @@ export async function createDailyWorkAgentContext(input: {
     workflows,
     sessionDetails,
     googleStatus,
+    microsoftStatus,
     sessionToolCalls,
     sessionModelUsageRecords
   ] = await Promise.all([
@@ -44,6 +46,7 @@ export async function createDailyWorkAgentContext(input: {
     input.repository.listWorkflows(),
     input.repository.listSessionDetails(),
     getGoogleConnectionStatus({ repository: input.repository }),
+    getMicrosoftConnectionStatus({ repository: input.repository }),
     input.repository.listToolCalls({ sessionId: input.sessionId, limit: 50 }),
     input.repository.listModelUsageRecords({
       sessionId: input.sessionId,
@@ -67,9 +70,10 @@ export async function createDailyWorkAgentContext(input: {
       ...summarizeApprovals(approvalRequests, context.approvalRequestIds),
       ...summarizeConnectors(connectors, context.connectorIds),
       ...summarizeGoogleAuthorization(googleStatus),
+      ...summarizeMicrosoftAuthorization(microsoftStatus),
       ...summarizeWorkflows(workflows, context.workflowIds),
-      "Tool planning hint: use gmail.search_threads before gmail.read_thread, use calendar.list_events for schedule or time-window questions, and use daily.persist_artifact for reviewable local work artifacts.",
-      "Tool execution boundary: Gmail and Calendar read tools may use an authorized Google connector. Draft email and calendar event tools only create local payload previews; they must not send email or insert events."
+      "Tool planning hint: use gmail.search_threads before gmail.read_thread for Google mail; use outlook.search_messages before outlook.read_message for Outlook mail; use calendar.list_events or outlook.calendar.list_events for schedule or time-window questions; use daily.persist_artifact for reviewable local work artifacts.",
+      "Tool execution boundary: Gmail, Google Calendar, Outlook Mail, and Outlook Calendar read tools may use authorized connectors. Draft email and calendar event tools only create local payload previews; they must not send email or insert events."
     ]
   };
 }
@@ -161,19 +165,27 @@ function summarizeToolOutput(value: unknown) {
   }
 
   if (Array.isArray(output.messages)) {
-    return `${output.messages.length} Gmail message metadata record(s)`;
+    return output.provider === "outlook"
+      ? `${output.messages.length} Outlook message metadata record(s)`
+      : `${output.messages.length} Gmail message metadata record(s)`;
   }
 
   if (Array.isArray(output.events)) {
-    return `${output.events.length} calendar event result(s)`;
+    return output.provider === "outlook_calendar"
+      ? `${output.events.length} Outlook calendar event result(s)`
+      : `${output.events.length} calendar event result(s)`;
   }
 
   if (output.draftPayloadPreview) {
-    return "local Gmail draft payload preview";
+    return output.provider === "outlook"
+      ? "local Outlook draft payload preview"
+      : "local Gmail draft payload preview";
   }
 
   if (output.eventPayloadPreview) {
-    return "local Calendar event payload preview";
+    return output.provider === "outlook_calendar"
+      ? "local Outlook Calendar event payload preview"
+      : "local Calendar event payload preview";
   }
 
   return `fields ${Object.keys(output).join(", ") || "none"}`;
@@ -270,12 +282,14 @@ function summarizeConnectors(
     requestedIds,
     (connector) =>
       connector.provider === "gmail" ||
-      connector.provider === "google_calendar",
+      connector.provider === "google_calendar" ||
+      connector.provider === "outlook" ||
+      connector.provider === "outlook_calendar",
     5
   );
 
   if (!selected.length) {
-    return ["Connectors: no Gmail or Calendar connector catalog entries found."];
+    return ["Connectors: no mail or calendar connector catalog entries found."];
   }
 
   return [
@@ -313,6 +327,35 @@ function summarizeGoogleAuthorization(
   return [
     `Google authorization: not connected.${missingConfig}`,
     "Google tool availability: do not claim Gmail or Calendar data was read until OAuth is connected. If the user asks for Google data, explain that authorization is required or attempt the tool only when the request explicitly asks for connector verification."
+  ];
+}
+
+function summarizeMicrosoftAuthorization(
+  status: Awaited<ReturnType<typeof getMicrosoftConnectionStatus>>
+) {
+  if (status.connected) {
+    if (!status.scopesComplete) {
+      const missingScopes = status.missingScopes.join(", ") || "unknown";
+
+      return [
+        `Microsoft authorization: connected${status.accountEmail ? ` as ${status.accountEmail}` : ""}, but required scopes are incomplete. Missing scopes=${missingScopes}.`,
+        "Microsoft tool availability: do not call Outlook Mail or Outlook Calendar read tools until OAuth is refreshed with all required scopes. Outlook draft and calendar event preview tools can still create local payload previews when the user provides all content."
+      ];
+    }
+
+    return [
+      `Microsoft authorization: connected${status.accountEmail ? ` as ${status.accountEmail}` : ""}; scopes=${status.scopes.join(", ") || "unknown"}.`,
+      "Microsoft tool availability: outlook.search_messages, outlook.read_message, and outlook.calendar.list_events may read authorized metadata. Outlook draft and calendar event tools remain local previews only."
+    ];
+  }
+
+  const missingConfig = status.missingConfig?.length
+    ? ` Missing config: ${status.missingConfig.join(", ")}.`
+    : "";
+
+  return [
+    `Microsoft authorization: not connected.${missingConfig}`,
+    "Microsoft tool availability: do not claim Outlook Mail or Outlook Calendar data was read until OAuth is connected. If the user asks for Outlook data, explain that authorization is required or attempt the tool only when the request explicitly asks for connector verification."
   ];
 }
 

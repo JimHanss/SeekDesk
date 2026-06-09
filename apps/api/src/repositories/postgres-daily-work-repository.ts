@@ -132,8 +132,9 @@ export class PostgresDailyWorkRepository implements DailyWorkRepository {
       async () => cloneJson(defaultDailyWorkConnectors)
     );
     const googleAccount = await this.getConnectorAccount("google");
+    const microsoftAccount = await this.getConnectorAccount("microsoft");
 
-    if (!googleAccount) {
+    if (!googleAccount && !microsoftAccount) {
       return connectors;
     }
 
@@ -142,12 +143,18 @@ export class PostgresDailyWorkRepository implements DailyWorkRepository {
         return connector;
       }
 
+      const lastSyncAt = newestTimestamp([
+        googleAccount?.updatedAt,
+        microsoftAccount?.updatedAt
+      ]);
+
       return {
         ...connector,
         status: "available" as const,
-        lastSyncAt: googleAccount.updatedAt,
+        ...(lastSyncAt ? { lastSyncAt } : {}),
         notes: [
-          `Google account connected: ${googleAccount.accountEmail ?? "unknown account"}.`,
+          ...formatConnectedConnectorAccountNotes("Google", googleAccount),
+          ...formatConnectedConnectorAccountNotes("Microsoft", microsoftAccount),
           "Real reads are enabled for approved preview-only daily_work tools; sending email and creating calendar events remain disabled."
         ]
       };
@@ -618,6 +625,23 @@ function parseConnectorAccount(
     ...account,
     scopes: parseStringArray(account.scopes)
   };
+}
+
+function formatConnectedConnectorAccountNotes(
+  label: string,
+  account: DailyWorkConnectorAccount | null
+) {
+  if (!account) {
+    return [];
+  }
+
+  return [
+    `${label} account connected: ${account.accountEmail ?? "unknown account"}.`
+  ];
+}
+
+function newestTimestamp(values: Array<string | undefined>) {
+  return values.filter((value): value is string => Boolean(value)).sort().at(-1);
 }
 
 function parseStringArray(value: unknown): string[] {

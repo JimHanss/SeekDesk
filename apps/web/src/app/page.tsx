@@ -165,8 +165,13 @@ export default function Page() {
     googleConnectorStatus,
     googleOAuthStartNotice,
     googleOAuthStartStatus,
+    microsoftConnectorStatus,
+    microsoftOAuthStartNotice,
+    microsoftOAuthStartStatus,
     refreshGoogleConnectorStatus,
-    startGoogleOAuth
+    refreshMicrosoftConnectorStatus,
+    startGoogleOAuth,
+    startMicrosoftOAuth
   } = useGoogleConnectorStatus(apiBaseUrl);
   const activeModelSnapshot = modelUsagePanel.modelSnapshots[modelRouteMode];
   const modelInputPlaceholder =
@@ -609,6 +614,9 @@ export default function Page() {
                   googleConnectorStatus={googleConnectorStatus}
                   googleOAuthStartNotice={googleOAuthStartNotice}
                   googleOAuthStartStatus={googleOAuthStartStatus}
+                  microsoftConnectorStatus={microsoftConnectorStatus}
+                  microsoftOAuthStartNotice={microsoftOAuthStartNotice}
+                  microsoftOAuthStartStatus={microsoftOAuthStartStatus}
                   selectedConnector={selectedConnector}
                   selectedConnectorApprovalRequests={selectedConnectorApprovalRequests}
                   selectedConnectorPreviewStatus={selectedConnectorPreviewStatus}
@@ -617,8 +625,12 @@ export default function Page() {
                   onRefreshGoogleStatus={() => {
                     void refreshGoogleConnectorStatus();
                   }}
+                  onRefreshMicrosoftStatus={() => {
+                    void refreshMicrosoftConnectorStatus();
+                  }}
                   onSelectConnector={setSelectedConnectorId}
                   onStartGoogleOAuth={startGoogleOAuth}
+                  onStartMicrosoftOAuth={startMicrosoftOAuth}
                   onUpdateConnectorPreviewDecision={updateConnectorPreviewDecision}
                 />
               </ModuleStack>

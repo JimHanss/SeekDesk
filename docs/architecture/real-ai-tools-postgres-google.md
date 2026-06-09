@@ -12,6 +12,8 @@ SeekDesk now has a real daily_work foundation for:
 - JSON/seed fallback when Postgres is not configured.
 - Google OAuth status/start/callback routes.
 - Gmail and Google Calendar read/previews through server-side tools.
+- Microsoft OAuth status/start/callback routes.
+- Outlook Mail and Outlook Calendar read/previews through server-side tools.
 
 Coding-agent filesystem, shell, git, and file-write tools remain reserved and disabled.
 
@@ -21,6 +23,8 @@ Coding-agent filesystem, shell, git, and file-write tools remain reserved and di
 - DeepSeek tool calls: https://api-docs.deepseek.com/guides/tool_calls
 - Gmail draft guide: https://developers.google.com/workspace/gmail/api/guides/drafts
 - Google Calendar event guide: https://developers.google.com/workspace/calendar/api/guides/create-events
+- Microsoft Graph delegated auth and Outlook Mail/Calendar APIs: verified with
+  Context7 for `/websites/learn_microsoft_en-us_graph`.
 - Drizzle PostgreSQL setup and migrations: verified with Context7 for `/drizzle-team/drizzle-orm-docs`.
 
 ## Persistence
@@ -65,13 +69,21 @@ Daily-work tools are preview-only:
 - `gmail.create_draft_preview`
 - `calendar.list_events`
 - `calendar.propose_event_preview`
+- `outlook.search_messages`
+- `outlook.read_message`
+- `outlook.create_draft_preview`
+- `outlook.calendar.list_events`
+- `outlook.calendar.propose_event_preview`
 - `daily.persist_artifact`
 
 Allowed:
 
 - Read authorized Gmail/Calendar metadata.
+- Read authorized Outlook Mail/Calendar metadata.
 - Generate local Gmail draft payload previews.
 - Generate local Calendar event JSON previews.
+- Generate local Outlook draft payload previews.
+- Generate local Outlook Calendar event JSON previews.
 - Persist local SeekDesk artifacts and activity events.
 
 Forbidden in v1:
@@ -80,6 +92,9 @@ Forbidden in v1:
 - Calling `drafts.send`.
 - Creating Gmail drafts in the external account.
 - Calling Calendar `events.insert`.
+- Calling Microsoft Graph `sendMail`.
+- Creating Microsoft Graph Outlook message drafts in the external account.
+- Creating Microsoft Graph Calendar events in the external account.
 - Writing Google Docs or Drive files.
 - Running shell/file/git coding tools.
 
@@ -211,6 +226,51 @@ npm run verify:google-oauth -- --require-connected
 This gate requires both a connected Google account and complete required scopes.
 If scopes are missing, it fails before any Gmail or Calendar read attempt and
 instructs you to reopen OAuth consent.
+
+## Microsoft OAuth / Outlook
+
+Routes:
+
+- `GET /api/connectors/microsoft/status`
+- `GET /api/connectors/microsoft/oauth/start`
+- `GET /api/connectors/microsoft/oauth/callback`
+
+Required env:
+
+- `MICROSOFT_CLIENT_ID`
+- `MICROSOFT_CLIENT_SECRET`
+- `MICROSOFT_REDIRECT_URI`
+- `MICROSOFT_TOKEN_ENCRYPTION_KEY`
+- `MICROSOFT_OAUTH_STATE_SECRET`
+
+Required delegated scopes:
+
+- `offline_access`
+- `User.Read`
+- `Mail.Read`
+- `Calendars.Read`
+
+The frontend opens Microsoft authorization in a separate window just like Google
+authorization. The callback exchanges the authorization code server-side, stores
+encrypted tokens through the repository, posts a non-secret completion message to
+the opener, and closes when the browser allows it.
+
+Outlook tools use Microsoft Graph only for read operations:
+
+- `outlook.search_messages` calls `/me/messages` and returns selected metadata.
+- `outlook.read_message` calls `/me/messages/{messageId}` and returns one
+  message.
+- `outlook.calendar.list_events` calls `/me/calendarView` or a selected
+  calendar view and returns selected event metadata.
+
+Preview tools do not call Microsoft Graph write endpoints:
+
+- `outlook.create_draft_preview` builds a local Graph message payload preview.
+- `outlook.calendar.propose_event_preview` builds a local Graph event payload
+  preview.
+
+SeekDesk does not call `sendMail`, create Outlook drafts, or insert Outlook
+calendar events in daily_work v1.
 
 For the SSH remote checkout, the full Postgres + API + DeepSeek verification can
 be run as one remote session:

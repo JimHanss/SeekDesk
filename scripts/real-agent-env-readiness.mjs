@@ -12,17 +12,32 @@ const requiredKeys = [
   "GOOGLE_CLIENT_SECRET",
   "GOOGLE_REDIRECT_URI",
   "GOOGLE_TOKEN_ENCRYPTION_KEY",
-  "GOOGLE_OAUTH_STATE_SECRET"
+  "GOOGLE_OAUTH_STATE_SECRET",
+  "MICROSOFT_CLIENT_ID",
+  "MICROSOFT_CLIENT_SECRET",
+  "MICROSOFT_REDIRECT_URI",
+  "MICROSOFT_TOKEN_ENCRYPTION_KEY",
+  "MICROSOFT_OAUTH_STATE_SECRET"
 ];
 const googleConnectorScopes = [
   "https://www.googleapis.com/auth/gmail.readonly",
   "https://www.googleapis.com/auth/gmail.compose",
   "https://www.googleapis.com/auth/calendar.readonly"
 ];
+const microsoftConnectorScopes = [
+  "offline_access",
+  "User.Read",
+  "Mail.Read",
+  "Calendars.Read"
+];
 const localApiRedirectUri =
   "http://127.0.0.1:4000/api/connectors/google/oauth/callback";
 const remoteApiRedirectUri =
   "http://127.0.0.1:45100/api/connectors/google/oauth/callback";
+const localMicrosoftApiRedirectUri =
+  "http://127.0.0.1:4000/api/connectors/microsoft/oauth/callback";
+const remoteMicrosoftApiRedirectUri =
+  "http://127.0.0.1:45100/api/connectors/microsoft/oauth/callback";
 const args = parseArgs(process.argv.slice(2));
 
 try {
@@ -71,7 +86,12 @@ async function checkLocalReadiness(input) {
     googleClientSecret: has("GOOGLE_CLIENT_SECRET"),
     googleRedirectUri: has("GOOGLE_REDIRECT_URI"),
     googleTokenEncryptionKey: has("GOOGLE_TOKEN_ENCRYPTION_KEY"),
-    googleOAuthStateSecret: has("GOOGLE_OAUTH_STATE_SECRET")
+    googleOAuthStateSecret: has("GOOGLE_OAUTH_STATE_SECRET"),
+    microsoftClientId: has("MICROSOFT_CLIENT_ID"),
+    microsoftClientSecret: has("MICROSOFT_CLIENT_SECRET"),
+    microsoftRedirectUri: has("MICROSOFT_REDIRECT_URI"),
+    microsoftTokenEncryptionKey: has("MICROSOFT_TOKEN_ENCRYPTION_KEY"),
+    microsoftOAuthStateSecret: has("MICROSOFT_OAUTH_STATE_SECRET")
   };
   const artifactChainReady =
     requirements.deepseekApiKey && requirements.postgresDatabaseUrl;
@@ -82,11 +102,19 @@ async function checkLocalReadiness(input) {
     requirements.googleRedirectUri &&
     requirements.googleTokenEncryptionKey &&
     requirements.googleOAuthStateSecret;
+  const microsoftClientReady =
+    requirements.microsoftClientId && requirements.microsoftClientSecret;
+  const microsoftOAuthEnvReady =
+    microsoftClientReady &&
+    requirements.microsoftRedirectUri &&
+    requirements.microsoftTokenEncryptionKey &&
+    requirements.microsoftOAuthStateSecret;
+  const connectorOAuthEnvReady = googleOAuthEnvReady || microsoftOAuthEnvReady;
 
   return {
     status: allRequirementsReady({
       artifactChainReady,
-      googleOAuthEnvReady
+      connectorOAuthEnvReady
     })
       ? "ready"
       : "incomplete",
@@ -100,19 +128,29 @@ async function checkLocalReadiness(input) {
       artifactChainReady,
       googleClientReady,
       googleOAuthEnvReady,
+      microsoftClientReady,
+      microsoftOAuthEnvReady,
+      connectorOAuthEnvReady,
       googleRealReadVerificationReady: googleOAuthEnvReady,
+      microsoftRealReadVerificationReady: microsoftOAuthEnvReady,
       note:
-        "This checks env readiness only. A connected Google account with complete scopes is still verified by verify:google-oauth or verify:remote-real-agent -- --require-google."
+        "This checks env readiness only. A connected Google or Microsoft account with complete scopes is still verified by the provider OAuth flow and real-agent verifier."
     },
     googleOAuthSetup: createGoogleOAuthSetup({
       configuredRedirectUri: valueOf("GOOGLE_REDIRECT_URI")
+    }),
+    microsoftOAuthSetup: createMicrosoftOAuthSetup({
+      configuredRedirectUri: valueOf("MICROSOFT_REDIRECT_URI")
     }),
     nextStep: createNextStep({
       artifactChainReady,
       googleClientReady,
       googleOAuthEnvReady,
+      microsoftClientReady,
+      microsoftOAuthEnvReady,
       requirements,
-      focusGoogle: input.requireGoogleConfigured
+      focusGoogle: input.requireGoogleConfigured,
+      focusMicrosoft: input.requireMicrosoftConfigured
     })
   };
 }
@@ -184,7 +222,7 @@ function unquoteEnvValue(value) {
 }
 
 function allRequirementsReady(input) {
-  return input.artifactChainReady && input.googleOAuthEnvReady;
+  return input.artifactChainReady && input.connectorOAuthEnvReady;
 }
 
 function shouldFail(summary, input) {
@@ -204,6 +242,13 @@ function shouldFail(summary, input) {
     return true;
   }
 
+  if (
+    input.requireMicrosoftConfigured &&
+    !summary.requirements.microsoftOAuthEnvReady
+  ) {
+    return true;
+  }
+
   return false;
 }
 
@@ -216,6 +261,14 @@ function createNextStep(input) {
     return "Run npm run configure:google-oauth to generate redirect/encryption/state settings without printing secrets.";
   }
 
+  if (input.focusMicrosoft && !input.microsoftClientReady) {
+    return "Add MICROSOFT_CLIENT_ID and MICROSOFT_CLIENT_SECRET to ignored .env.local before starting Outlook authorization.";
+  }
+
+  if (input.focusMicrosoft && !input.microsoftOAuthEnvReady) {
+    return "Add MICROSOFT_REDIRECT_URI, MICROSOFT_TOKEN_ENCRYPTION_KEY, and MICROSOFT_OAUTH_STATE_SECRET to ignored env files before starting Outlook authorization.";
+  }
+
   if (!input.artifactChainReady) {
     const missing = [
       input.requirements.deepseekApiKey ? null : "DEEPSEEK_API_KEY",
@@ -225,15 +278,15 @@ function createNextStep(input) {
     return `Add ${missing.join(", ")} to ignored env files before running remote real-agent verification.`;
   }
 
-  if (!input.googleClientReady) {
-    return "Add GOOGLE_CLIENT_ID and GOOGLE_CLIENT_SECRET to ignored .env.local, then run npm run prepare:remote-google-oauth -- --host jim-mac.";
+  if (!input.googleClientReady && !input.microsoftClientReady) {
+    return "Add either Google or Microsoft OAuth client id/secret to ignored .env.local before starting mailbox/calendar authorization.";
   }
 
-  if (!input.googleOAuthEnvReady) {
-    return "Run npm run configure:google-oauth to generate redirect/encryption/state settings without printing secrets.";
+  if (!input.googleOAuthEnvReady && !input.microsoftOAuthEnvReady) {
+    return "Complete Google or Microsoft redirect/encryption/state env values in ignored env files before browser authorization.";
   }
 
-  return "Run npm run prepare:remote-google-oauth -- --host jim-mac, complete browser consent, then run npm run verify:remote-real-agent -- --require-google.";
+  return "Start the API, complete browser OAuth for the configured provider, then run the real-agent verifier with the connected account.";
 }
 
 function createGoogleOAuthSetup(input) {
@@ -263,6 +316,32 @@ function createGoogleOAuthSetup(input) {
   };
 }
 
+function createMicrosoftOAuthSetup(input) {
+  const configuredRedirectUri =
+    input.configuredRedirectUri || localMicrosoftApiRedirectUri;
+
+  return {
+    microsoftEntraAppType: "Web application",
+    authorizedRedirectUris: uniqueStrings([
+      configuredRedirectUri,
+      localMicrosoftApiRedirectUri,
+      remoteMicrosoftApiRedirectUri
+    ]),
+    requiredScopes: microsoftConnectorScopes,
+    checklist: [
+      "Create or reuse a Microsoft Entra app registration for delegated Graph access.",
+      "Add the web redirect URI that matches the API port used during OAuth.",
+      "Grant delegated Microsoft Graph permissions for User.Read, Mail.Read, Calendars.Read, and offline_access.",
+      "Put MICROSOFT_CLIENT_ID and MICROSOFT_CLIENT_SECRET only in ignored .env.local or process env; do not commit them."
+    ],
+    nextCommands: [
+      "Start the API with Microsoft env configured.",
+      "Open /api/connectors/microsoft/oauth/start through the SeekDesk connector panel.",
+      "Run browser smoke after the callback succeeds."
+    ]
+  };
+}
+
 function uniqueStrings(values) {
   return [...new Set(values.filter((value) => typeof value === "string" && value))];
 }
@@ -274,7 +353,10 @@ async function runRemote(input) {
     ...(input.requireDeepSeek ? ["--require-deepseek"] : []),
     ...(input.requirePostgres ? ["--require-postgres"] : []),
     ...(input.requireArtifactChain ? ["--require-artifact-chain"] : []),
-    ...(input.requireGoogleConfigured ? ["--require-google-configured"] : [])
+    ...(input.requireGoogleConfigured ? ["--require-google-configured"] : []),
+    ...(input.requireMicrosoftConfigured
+      ? ["--require-microsoft-configured"]
+      : [])
   ];
   const remoteCommand = [
     `cd ${shellQuote(repo)}`,
@@ -348,6 +430,11 @@ function parseArgs(argv) {
       continue;
     }
 
+    if (arg === "--require-microsoft-configured") {
+      parsed.requireMicrosoftConfigured = true;
+      continue;
+    }
+
     throw new Error(`Unknown argument: ${arg}`);
   }
 
@@ -371,9 +458,9 @@ function printHelp() {
   console.log(`Usage: npm run verify:real-agent-env -- [options]
 
 Checks whether ignored env files contain the variables needed for the real
-DeepSeek/Postgres/Google daily-work agent. It prints only booleans and next
-steps, never secret values. It also prints the Google OAuth redirect URI and
-required scopes needed to finish browser consent.
+DeepSeek/Postgres/email-connector daily-work agent. It prints only booleans and
+next steps, never secret values. It also prints Google and Microsoft OAuth
+redirect URIs and required scopes needed to finish browser consent.
 
 Options:
   --host <ssh-host>              Check a remote checkout over SSH.
@@ -384,5 +471,6 @@ Options:
   --require-postgres             Exit non-zero if DATABASE_URL is missing.
   --require-artifact-chain       Exit non-zero unless DeepSeek + Postgres env are ready.
   --require-google-configured    Exit non-zero unless Google OAuth env is ready.
+  --require-microsoft-configured Exit non-zero unless Microsoft OAuth env is ready.
 `);
 }

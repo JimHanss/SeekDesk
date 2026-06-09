@@ -27,7 +27,9 @@ import type {
   ConnectorItem,
   ConnectorPreviewPanelState,
   GoogleConnectorStatusState,
-  GoogleOAuthStartStatus
+  GoogleOAuthStartStatus,
+  MicrosoftConnectorStatusState,
+  MicrosoftOAuthStartStatus
 } from "../../types";
 import {
   ConnectorPermissionPill,
@@ -43,14 +45,19 @@ interface ConnectorDirectoryPanelProps {
   googleConnectorStatus: GoogleConnectorStatusState;
   googleOAuthStartNotice: string;
   googleOAuthStartStatus: GoogleOAuthStartStatus;
+  microsoftConnectorStatus: MicrosoftConnectorStatusState;
+  microsoftOAuthStartNotice: string;
+  microsoftOAuthStartStatus: MicrosoftOAuthStartStatus;
   selectedConnector: ConnectorItem | null;
   selectedConnectorApprovalRequests: ApprovalRequestItem[];
   selectedConnectorPreviewStatus: ApprovalStatus;
   onApplyConnectorPrompt: (connector: ConnectorItem) => void;
   onFilterChange: (filter: ConnectorFilter) => void;
   onRefreshGoogleStatus: () => void;
+  onRefreshMicrosoftStatus: () => void;
   onSelectConnector: (connectorId: string) => void;
   onStartGoogleOAuth: () => void;
+  onStartMicrosoftOAuth: () => void;
   onUpdateConnectorPreviewDecision: (
     connector: ConnectorItem,
     nextStatus: Exclude<ApprovalStatus, "waiting">
@@ -64,14 +71,19 @@ export function ConnectorDirectoryPanel({
   googleConnectorStatus,
   googleOAuthStartNotice,
   googleOAuthStartStatus,
+  microsoftConnectorStatus,
+  microsoftOAuthStartNotice,
+  microsoftOAuthStartStatus,
   selectedConnector,
   selectedConnectorApprovalRequests,
   selectedConnectorPreviewStatus,
   onApplyConnectorPrompt,
   onFilterChange,
   onRefreshGoogleStatus,
+  onRefreshMicrosoftStatus,
   onSelectConnector,
   onStartGoogleOAuth,
+  onStartMicrosoftOAuth,
   onUpdateConnectorPreviewDecision
 }: ConnectorDirectoryPanelProps) {
   const googleOauthBlocked =
@@ -80,6 +92,15 @@ export function ConnectorDirectoryPanel({
     googleOAuthStartStatus === "starting" ||
     googleConnectorStatus.missingConfig.length > 0;
   const googleScopeStatus = googleConnectorStatus.scopesComplete
+    ? "complete"
+    : "incomplete";
+  const microsoftOauthBlocked =
+    (microsoftConnectorStatus.connected &&
+      microsoftConnectorStatus.scopesComplete) ||
+    microsoftConnectorStatus.syncStatus === "syncing" ||
+    microsoftOAuthStartStatus === "starting" ||
+    microsoftConnectorStatus.missingConfig.length > 0;
+  const microsoftScopeStatus = microsoftConnectorStatus.scopesComplete
     ? "complete"
     : "incomplete";
 
@@ -186,6 +207,103 @@ export function ConnectorDirectoryPanel({
                   : googleConnectorStatus.missingConfig.length > 0
                     ? "Setup needed"
                     : "Authorize email"}
+              </Button>
+            </div>
+          </div>
+        </div>
+
+        <div
+          className="rounded-[8px] border border-cyan-200 bg-white px-3 py-2 text-xs leading-5 text-cyan-950"
+          data-microsoft-connector-status={
+            microsoftConnectorStatus.connected ? "connected" : "requires_setup"
+          }
+          data-microsoft-connector-sync-status={microsoftConnectorStatus.syncStatus}
+          data-microsoft-scope-status={microsoftScopeStatus}
+          data-microsoft-missing-scope-count={
+            microsoftConnectorStatus.missingScopes.length
+          }
+          data-microsoft-oauth-start-status={microsoftOAuthStartStatus}
+        >
+          <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
+            <div className="min-w-0">
+              <div className="flex flex-wrap items-center gap-2">
+                <span className="font-medium">
+                  Outlook / Microsoft:{" "}
+                  {microsoftConnectorStatus.connected
+                    ? "authorized"
+                    : "requires_setup"}
+                </span>
+                <span className="rounded-[999px] bg-cyan-50 px-2 py-0.5 text-[11px] text-cyan-700">
+                  {microsoftConnectorStatus.scopes.length} scopes
+                </span>
+                <span
+                  className={cn(
+                    "rounded-[999px] px-2 py-0.5 text-[11px]",
+                    microsoftConnectorStatus.scopesComplete
+                      ? "bg-emerald-50 text-emerald-700"
+                      : "bg-orange-50 text-orange-700"
+                  )}
+                >
+                  scopes {microsoftScopeStatus}
+                </span>
+              </div>
+              <p className="mt-1 text-cyan-800">
+                {microsoftConnectorStatus.notice}
+              </p>
+              {microsoftConnectorStatus.missingConfig.length > 0 ? (
+                <p className="mt-1 break-words text-orange-700">
+                  Missing: {microsoftConnectorStatus.missingConfig.join(", ")}
+                </p>
+              ) : null}
+              {microsoftConnectorStatus.missingScopes.length > 0 ? (
+                <p className="mt-1 break-words text-orange-700">
+                  Missing scopes:{" "}
+                  {microsoftConnectorStatus.missingScopes.join(", ")}
+                </p>
+              ) : null}
+              <p className="mt-1 break-words text-[11px] text-slate-600">
+                {microsoftOAuthStartNotice}
+              </p>
+            </div>
+
+            <div className="flex shrink-0 flex-wrap gap-2">
+              <Button
+                type="button"
+                size="sm"
+                variant="secondary"
+                className="h-8 rounded-[8px] border-cyan-200 bg-white text-cyan-800 hover:bg-cyan-50"
+                data-microsoft-connector-refresh
+                onClick={onRefreshMicrosoftStatus}
+              >
+                {microsoftConnectorStatus.syncStatus === "syncing" ? (
+                  <Loader2 className="size-4 animate-spin" aria-hidden="true" />
+                ) : (
+                  <CheckCircle2 className="size-4" aria-hidden="true" />
+                )}
+                Refresh
+              </Button>
+              <Button
+                type="button"
+                size="sm"
+                variant="secondary"
+                disabled={microsoftOauthBlocked}
+                className="h-8 rounded-[8px] border-cyan-200 bg-white text-cyan-800 hover:bg-cyan-50"
+                data-microsoft-oauth-start
+                data-microsoft-oauth-start-disabled={String(microsoftOauthBlocked)}
+                onClick={onStartMicrosoftOAuth}
+              >
+                {microsoftOAuthStartStatus === "starting" ? (
+                  <Loader2 className="size-4 animate-spin" aria-hidden="true" />
+                ) : (
+                  <ExternalLink className="size-4" aria-hidden="true" />
+                )}
+                {microsoftConnectorStatus.connected
+                  ? microsoftConnectorStatus.scopesComplete
+                    ? "Authorized"
+                    : "Refresh scopes"
+                  : microsoftConnectorStatus.missingConfig.length > 0
+                    ? "Setup needed"
+                    : "Authorize Outlook"}
               </Button>
             </div>
           </div>

@@ -13,6 +13,11 @@ import {
   gmailCreateDraftPreviewInputSchema,
   gmailReadThreadInputSchema,
   gmailSearchThreadsInputSchema,
+  outlookCalendarListEventsInputSchema,
+  outlookCalendarProposeEventPreviewInputSchema,
+  outlookCreateDraftPreviewInputSchema,
+  outlookReadMessageInputSchema,
+  outlookSearchMessagesInputSchema,
   type DailyActivityEvent,
   type DailyWorkArtifact
 } from "@seekdesk/shared";
@@ -28,6 +33,16 @@ import {
   readGmailThread,
   searchGmailThreads
 } from "./google-connector-service.js";
+import {
+  createMicrosoftAccessToken,
+  createOutlookCalendarEventPreview,
+  createOutlookDraftPreview,
+  getMicrosoftConnectionStatus,
+  getMicrosoftOAuthConfigFromEnv,
+  listOutlookCalendarEvents,
+  readOutlookMessage,
+  searchOutlookMessages
+} from "./microsoft-connector-service.js";
 
 export function createDailyWorkToolRuntime(repository: DailyWorkRepository) {
   const registry = createDefaultToolRegistry();
@@ -55,6 +70,35 @@ export function createDailyWorkToolRuntime(repository: DailyWorkRepository) {
   });
   bindExecutor(registry, "calendar.propose_event_preview", async ({ input }) =>
     createCalendarEventPreview(calendarProposeEventPreviewInputSchema.parse(input))
+  );
+  bindExecutor(registry, "outlook.search_messages", async ({ input }) => {
+    const params = outlookSearchMessagesInputSchema.parse(input);
+    const accessToken = await createMicrosoftAccessTokenOrThrow(repository);
+
+    return searchOutlookMessages({ accessToken, params });
+  });
+  bindExecutor(registry, "outlook.read_message", async ({ input }) => {
+    const params = outlookReadMessageInputSchema.parse(input);
+    const accessToken = await createMicrosoftAccessTokenOrThrow(repository);
+
+    return readOutlookMessage({ accessToken, params });
+  });
+  bindExecutor(registry, "outlook.create_draft_preview", async ({ input }) =>
+    createOutlookDraftPreview(outlookCreateDraftPreviewInputSchema.parse(input))
+  );
+  bindExecutor(registry, "outlook.calendar.list_events", async ({ input }) => {
+    const params = outlookCalendarListEventsInputSchema.parse(input);
+    const accessToken = await createMicrosoftAccessTokenOrThrow(repository);
+
+    return listOutlookCalendarEvents({ accessToken, params });
+  });
+  bindExecutor(
+    registry,
+    "outlook.calendar.propose_event_preview",
+    async ({ input }) =>
+      createOutlookCalendarEventPreview(
+        outlookCalendarProposeEventPreviewInputSchema.parse(input)
+      )
   );
   bindExecutor(registry, "daily.persist_artifact", async ({ input }) => {
     const parsed = dailyPersistArtifactInputSchema.parse(input);
@@ -89,6 +133,43 @@ function bindExecutor(
   }
 
   definition.execute = execute;
+}
+
+async function createMicrosoftAccessTokenOrThrow(repository: DailyWorkRepository) {
+  const config = getMicrosoftOAuthConfigFromEnv();
+  if (!config) {
+    throw createToolError(
+      "microsoft_oauth_not_configured",
+      "Microsoft OAuth environment variables are not configured."
+    );
+  }
+
+  const status = await getMicrosoftConnectionStatus({ repository });
+  if (!status.connected) {
+    throw createToolError(
+      "connector_not_connected",
+      "Microsoft connector is not connected."
+    );
+  }
+
+  if (!status.scopesComplete) {
+    throw createToolError(
+      "connector_missing_scopes",
+      `Microsoft connector is missing required OAuth scopes: ${status.missingScopes.join(", ") || "unknown"}.`
+    );
+  }
+
+  try {
+    return await createMicrosoftAccessToken({
+      repository,
+      config
+    });
+  } catch (error) {
+    throw createToolError(
+      "connector_not_connected",
+      error instanceof Error ? error.message : "Microsoft connector is not connected."
+    );
+  }
 }
 
 async function createGoogleAuthOrThrow(repository: DailyWorkRepository) {

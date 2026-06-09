@@ -319,6 +319,109 @@ export function createDefaultToolRegistry(): ToolRegistry {
       }
     },
     {
+      name: "outlook.search_messages",
+      mode: "daily_work",
+      description:
+        "Search authorized Outlook messages and return metadata only. Preview-only: no email is sent or modified.",
+      inputSchema: dailyWorkToolInputSchemas["outlook.search_messages"],
+      parametersJsonSchema: {
+        type: "object",
+        properties: {
+          query: { type: "string", description: "Microsoft Graph message search text." },
+          maxResults: {
+            type: "integer",
+            minimum: 1,
+            maximum: 20,
+            default: 10
+          }
+        },
+        additionalProperties: false
+      }
+    },
+    {
+      name: "outlook.read_message",
+      mode: "daily_work",
+      description:
+        "Read one authorized Outlook message. Preview-only: attachments, replies, and sends are disabled.",
+      inputSchema: dailyWorkToolInputSchemas["outlook.read_message"],
+      parametersJsonSchema: {
+        type: "object",
+        properties: {
+          messageId: { type: "string" }
+        },
+        required: ["messageId"],
+        additionalProperties: false
+      }
+    },
+    {
+      name: "outlook.create_draft_preview",
+      mode: "daily_work",
+      description:
+        "Create a local Microsoft Graph message draft payload preview. Does not create or send a real Outlook draft.",
+      inputSchema: dailyWorkToolInputSchemas["outlook.create_draft_preview"],
+      parametersJsonSchema: {
+        type: "object",
+        properties: {
+          to: { type: "array", items: { type: "string", format: "email" } },
+          cc: { type: "array", items: { type: "string", format: "email" } },
+          subject: { type: "string" },
+          bodyText: { type: "string" },
+          conversationId: { type: "string" }
+        },
+        required: ["to", "subject", "bodyText"],
+        additionalProperties: false
+      }
+    },
+    {
+      name: "outlook.calendar.list_events",
+      mode: "daily_work",
+      description:
+        "List authorized Outlook Calendar event metadata. Preview-only: no event is created or changed.",
+      inputSchema: dailyWorkToolInputSchemas["outlook.calendar.list_events"],
+      parametersJsonSchema: {
+        type: "object",
+        properties: {
+          calendarId: { type: "string", default: "primary" },
+          timeMin: { type: "string", format: "date-time" },
+          timeMax: { type: "string", format: "date-time" },
+          maxResults: {
+            type: "integer",
+            minimum: 1,
+            maximum: 50,
+            default: 10
+          },
+          timeZone: { type: "string", default: "UTC" }
+        },
+        additionalProperties: false
+      }
+    },
+    {
+      name: "outlook.calendar.propose_event_preview",
+      mode: "daily_work",
+      description:
+        "Create a local Microsoft Graph calendar event payload preview. Does not create a real Outlook event.",
+      inputSchema:
+        dailyWorkToolInputSchemas["outlook.calendar.propose_event_preview"],
+      parametersJsonSchema: {
+        type: "object",
+        properties: {
+          calendarId: { type: "string", default: "primary" },
+          summary: { type: "string" },
+          description: { type: "string" },
+          startDateTime: { type: "string", format: "date-time" },
+          endDateTime: { type: "string", format: "date-time" },
+          attendeeEmails: {
+            type: "array",
+            items: { type: "string", format: "email" }
+          },
+          timeZone: { type: "string", default: "UTC" },
+          location: { type: "string" }
+        },
+        required: ["summary", "startDateTime", "endDateTime"],
+        additionalProperties: false
+      }
+    },
+    {
       name: "daily.persist_artifact",
       mode: "daily_work",
       description:

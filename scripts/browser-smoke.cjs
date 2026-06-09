@@ -55,6 +55,7 @@ async function main() {
     await runModelUsageSmoke(client, apiServer.url);
     await runDataLayerStateSmoke(client, apiServer.url);
     await runGoogleConnectorStatusSmoke(client, apiServer.url);
+    await runMicrosoftConnectorStatusSmoke(client, apiServer.url);
     await runApprovalPreviewSmoke(client, apiServer.url);
     await runWorkflowPreviewSmoke(client, apiServer.url);
     await runPostActionRefreshSmoke(client, apiServer.url);
@@ -1145,6 +1146,68 @@ async function runGoogleConnectorStatusSmoke(client, apiUrl) {
   });
 }
 
+async function runMicrosoftConnectorStatusSmoke(client, apiUrl) {
+  const statusSnapshot = await fetchMicrosoftConnectorStatusSnapshot(apiUrl);
+
+  if (typeof statusSnapshot.connected !== "boolean") {
+    throw new Error("Microsoft connector status did not expose a connected boolean.");
+  }
+  if (!Array.isArray(statusSnapshot.requiredScopes)) {
+    throw new Error("Microsoft connector status did not expose requiredScopes.");
+  }
+  if (!Array.isArray(statusSnapshot.missingScopes)) {
+    throw new Error("Microsoft connector status did not expose missingScopes.");
+  }
+  if (typeof statusSnapshot.scopesComplete !== "boolean") {
+    throw new Error("Microsoft connector status did not expose scopesComplete.");
+  }
+
+  const apiStatus =
+    statusSnapshot.status ||
+    (statusSnapshot.connected
+      ? "connected"
+      : statusSnapshot.requiresSetup
+        ? "requires_setup"
+        : "degraded");
+
+  if (!["connected", "requires_setup", "degraded"].includes(apiStatus)) {
+    throw new Error(`Unexpected Microsoft connector status: ${apiStatus}`);
+  }
+
+  await selectDailyView(client, "connectors");
+
+  const pageState = await waitForValue(
+    client,
+    microsoftConnectorStatusExpression(),
+    (state) =>
+      state.present &&
+      ["connected", "requires_setup"].includes(state.status) &&
+      state.syncStatus &&
+      state.refreshPresent &&
+      state.oauthPresent &&
+      state.oauthStartStatus &&
+      state.scopeStatus &&
+      state.textLength > 0,
+    "Microsoft connector status panel"
+  );
+
+  checks.push({
+    name: "microsoft connector status",
+    status: "passed",
+    apiStatus,
+    apiConnected: statusSnapshot.connected,
+    apiScopesComplete: statusSnapshot.scopesComplete,
+    apiMissingScopes: statusSnapshot.missingScopes.length,
+    pageStatus: pageState.status,
+    scopeStatus: pageState.scopeStatus,
+    missingScopeCount: pageState.missingScopeCount,
+    pageSyncStatus: pageState.syncStatus,
+    refreshPresent: pageState.refreshPresent,
+    oauthStartStatus: pageState.oauthStartStatus,
+    oauthStartDisabled: pageState.oauthStartDisabled
+  });
+}
+
 async function runApprovalPreviewSmoke(client, apiUrl) {
   const previewSnapshot = await fetchJson(
     apiUrl,
@@ -1677,6 +1740,28 @@ function googleConnectorStatusExpression() {
       oauthPresent: Boolean(oauthButton),
       oauthStartStatus: root ? root.getAttribute("data-google-oauth-start-status") || "" : "",
       oauthStartDisabled: oauthButton ? oauthButton.getAttribute("data-google-oauth-start-disabled") || "" : "",
+      textLength: text.trim().length
+    };
+  })()`);
+}
+
+function microsoftConnectorStatusExpression() {
+  return withSmokeHelpers(`(() => {
+    const root = document.querySelector("[data-microsoft-connector-status]");
+    const refreshButton = document.querySelector("[data-microsoft-connector-refresh]");
+    const oauthButton = document.querySelector("[data-microsoft-oauth-start]");
+    const text = root ? root.textContent || "" : "";
+
+    return {
+      present: Boolean(root),
+      status: root ? root.getAttribute("data-microsoft-connector-status") || "" : "",
+      syncStatus: root ? root.getAttribute("data-microsoft-connector-sync-status") || "" : "",
+      scopeStatus: root ? root.getAttribute("data-microsoft-scope-status") || "" : "",
+      missingScopeCount: root ? Number(root.getAttribute("data-microsoft-missing-scope-count") || 0) : 0,
+      refreshPresent: Boolean(refreshButton),
+      oauthPresent: Boolean(oauthButton),
+      oauthStartStatus: root ? root.getAttribute("data-microsoft-oauth-start-status") || "" : "",
+      oauthStartDisabled: oauthButton ? oauthButton.getAttribute("data-microsoft-oauth-start-disabled") || "" : "",
       textLength: text.trim().length
     };
   })()`);
@@ -2701,6 +2786,26 @@ async function fetchGoogleConnectorStatusSnapshot(apiUrl) {
 
   if (!response.ok) {
     throw new Error(`/api/connectors/google/status returned HTTP ${response.status}.`);
+  }
+
+  return response.json();
+}
+
+async function fetchMicrosoftConnectorStatusSnapshot(apiUrl) {
+  const response = await fetch(
+    new URL("/api/connectors/microsoft/status", apiUrl).toString(),
+    {
+      headers: {
+        Accept: "application/json"
+      },
+      signal: AbortSignal.timeout(5000)
+    }
+  );
+
+  if (!response.ok) {
+    throw new Error(
+      `/api/connectors/microsoft/status returned HTTP ${response.status}.`
+    );
   }
 
   return response.json();
