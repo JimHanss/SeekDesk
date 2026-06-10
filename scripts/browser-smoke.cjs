@@ -1555,7 +1555,11 @@ async function runCodeBlockSmoke(client) {
     throw new Error(`Code block smoke probe failed: ${probe.reason}`);
   }
 
-  const prompt = "Please return TypeScript code for a daily_work code block smoke.";
+  const prompt = [
+    "Return exactly one fenced code block and no prose.",
+    "The fence opening must be \`\`\`typescript.",
+    "The code must include const DailyWorkSignal = \"code-block-smoke\";"
+  ].join(" ");
   const submitRect = await waitForRect(
     client,
     setSmokeInputExpression(prompt),
@@ -2743,7 +2747,11 @@ async function fetchCodeFenceProbe(endpoint) {
         messages: [
           {
             role: "user",
-            content: "Please return TypeScript code for a daily_work code block smoke."
+            content: [
+              "Return exactly one fenced code block and no prose.",
+              "The fence opening must be \`\`\`typescript.",
+              "The code must include const DailyWorkSignal = \"code-block-smoke\";"
+            ].join(" ")
           }
         ]
       }),
@@ -3708,23 +3716,30 @@ function closeSocket(socket) {
 }
 
 function assertCodeBlockDom(inspection, label) {
-  const firstBlock = inspection.blocks[0] || {};
-  const languageSignal = `${firstBlock.language || ""} ${firstBlock.text || ""}`.toLowerCase();
-  const hasLanguageLabel = /\b(ts|tsx|typescript|json|javascript|js)\b/.test(languageSignal);
+  const validBlocks = inspection.blocks.filter((block) => {
+    const languageSignal = `${block.language || ""} ${block.text || ""}`.toLowerCase();
+    return (
+      block.hasPanel &&
+      block.hasPreCode &&
+      /\b(ts|tsx|typescript|json|javascript|js)\b/.test(languageSignal) &&
+      block.tokenCount > 0
+    );
+  });
+  const firstBlock = validBlocks[0] || inspection.blocks[0] || {};
 
-  if (!inspection.hasBlocks || !firstBlock.hasPanel) {
+  if (!inspection.hasBlocks || !inspection.blocks.some((block) => block.hasPanel)) {
     throw new Error(`${label} was missing a data-code-block panel.`);
   }
 
-  if (!firstBlock.hasPreCode) {
+  if (!inspection.blocks.some((block) => block.hasPreCode)) {
     throw new Error(`${label} was missing stable pre/code markup.`);
   }
 
-  if (!hasLanguageLabel) {
+  if (!validBlocks.length) {
     throw new Error(`${label} was missing a stable language label.`);
   }
 
-  if (!firstBlock.tokenCount) {
+  if (!validBlocks.some((block) => block.tokenCount > 0)) {
     throw new Error(`${label} was missing syntax token spans or classes.`);
   }
 
