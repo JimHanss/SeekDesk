@@ -104,7 +104,7 @@ DOM for stable language and token markup.`);
 
 async function ensureApiServer() {
   if (smokeApiUrl) {
-    await waitForHttp(new URL("/health", smokeApiUrl).toString(), timeoutMs);
+    await waitForApiHealthReady(smokeApiUrl, timeoutMs);
     checks.push({
       name: "api service",
       status: "reused",
@@ -150,7 +150,7 @@ async function ensureApiServer() {
   });
 
   try {
-    await waitForHttp(new URL("/health", apiUrl).toString(), timeoutMs, () => {
+    await waitForApiHealthReady(apiUrl, timeoutMs, () => {
       if (child.exitCode !== null) {
         throw new Error(`api server exited early.\n${output.trim()}`);
       }
@@ -3882,6 +3882,55 @@ async function waitForHttp(url, timeout, beforeRetry = () => {}) {
     await sleep(500);
   }
   throw new Error(`Timed out waiting for ${url}: ${lastError && lastError.message}`);
+}
+
+async function waitForApiHealthReady(apiUrl, timeout, beforeRetry = () => {}) {
+  const url = new URL("/health", apiUrl).toString();
+  const requiresPostgres = Boolean(process.env.DATABASE_URL?.trim());
+  const startedAt = Date.now();
+  let lastError;
+
+  while (Date.now() - startedAt < timeout) {
+    try {
+      beforeRetry();
+      const response = await fetch(url, {
+        headers: {
+          Accept: "application/json"
+        },
+        redirect: "manual",
+        signal: AbortSignal.timeout(2000)
+      });
+
+      if (response.status >= 200 && response.status < 500) {
+        const text = await response.text();
+        let health = null;
+
+        try {
+          health = JSON.parse(text);
+        } catch {
+          if (!requiresPostgres) {
+            return null;
+          }
+          lastError = new Error("API health did not return JSON.");
+        }
+
+        if (health) {
+          if (!requiresPostgres || health.currentLayer !== "postgres" || health.postgresReady === true) {
+            return health;
+          }
+
+          lastError = new Error(`API health returned postgresReady=${health.postgresReady}`);
+        }
+      } else {
+        lastError = new Error(`HTTP ${response.status}`);
+      }
+    } catch (error) {
+      lastError = error;
+    }
+    await sleep(500);
+  }
+
+  throw new Error(`Timed out waiting for API health readiness at ${url}: ${lastError && lastError.message}`);
 }
 
 async function waitForJson(url, timeout, beforeRetry = () => {}) {
