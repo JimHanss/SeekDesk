@@ -15,6 +15,7 @@ import {
   type ChatProvider,
   type ChatRequest,
   type DailyActivityEvent,
+  type ModelRoute,
   type ToolCallRecord,
   type ToolModelUsageRecord
 } from "@seekdesk/shared";
@@ -89,18 +90,24 @@ export async function buildServer(options?: {
     }
 
     const chatRequest = parsed.data;
-    const providerSelection = createModelProvider();
     const sessionId = chatRequest.sessionId ?? `chat-${randomUUID()}`;
-    const toolRuntime =
-      chatRequest.mode === "daily_work"
-        ? createDailyWorkToolRuntime(dailyWorkRepository)
-        : undefined;
     const agentContext =
       chatRequest.mode === "daily_work"
         ? await createDailyWorkAgentContext({
             repository: dailyWorkRepository,
             chatRequest,
             sessionId
+          })
+        : undefined;
+    const providerSelection = createModelProvider({
+      ...(agentContext?.modelRoute ? { modelRoute: agentContext.modelRoute } : {})
+    });
+    const toolRuntime =
+      chatRequest.mode === "daily_work"
+        ? createDailyWorkToolRuntime(dailyWorkRepository, {
+            ...(agentContext?.allowedToolNames
+              ? { allowedToolNames: agentContext.allowedToolNames }
+              : {})
           })
         : undefined;
     await recordIncomingChatMessage({
@@ -241,7 +248,7 @@ function createAgentLoopInput(
   };
 }
 
-function createModelProvider(): {
+function createModelProvider(options: { modelRoute?: ModelRoute } = {}): {
   provider: ModelProvider;
   providerName: ChatProvider;
   modelName: string;
@@ -256,7 +263,12 @@ function createModelProvider(): {
     };
   }
 
-  const modelConfig = createDailyModelUsageSnapshot("daily_work").config;
+  const modelConfig = createDailyModelUsageSnapshot(
+    "daily_work",
+    [],
+    undefined,
+    options.modelRoute ? { selectedRoute: options.modelRoute } : {}
+  ).config;
 
   return {
     provider: new DeepSeekModelProvider({

@@ -2,14 +2,15 @@ import {
   ToolOrchestrator,
   createDefaultToolRegistry,
   createModelToolDefinitions,
-  type ToolDefinition,
-  type ToolRegistry
+  ToolRegistry,
+  type ToolDefinition
 } from "@seekdesk/agent";
 import {
   artifactTypeSchema,
   calendarListEventsInputSchema,
   calendarProposeEventPreviewInputSchema,
   dailyPersistArtifactInputSchema,
+  dailyWorkToolNameSchema,
   gmailCreateDraftPreviewInputSchema,
   gmailReadThreadInputSchema,
   gmailSearchThreadsInputSchema,
@@ -19,7 +20,8 @@ import {
   outlookReadMessageInputSchema,
   outlookSearchMessagesInputSchema,
   type DailyActivityEvent,
-  type DailyWorkArtifact
+  type DailyWorkArtifact,
+  type DailyWorkToolName
 } from "@seekdesk/shared";
 
 import type { DailyWorkRepository } from "../repositories/daily-work-repository.js";
@@ -44,8 +46,11 @@ import {
   searchOutlookMessages
 } from "./microsoft-connector-service.js";
 
-export function createDailyWorkToolRuntime(repository: DailyWorkRepository) {
-  const registry = createDefaultToolRegistry();
+export function createDailyWorkToolRuntime(
+  repository: DailyWorkRepository,
+  options: { allowedToolNames?: DailyWorkToolName[] } = {}
+) {
+  const registry = createDailyWorkToolRegistry(options.allowedToolNames);
 
   bindExecutor(registry, "gmail.search_threads", async ({ input }) => {
     const params = gmailSearchThreadsInputSchema.parse(input);
@@ -122,6 +127,25 @@ export function createDailyWorkToolRuntime(repository: DailyWorkRepository) {
   };
 }
 
+function createDailyWorkToolRegistry(allowedToolNames?: DailyWorkToolName[]) {
+  const baseRegistry = createDefaultToolRegistry();
+  if (!allowedToolNames) {
+    return baseRegistry;
+  }
+
+  const allowed = new Set(allowedToolNames);
+  return new ToolRegistry(
+    baseRegistry.list().filter((definition) => {
+      if (definition.mode !== "daily_work") {
+        return true;
+      }
+
+      const parsed = dailyWorkToolNameSchema.safeParse(definition.name);
+      return parsed.success && allowed.has(parsed.data);
+    })
+  );
+}
+
 function bindExecutor(
   registry: ToolRegistry,
   name: string,
@@ -129,7 +153,7 @@ function bindExecutor(
 ) {
   const definition = registry.get(name);
   if (!definition) {
-    throw new Error(`Daily-work tool "${name}" is not registered.`);
+    return;
   }
 
   definition.execute = execute;

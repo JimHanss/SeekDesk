@@ -20,6 +20,7 @@ import {
   type DailyWorkTemplate,
   type DailyWorkTemplateApplyPreviewResponse,
   type DailyWorkWorkflow,
+  type ModelRoute,
   type ToolModelUsageRecord,
   type DailyWorkWorkflowPreviewResponse,
   type WorkflowActionQueueItem,
@@ -1516,7 +1517,8 @@ export async function filterDailyWorkApprovalRequests(
 export function createDailyModelUsageSnapshot(
   mode: AppMode,
   records: ToolModelUsageRecord[] = [],
-  sessionId?: string
+  sessionId?: string,
+  options: { selectedRoute?: ModelRoute } = {}
 ): DailyModelUsageResponse {
   return createDailyModelUsageResponse({
     mode,
@@ -1537,7 +1539,7 @@ export function createDailyModelUsageSnapshot(
     baseUrl: process.env.DEEPSEEK_BASE_URL,
     fastModel: process.env.DEEPSEEK_MODEL_FAST,
     proModel: process.env.DEEPSEEK_MODEL_PRO,
-    selectedRoute: process.env.DEEPSEEK_MODEL_ROUTE,
+    selectedRoute: options.selectedRoute ?? process.env.DEEPSEEK_MODEL_ROUTE,
     thinkingMode: process.env.DEEPSEEK_THINKING_MODE,
     streamUsageEnabled:
       process.env.DEEPSEEK_STREAM_USAGE_ENABLED ??

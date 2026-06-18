@@ -1,15 +1,19 @@
-import type {
-  ChatContext,
-  ChatRequest,
-  DailyApprovalRequest,
-  DailyContextDocument,
-  DailyContextItem,
-  DailyWorkArtifact,
-  DailyWorkConnector,
-  DailyWorkSessionDetail,
-  DailyWorkWorkflow,
-  ToolCallRecord,
-  ToolModelUsageRecord
+import {
+  dailyWorkToolNameSchema,
+  type ChatContext,
+  type ChatRequest,
+  type DailyApprovalRequest,
+  type DailyContextDocument,
+  type DailyContextItem,
+  type DailyWorkArtifact,
+  type DailyWorkConnector,
+  type DailyWorkSessionDetail,
+  type DailyWorkTemplate,
+  type DailyWorkToolName,
+  type DailyWorkWorkflow,
+  type ModelRoute,
+  type ToolCallRecord,
+  type ToolModelUsageRecord
 } from "@seekdesk/shared";
 
 import type { DailyWorkRepository } from "../repositories/daily-work-repository.js";
@@ -19,6 +23,9 @@ import { getMicrosoftConnectionStatus } from "./microsoft-connector-service.js";
 export interface DailyWorkAgentContext {
   context: ChatContext;
   summaryLines: string[];
+  template?: DailyWorkTemplate;
+  modelRoute?: ModelRoute;
+  allowedToolNames?: DailyWorkToolName[];
 }
 
 export async function createDailyWorkAgentContext(input: {
@@ -29,6 +36,7 @@ export async function createDailyWorkAgentContext(input: {
 }): Promise<DailyWorkAgentContext> {
   const context = normalizeChatContext(input.chatRequest.context);
   const [
+    templates,
     contextItems,
     contextDocuments,
     artifacts,
@@ -41,6 +49,7 @@ export async function createDailyWorkAgentContext(input: {
     sessionToolCalls,
     sessionModelUsageRecords
   ] = await Promise.all([
+    input.repository.listTemplates(),
     input.repository.listContextItems(),
     input.repository.listContextDocuments(),
     input.repository.listArtifacts(),
@@ -59,27 +68,142 @@ export async function createDailyWorkAgentContext(input: {
   const activeSession = sessionDetails.find(
     (session) => session.id === input.sessionId
   );
+  const activeTemplate = selectActiveTemplate(
+    templates,
+    input.chatRequest.templateId
+  );
+  const allowedToolNames = activeTemplate
+    ? normalizeAllowedToolNames(activeTemplate.allowedToolNames)
+    : undefined;
+  const contextPolicy = activeTemplate?.contextPolicy;
 
   return {
     context,
+    ...(activeTemplate ? { template: activeTemplate } : {}),
+    ...(activeTemplate ? { modelRoute: activeTemplate.defaultModelRoute } : {}),
+    ...(allowedToolNames ? { allowedToolNames } : {}),
     summaryLines: [
       "Daily-work repository context snapshot:",
+      ...summarizeTemplateRuntime(activeTemplate, input.chatRequest.templateId),
       ...summarizeTemporalContext(context, input.now ?? new Date()),
-      ...summarizeSession(activeSession),
-      ...summarizeToolTrace(sessionToolCalls),
-      ...summarizeModelUsage(sessionModelUsageRecords),
-      ...summarizeContextItems(contextItems, context.contextItemIds),
-      ...summarizeContextDocuments(contextDocuments, context.contextItemIds),
-      ...summarizeArtifacts(artifacts, context.artifactIds),
+      ...(contextPolicy?.includeRecentSession === false
+        ? ["Session context: disabled by selected template context policy."]
+        : [
+            ...summarizeSession(activeSession),
+            ...summarizeToolTrace(sessionToolCalls),
+            ...summarizeModelUsage(sessionModelUsageRecords)
+          ]),
+      ...(contextPolicy?.includeSelectedContext === false
+        ? [
+            "Context items: disabled by selected template context policy.",
+            "Uploaded context documents: disabled by selected template context policy."
+          ]
+        : [
+            ...summarizeContextItems(contextItems, context.contextItemIds),
+            ...summarizeContextDocuments(
+              contextDocuments,
+              context.contextItemIds,
+              contextPolicy?.maxContextTokens
+            )
+          ]),
+      ...(contextPolicy?.includeArtifacts === false
+        ? ["Artifacts: disabled by selected template context policy."]
+        : summarizeArtifacts(artifacts, context.artifactIds)),
       ...summarizeApprovals(approvalRequests, context.approvalRequestIds),
       ...summarizeConnectors(connectors, context.connectorIds),
       ...summarizeGoogleAuthorization(googleStatus),
       ...summarizeMicrosoftAuthorization(microsoftStatus),
       ...summarizeWorkflows(workflows, context.workflowIds),
+      ...summarizeAllowedTools(allowedToolNames),
       "Tool planning hint: use gmail.search_threads before gmail.read_thread for Google mail; use outlook.search_messages before outlook.read_message for Outlook mail; use calendar.list_events or outlook.calendar.list_events for schedule or time-window questions; use daily.persist_artifact for reviewable local work artifacts.",
       "Tool execution boundary: Gmail, Google Calendar, Outlook Mail, and Outlook Calendar read tools may use authorized connectors. Draft email and calendar event tools only create local payload previews; they must not send email or insert events."
     ]
   };
+}
+
+function selectActiveTemplate(
+  templates: DailyWorkTemplate[],
+  templateId: string | undefined
+) {
+  if (!templateId) {
+    return undefined;
+  }
+
+  return templates.find(
+    (template) =>
+      template.id === templateId &&
+      template.mode === "daily_work" &&
+      template.status === "active" &&
+      template.enabled !== false
+  );
+}
+
+function normalizeAllowedToolNames(values: string[]) {
+  const allowed: DailyWorkToolName[] = [];
+
+  for (const value of values) {
+    const parsed = dailyWorkToolNameSchema.safeParse(value);
+    if (parsed.success && !allowed.includes(parsed.data)) {
+      allowed.push(parsed.data);
+    }
+  }
+
+  return allowed;
+}
+
+function summarizeTemplateRuntime(
+  template: DailyWorkTemplate | undefined,
+  requestedTemplateId: string | undefined
+) {
+  if (!requestedTemplateId) {
+    return [
+      "Template runtime: no template selected; default daily_work orchestration applies."
+    ];
+  }
+
+  if (!template) {
+    return [
+      `Template runtime: requested template ${requestedTemplateId} was not found or is not active; default daily_work orchestration applies.`
+    ];
+  }
+
+  const lines = [
+    `Template runtime: selected=${template.id}; title=${template.title}; category=${template.category}; version=${template.version}; modelRoute=${template.defaultModelRoute}.`,
+    `Template base prompt: ${truncateText(template.prompt, 800)}`,
+    `Template context policy: maxContextTokens=${template.contextPolicy.maxContextTokens}; includeSelectedContext=${template.contextPolicy.includeSelectedContext}; includeRecentSession=${template.contextPolicy.includeRecentSession}; includeArtifacts=${template.contextPolicy.includeArtifacts}.`
+  ];
+
+  if (template.systemPrompt.trim()) {
+    lines.push(
+      `Template system instruction: ${truncateText(template.systemPrompt, 1200)}`
+    );
+  }
+
+  if (template.promptTemplate?.trim()) {
+    lines.push(
+      `Template prompt template: ${truncateText(template.promptTemplate, 1200)}`
+    );
+  }
+
+  return lines;
+}
+
+function summarizeAllowedTools(allowedToolNames: DailyWorkToolName[] | undefined) {
+  if (!allowedToolNames) {
+    return [
+      "Template tool policy: no template-specific whitelist; all daily_work preview tools remain available."
+    ];
+  }
+
+  if (!allowedToolNames.length) {
+    return [
+      "Template tool policy: selected template allows no tools; respond without tool calls."
+    ];
+  }
+
+  return [
+    `Template tool policy: only these daily_work tools may be called: ${allowedToolNames.join(", ")}.`
+  ];
 }
 
 function normalizeChatContext(context: ChatContext | undefined): ChatContext {
