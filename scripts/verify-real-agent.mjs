@@ -3,9 +3,13 @@
 const args = parseArgs(process.argv.slice(2));
 const baseUrl = trimTrailingSlash(args.baseUrl ?? "http://127.0.0.1:4000");
 const requireGoogle = args.requireGoogle ?? false;
+const requireMicrosoft = args.requireMicrosoft ?? false;
 const coreOnly = args.coreOnly ?? false;
 const gmailQuery = args.gmailQuery ?? "newer_than:30d";
 const calendarId = args.calendarId ?? "primary";
+const outlookMessageQuery = args.outlookMessageQuery ?? "";
+const outlookCalendarId = args.outlookCalendarId ?? "primary";
+const outlookTimeZone = args.outlookTimeZone ?? "UTC";
 const now = new Date();
 const timeMin = now.toISOString();
 const timeMax = new Date(now.getTime() + 7 * 24 * 60 * 60 * 1000).toISOString();
@@ -15,8 +19,10 @@ const summary = {
   mode: coreOnly ? "core_only" : "full",
   health: null,
   google: null,
+  microsoft: null,
   artifact: null,
-  googleTools: null
+  googleTools: null,
+  microsoftTools: null
 };
 
 try {
@@ -33,36 +39,11 @@ try {
   if (coreOnly) {
     summary.google = { status: "skipped", reason: "core_only" };
     summary.googleTools = { status: "skipped", reason: "core_only" };
+    summary.microsoft = { status: "skipped", reason: "core_only" };
+    summary.microsoftTools = { status: "skipped", reason: "core_only" };
   } else {
-    summary.google = await readJson("/api/connectors/google/status");
-    const missingScopes = normalizeStringList(summary.google?.missingScopes);
-
-    if (summary.google?.connected && missingScopes.length === 0) {
-      summary.googleTools = await verifyGoogleReadTools();
-    } else if (summary.google?.connected && missingScopes.length > 0) {
-      if (requireGoogle) {
-        throw new Error(
-          `Google connector is connected but missing required scopes: ${missingScopes.join(", ")}. Reopen OAuth consent.`
-        );
-      }
-      summary.googleTools = {
-        status: "skipped",
-        reason: "google_connector_missing_scopes",
-        missingScopes
-      };
-    } else if (requireGoogle) {
-      const missing = Array.isArray(summary.google?.missingConfig)
-        ? ` Missing config: ${summary.google.missingConfig.join(", ")}.`
-        : "";
-      throw new Error(`Google connector is not connected.${missing}`);
-    } else {
-      summary.googleTools = {
-        status: "skipped",
-        reason: "google_connector_not_connected",
-        missingConfig: summary.google?.missingConfig ?? [],
-        missingScopes
-      };
-    }
+    await verifyGoogleConnectorIfReady();
+    await verifyMicrosoftConnectorIfReady();
   }
 
   console.log(JSON.stringify({ status: "passed", ...summary }, null, 2));
@@ -79,6 +60,71 @@ try {
     )
   );
   process.exit(1);
+}
+
+
+async function verifyGoogleConnectorIfReady() {
+  summary.google = await readJson("/api/connectors/google/status");
+  const missingScopes = normalizeStringList(summary.google?.missingScopes);
+
+  if (summary.google?.connected && missingScopes.length === 0) {
+    summary.googleTools = await verifyGoogleReadTools();
+  } else if (summary.google?.connected && missingScopes.length > 0) {
+    if (requireGoogle) {
+      throw new Error(
+        `Google connector is connected but missing required scopes: ${missingScopes.join(", ")}. Reopen OAuth consent.`
+      );
+    }
+    summary.googleTools = {
+      status: "skipped",
+      reason: "google_connector_missing_scopes",
+      missingScopes
+    };
+  } else if (requireGoogle) {
+    const missing = Array.isArray(summary.google?.missingConfig)
+      ? ` Missing config: ${summary.google.missingConfig.join(", ")}.`
+      : "";
+    throw new Error(`Google connector is not connected.${missing}`);
+  } else {
+    summary.googleTools = {
+      status: "skipped",
+      reason: "google_connector_not_connected",
+      missingConfig: summary.google?.missingConfig ?? [],
+      missingScopes
+    };
+  }
+}
+
+async function verifyMicrosoftConnectorIfReady() {
+  summary.microsoft = await readJson("/api/connectors/microsoft/status");
+  const missingScopes = normalizeStringList(summary.microsoft?.missingScopes);
+
+  if (summary.microsoft?.connected && missingScopes.length === 0) {
+    summary.microsoftTools = await verifyMicrosoftReadTools();
+  } else if (summary.microsoft?.connected && missingScopes.length > 0) {
+    if (requireMicrosoft) {
+      throw new Error(
+        `Microsoft connector is connected but missing required scopes: ${missingScopes.join(", ")}. Reopen OAuth consent.`
+      );
+    }
+    summary.microsoftTools = {
+      status: "skipped",
+      reason: "microsoft_connector_missing_scopes",
+      missingScopes
+    };
+  } else if (requireMicrosoft) {
+    const missing = Array.isArray(summary.microsoft?.missingConfig)
+      ? ` Missing config: ${summary.microsoft.missingConfig.join(", ")}.`
+      : "";
+    throw new Error(`Microsoft connector is not connected.${missing}`);
+  } else {
+    summary.microsoftTools = {
+      status: "skipped",
+      reason: "microsoft_connector_not_connected",
+      missingConfig: summary.microsoft?.missingConfig ?? [],
+      missingScopes
+    };
+  }
 }
 
 async function verifyArtifactTool(options = {}) {
@@ -245,6 +291,110 @@ async function verifyGoogleReadTools() {
   };
 }
 
+
+async function verifyMicrosoftReadTools() {
+  const messageSearchClause = outlookMessageQuery
+    ? `with query "${outlookMessageQuery}" and maxResults 1`
+    : "with maxResults 1 and no query";
+  const response = await sendChat({
+    prompt:
+      `Use the available preview-only Microsoft Outlook tools. Call outlook.search_messages ${messageSearchClause}, then call outlook.calendar.list_events from calendar "${outlookCalendarId}" between ${timeMin} and ${timeMax} with maxResults 3 and timeZone "${outlookTimeZone}". If Outlook message search returns a message id, call outlook.read_message for that first message id before answering. Return only a concise summary of what the tools found. Do not send email, create Outlook drafts externally, or create calendar events.`,
+    context: {
+      workspaceId: "workspace-seekdesk",
+      connectorIds: ["microsoft"],
+      locale: "zh-CN",
+      timezone: "Asia/Shanghai"
+    }
+  });
+  const trace = await readTrace(response.sessionId);
+  const toolCalls = trace.toolCalls ?? [];
+  const messageTool = toolCalls.find(
+    (tool) =>
+      tool.name === "outlook.search_messages" && tool.status === "completed"
+  );
+  const calendarTool = toolCalls.find(
+    (tool) =>
+      tool.name === "outlook.calendar.list_events" && tool.status === "completed"
+  );
+
+  assert(
+    response.provider === "deepseek",
+    `Expected DeepSeek provider for Microsoft read verification, received ${response.provider ?? "unknown"}.`
+  );
+  assert(messageTool, "DeepSeek did not complete outlook.search_messages.");
+  assert(calendarTool, "DeepSeek did not complete outlook.calendar.list_events.");
+  assertPreviewOnlyTool(messageTool, {
+    provider: "outlook",
+    expectedOutputKeys: ["messages"]
+  });
+  assertPreviewOnlyTool(calendarTool, {
+    provider: "outlook_calendar",
+    expectedOutputKeys: ["events"]
+  });
+  assert(
+    trace.modelUsageSummary?.recordCount > 0,
+    "Model usage was not recorded for the Microsoft read verification."
+  );
+  const messageId = findFirstOutlookMessageId(messageTool.outputJson);
+  const readMessageTool = messageId
+    ? toolCalls.find(
+        (tool) =>
+          tool.name === "outlook.read_message" &&
+          tool.status === "completed" &&
+          tool.inputJson?.messageId === messageId
+      )
+    : null;
+
+  if (messageId) {
+    assert(
+      readMessageTool,
+      `DeepSeek found Outlook message ${messageId} but did not complete outlook.read_message for it.`
+    );
+    assertPreviewOnlyTool(readMessageTool, {
+      provider: "outlook",
+      expectedOutputKeys: ["message"]
+    });
+  }
+
+  const [messagePersistence, calendarPersistence, readMessagePersistence] =
+    await Promise.all([
+      verifyToolPersistence({
+        sessionId: response.sessionId,
+        trace,
+        toolCall: messageTool,
+        expectedOutputKeys: ["messages"]
+      }),
+      verifyToolPersistence({
+        sessionId: response.sessionId,
+        trace,
+        toolCall: calendarTool,
+        expectedOutputKeys: ["events"]
+      }),
+      readMessageTool
+        ? verifyToolPersistence({
+            sessionId: response.sessionId,
+            trace,
+            toolCall: readMessageTool,
+            expectedOutputKeys: ["message"]
+          })
+        : Promise.resolve(null)
+    ]);
+
+  return {
+    status: "passed",
+    provider: response.provider,
+    sessionId: response.sessionId,
+    responsePreview: response.text.slice(0, 400),
+    toolCalls: summarizeToolCalls(toolCalls),
+    usageSummary: trace.modelUsageSummary,
+    persistence: {
+      outlookMessages: messagePersistence,
+      outlookCalendar: calendarPersistence,
+      outlookMessage: readMessagePersistence
+    }
+  };
+}
+
 function assertPreviewOnlyTool(toolCall, input) {
   assert(
     toolCall.previewOnly === true,
@@ -280,6 +430,15 @@ function findFirstGmailThreadId(outputJson) {
   );
 
   return firstThread?.id ?? null;
+}
+
+function findFirstOutlookMessageId(outputJson) {
+  const messages = Array.isArray(outputJson?.messages) ? outputJson.messages : [];
+  const firstMessage = messages.find(
+    (message) => message && typeof message.id === "string" && message.id.trim()
+  );
+
+  return firstMessage?.id ?? null;
 }
 
 async function verifyToolPersistence(input) {
@@ -457,6 +616,15 @@ function summarizeToolReference(outputJson) {
     return firstThread ? `gmail-thread:${firstThread.id}` : "gmail-threads:0";
   }
 
+  if (Array.isArray(outputJson.messages)) {
+    const firstMessage = outputJson.messages.find(
+      (message) => message && typeof message.id === "string" && message.id.trim()
+    );
+    return firstMessage
+      ? `outlook-message:${firstMessage.id}`
+      : "outlook-messages:0";
+  }
+
   if (Array.isArray(outputJson.events)) {
     const firstEvent = outputJson.events.find(
       (event) => event && typeof event.id === "string" && event.id.trim()
@@ -483,6 +651,11 @@ function parseArgs(argv) {
       continue;
     }
 
+    if (arg === "--require-microsoft") {
+      parsed.requireMicrosoft = true;
+      continue;
+    }
+
     if (arg === "--base-url") {
       parsed.baseUrl = readValue(argv, index, arg);
       index += 1;
@@ -497,6 +670,24 @@ function parseArgs(argv) {
 
     if (arg === "--calendar-id") {
       parsed.calendarId = readValue(argv, index, arg);
+      index += 1;
+      continue;
+    }
+
+    if (arg === "--outlook-message-query") {
+      parsed.outlookMessageQuery = readValue(argv, index, arg);
+      index += 1;
+      continue;
+    }
+
+    if (arg === "--outlook-calendar-id") {
+      parsed.outlookCalendarId = readValue(argv, index, arg);
+      index += 1;
+      continue;
+    }
+
+    if (arg === "--outlook-time-zone") {
+      parsed.outlookTimeZone = readValue(argv, index, arg);
       index += 1;
       continue;
     }
@@ -527,9 +718,15 @@ function printHelp() {
 Options:
   --base-url <url>       API base URL. Default: http://127.0.0.1:4000
   --core-only           Verify only DeepSeek, Postgres, daily.persist_artifact, and trace persistence.
-  --require-google      Fail if Google is not connected with all required scopes.
-  --gmail-query <query> Gmail query for the real read verification.
-  --calendar-id <id>    Calendar id for event listing. Default: primary
+  --require-google          Fail if Google is not connected with all required scopes.
+  --require-microsoft       Fail if Microsoft is not connected with all required scopes.
+  --gmail-query <query>     Gmail query for the real read verification.
+  --calendar-id <id>        Google Calendar id for event listing. Default: primary
+  --outlook-message-query <query>
+                            Optional Outlook message search query. Default: no query.
+  --outlook-calendar-id <id>
+                            Outlook Calendar id for event listing. Default: primary
+  --outlook-time-zone <tz>  Outlook Calendar timezone preference. Default: UTC
 `);
 }
 
