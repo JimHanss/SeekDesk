@@ -24,6 +24,11 @@ try {
     requireGoogleConnected:
       !Boolean(args.coreOnly) &&
       (Boolean(args.requireGoogleConnected) || Boolean(args.requireGoogle)),
+    requireMicrosoft: Boolean(args.requireMicrosoft),
+    requireMicrosoftConfigured: Boolean(args.requireMicrosoftConfigured),
+    requireMicrosoftConnected:
+      !Boolean(args.coreOnly) &&
+      (Boolean(args.requireMicrosoftConnected) || Boolean(args.requireMicrosoft)),
     showAuthorizationUrl: Boolean(args.showAuthorizationUrl),
     keepRunning: Boolean(args.keepRunning)
   });
@@ -37,6 +42,7 @@ try {
         port,
         coreOnly: Boolean(args.coreOnly),
         requireGoogle: Boolean(args.requireGoogle),
+        requireMicrosoft: Boolean(args.requireMicrosoft),
         skipSecrets: Boolean(args.skipSecrets),
         keepRunning: Boolean(args.keepRunning)
       },
@@ -94,6 +100,19 @@ function createRemoteScript(input) {
     .filter(Boolean)
     .map(shellQuote)
     .join(" ");
+  const microsoftReadinessArgs = [
+    "run",
+    "verify:microsoft-oauth",
+    "--",
+    "--base-url",
+    baseUrl,
+    input.requireMicrosoftConfigured ? "--require-configured" : null,
+    input.requireMicrosoftConnected ? "--require-connected" : null,
+    input.showAuthorizationUrl ? "--show-authorization-url" : null
+  ]
+    .filter(Boolean)
+    .map(shellQuote)
+    .join(" ");
   const realAgentArgs = [
     "run",
     "verify:real-agent",
@@ -101,7 +120,8 @@ function createRemoteScript(input) {
     "--base-url",
     baseUrl,
     input.coreOnly ? "--core-only" : null,
-    input.requireGoogle ? "--require-google" : null
+    input.requireGoogle ? "--require-google" : null,
+    input.requireMicrosoft ? "--require-microsoft" : null
   ]
     .filter(Boolean)
     .map(shellQuote)
@@ -119,6 +139,10 @@ function createRemoteScript(input) {
     ? `echo '{"step":"google-oauth","status":"skipped","reason":"core_only"}'`
     : `echo '{"step":"google-oauth","status":"checking"}'
 npm ${readinessArgs}`;
+  const microsoftReadinessBlock = input.coreOnly
+    ? `echo '{"step":"microsoft-oauth","status":"skipped","reason":"core_only"}'`
+    : `echo '{"step":"microsoft-oauth","status":"checking"}'
+npm ${microsoftReadinessArgs}`;
   const keepRunningNote = input.keepRunning
     ? `echo '{"status":"api_kept_running","baseUrl":"${baseUrl}","pidFile":"${pidFile}","logFile":"${logFile}"}'`
     : "";
@@ -174,6 +198,7 @@ for attempt in $(seq 1 30); do
 done
 
 ${googleReadinessBlock}
+${microsoftReadinessBlock}
 
 echo '{"step":"real-agent","status":"checking"}'
 npm ${realAgentArgs}
@@ -242,6 +267,21 @@ function parseArgs(argv) {
       continue;
     }
 
+    if (arg === "--require-microsoft") {
+      parsed.requireMicrosoft = true;
+      continue;
+    }
+
+    if (arg === "--require-microsoft-configured") {
+      parsed.requireMicrosoftConfigured = true;
+      continue;
+    }
+
+    if (arg === "--require-microsoft-connected") {
+      parsed.requireMicrosoftConnected = true;
+      continue;
+    }
+
     if (arg === "--show-authorization-url") {
       parsed.showAuthorizationUrl = true;
       continue;
@@ -292,7 +332,7 @@ Runs the remote SeekDesk real-agent verification flow over SSH:
   1. run npm run verify:secrets unless --skip-secrets is set
   2. optionally run npm run db:migrate
   3. start a temporary API with remote .env.postgres + .env.local
-  4. run npm run verify:google-oauth unless --core-only is set
+  4. run OAuth readiness checks unless --core-only is set
   5. run npm run verify:real-agent
   6. clean up the temporary API unless --keep-running is set
 
@@ -307,13 +347,17 @@ Options:
   --require-google               Also require Gmail/Calendar real read tools and complete Google scopes.
   --require-google-configured    Fail unless Google OAuth env config is complete.
   --require-google-connected     Fail unless a Google account is connected with all required scopes.
-  --show-authorization-url       Print full Google OAuth URL from readiness.
+  --require-microsoft            Also require Outlook Mail/Calendar real read tools and complete Microsoft scopes.
+  --require-microsoft-configured Fail unless Microsoft OAuth env config is complete.
+  --require-microsoft-connected  Fail unless a Microsoft account is connected with all required scopes.
+  --show-authorization-url       Print full OAuth URL from readiness.
   --keep-running                 Leave the remote API running for browser OAuth.
 
 Remote OAuth note:
   The temporary API uses --port, default 45100. Before browser OAuth, sync the
-  remote Google redirect URI to the same port, then forward it locally:
+  remote provider redirect URI to the same port, then forward it locally:
     npm run sync:remote-google-oauth -- --host jim-mac --redirect-uri http://127.0.0.1:45100/api/connectors/google/oauth/callback
+    npm run sync:remote-microsoft-oauth -- --host jim-mac --redirect-uri http://127.0.0.1:45100/api/connectors/microsoft/oauth/callback
     ssh -L 3000:127.0.0.1:3000 -L 45100:127.0.0.1:45100 jim-mac
 `);
 }

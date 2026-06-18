@@ -266,7 +266,7 @@ function createNextStep(input) {
   }
 
   if (input.focusMicrosoft && !input.microsoftOAuthEnvReady) {
-    return "Add MICROSOFT_REDIRECT_URI, MICROSOFT_TOKEN_ENCRYPTION_KEY, and MICROSOFT_OAUTH_STATE_SECRET to ignored env files before starting Outlook authorization.";
+    return "Run npm run configure:microsoft-oauth to generate redirect/encryption/state settings without printing secrets.";
   }
 
   if (!input.artifactChainReady) {
@@ -335,9 +335,9 @@ function createMicrosoftOAuthSetup(input) {
       "Put MICROSOFT_CLIENT_ID and MICROSOFT_CLIENT_SECRET only in ignored .env.local or process env; do not commit them."
     ],
     nextCommands: [
-      "Start the API with Microsoft env configured.",
-      "Open /api/connectors/microsoft/oauth/start through the SeekDesk connector panel.",
-      "Run browser smoke after the callback succeeds."
+      "npm run configure:microsoft-oauth",
+      "npm run prepare:remote-microsoft-oauth -- --host jim-mac",
+      "npm run verify:remote-real-agent -- --require-microsoft"
     ]
   };
 }

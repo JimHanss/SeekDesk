@@ -250,6 +250,44 @@ Required delegated scopes:
 - `Mail.Read`
 - `Calendars.Read`
 
+To safely write local Microsoft OAuth configuration without committing secrets,
+add the client id/secret to the ignored `.env.local` file and run:
+
+```bash
+npm run configure:microsoft-oauth
+```
+
+The script reads `MICROSOFT_CLIENT_ID` and `MICROSOFT_CLIENT_SECRET` from
+`.env.local` or the current process environment, updates `.env.local`,
+generates missing encryption/state secrets, and does not print secret values.
+
+When the Microsoft OAuth client id/secret are available locally and the remote
+checkout is reachable over SSH, sync them to the remote ignored env file without
+printing secret values:
+
+```bash
+npm run sync:remote-microsoft-oauth -- --host jim-mac
+```
+
+For the usual SSH browser-auth setup, prefer the one-shot preparation command:
+
+```bash
+npm run prepare:remote-microsoft-oauth
+```
+
+It validates local `MICROSOFT_CLIENT_ID`/`MICROSOFT_CLIENT_SECRET`, syncs them
+to the remote ignored `.env.local`, starts the remote API with
+`--keep-running`, prints the Microsoft authorization URL, and prints the SSH
+tunnel command for the browser callback.
+
+To check a running API without exposing local secrets, run:
+
+```bash
+npm run verify:microsoft-oauth
+npm run verify:microsoft-oauth -- --require-configured --show-authorization-url
+npm run verify:microsoft-oauth -- --require-connected
+```
+
 The frontend opens Microsoft authorization in a separate window just like Google
 authorization. The callback exchanges the authorization code server-side, stores
 encrypted tokens through the repository, posts a non-secret completion message to
@@ -281,19 +319,21 @@ npm run verify:remote-real-agent
 
 That command runs the remote secret hygiene check, runs the remote migration,
 starts a temporary API using the remote `.env.postgres` and `.env.local`, runs
-Google readiness, runs the real-agent verifier, and then cleans up the temporary
-API. To keep the remote API running while completing browser OAuth, use:
+Google and Microsoft readiness checks, runs the real-agent verifier, and then
+cleans up the temporary API. To keep the remote API running while completing
+browser OAuth, use:
 
 ```bash
 npm run verify:remote-real-agent -- --keep-running --show-authorization-url
 ```
 
 That command starts the temporary remote API on port `45100` by default. For a
-browser-based Google OAuth callback, make the redirect URI match that port before
-syncing remote Google env:
+browser-based OAuth callback, make the redirect URI match that port before
+syncing remote provider env:
 
 ```bash
 npm run sync:remote-google-oauth -- --host jim-mac --redirect-uri http://127.0.0.1:45100/api/connectors/google/oauth/callback
+npm run sync:remote-microsoft-oauth -- --host jim-mac --redirect-uri http://127.0.0.1:45100/api/connectors/microsoft/oauth/callback
 ```
 
 Then forward the web and API ports from the local machine to `jim-mac` before
@@ -309,8 +349,14 @@ When Google is connected, the final strict gate is:
 npm run verify:remote-real-agent -- --require-google
 ```
 
-The strict remote gate also fails fast if the connected account lacks required
-Gmail/Calendar scopes.
+When Microsoft is connected, use the Outlook strict gate:
+
+```bash
+npm run verify:remote-real-agent -- --require-microsoft
+```
+
+The strict remote gates fail fast if the connected account lacks required
+Gmail/Calendar or Outlook Mail/Calendar scopes.
 
 ## Real-Agent Verification
 
@@ -333,9 +379,19 @@ the provider-specific result payload, and persists plan/result activity records:
 npm run verify:real-agent -- --require-google
 ```
 
-If Google is not connected and `--require-google` is omitted, the script passes
-the DeepSeek/Postgres/artifact checks and reports the Google read verification as
-skipped with the missing setup fields.
+When Microsoft is connected with complete scopes, the script asks DeepSeek to
+autonomously plan `outlook.search_messages` and
+`outlook.calendar.list_events`. If Outlook message search returns a message id,
+the verifier also expects DeepSeek to continue with `outlook.read_message` for
+that first message. The strict command is:
+
+```bash
+npm run verify:real-agent -- --require-microsoft
+```
+
+If Google or Microsoft is not connected and the matching `--require-*` flag is
+omitted, the script passes the DeepSeek/Postgres/artifact checks and reports the
+provider read verification as skipped with the missing setup fields.
 
 ## DeepSeek Streaming
 
