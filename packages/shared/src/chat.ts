@@ -26,6 +26,7 @@ export const chatRequestSchema = z
   .object({
     mode: appModeSchema.default("daily_work"),
     sessionId: z.string().trim().min(1).optional(),
+    templateId: z.string().trim().min(1).optional(),
     prompt: z.string().trim().min(1).optional(),
     messages: z.array(chatMessageSchema).optional(),
     context: chatContextSchema.optional()

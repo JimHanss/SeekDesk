@@ -62,6 +62,7 @@ interface UseDailyWorkActionsOptions {
   setSelectedConnectorId: Dispatch<SetStateAction<string | null>>;
   setSelectedContextId: Dispatch<SetStateAction<string | null>>;
   setSelectedSessionHistoryId: Dispatch<SetStateAction<string | null>>;
+  setSelectedTemplateId: Dispatch<SetStateAction<string | null>>;
   setSelectedWorkflowActionId: Dispatch<SetStateAction<string | null>>;
   setSessionHistoryPanel: Dispatch<SetStateAction<SessionHistoryPanelState>>;
   setTemplatePanel: Dispatch<SetStateAction<TemplatePanelState>>;
@@ -84,6 +85,7 @@ export function useDailyWorkActions({
   setSelectedConnectorId,
   setSelectedContextId,
   setSelectedSessionHistoryId,
+  setSelectedTemplateId,
   setSelectedWorkflowActionId,
   setSessionHistoryPanel,
   setTemplatePanel,
@@ -93,6 +95,8 @@ export function useDailyWorkActions({
     if (!template.enabled) {
       return;
     }
+
+    setSelectedTemplateId(template.id);
 
     const pendingPreview = createLocalTemplatePreviewState(
       template,

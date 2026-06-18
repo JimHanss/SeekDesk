@@ -19,13 +19,24 @@ import type {
   ChatStatus
 } from "../../types";
 
+interface ChatRequestContext {
+  templateId?: string | null;
+  contextItemIds?: string[];
+  artifactIds?: string[];
+  approvalRequestIds?: string[];
+  connectorIds?: string[];
+  workflowIds?: string[];
+}
+
 interface UseChatControllerOptions {
   apiBaseUrl: string;
+  requestContext?: ChatRequestContext;
   onActivityChanged?: () => Promise<void> | void;
 }
 
 export function useChatController({
   apiBaseUrl,
+  requestContext,
   onActivityChanged
 }: UseChatControllerOptions) {
   const [messages, setMessages] = useState<ChatMessage[]>(initialMessages);
@@ -95,6 +106,7 @@ export function useChatController({
     setMessages((current) => [...current, userMessage, assistantMessage]);
 
     try {
+      const requestContextPayload = createRequestContextPayload(requestContext);
       const response = await fetch(endpoint, {
         method: "POST",
         headers: {
@@ -103,10 +115,12 @@ export function useChatController({
         body: JSON.stringify({
           mode: activeMode,
           ...(activeSessionId ? { sessionId: activeSessionId } : {}),
+          ...(requestContext?.templateId ? { templateId: requestContext.templateId } : {}),
           messages: nextMessages.map((message) => ({
             role: message.role,
             content: message.content
-          }))
+          })),
+          ...(requestContextPayload ? { context: requestContextPayload } : {})
         }),
         signal: controller.signal
       });
@@ -283,4 +297,48 @@ export function useChatController({
     setInput,
     status
   };
+}
+
+
+function createRequestContextPayload(context: ChatRequestContext | undefined) {
+  const locale = typeof navigator !== "undefined" ? navigator.language : undefined;
+  const timezone =
+    typeof Intl !== "undefined"
+      ? Intl.DateTimeFormat().resolvedOptions().timeZone
+      : undefined;
+  const payload: Record<string, unknown> = {};
+
+  assignIds(payload, "contextItemIds", context?.contextItemIds);
+  assignIds(payload, "artifactIds", context?.artifactIds);
+  assignIds(payload, "approvalRequestIds", context?.approvalRequestIds);
+  assignIds(payload, "connectorIds", context?.connectorIds);
+  assignIds(payload, "workflowIds", context?.workflowIds);
+
+  if (locale) {
+    payload["locale"] = locale;
+  }
+
+  if (timezone) {
+    payload["timezone"] = timezone;
+  }
+
+  return Object.keys(payload).length ? payload : undefined;
+}
+
+function assignIds(
+  payload: Record<string, unknown>,
+  key:
+    | "contextItemIds"
+    | "artifactIds"
+    | "approvalRequestIds"
+    | "connectorIds"
+    | "workflowIds",
+  values: string[] | undefined
+) {
+  const ids = Array.from(
+    new Set(values?.map((value) => value.trim()).filter(Boolean) ?? [])
+  );
+  if (ids.length) {
+    payload[key] = ids;
+  }
 }

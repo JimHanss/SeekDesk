@@ -123,6 +123,13 @@ export interface TemplateItem {
   artifactType: string;
   tags: string[];
   enabled: boolean;
+  systemPrompt?: string;
+  promptTemplate?: string;
+  defaultModelRoute?: ModelRouteMode;
+  allowedToolNames?: string[];
+  contextPolicy?: DailyWorkTemplateDto["contextPolicy"];
+  status?: string;
+  version?: number;
   icon: LucideIcon;
 }
 

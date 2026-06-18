@@ -94,7 +94,10 @@ export default function Page() {
     modelRouteMode,
     selectedArtifactId,
     selectedContextId,
+    selectedConnectorId,
     selectedSessionHistoryId,
+    selectedTemplateId,
+    selectedWorkflowActionId,
     sessionHistoryFilter,
     setArtifactFilter,
     setConnectorFilter,
@@ -104,6 +107,7 @@ export default function Page() {
     setSelectedConnectorId,
     setSelectedContextId,
     setSelectedSessionHistoryId,
+    setSelectedTemplateId,
     setSelectedWorkflowActionId,
     setSessionHistoryFilter,
     setWorkflowActionFilter,
@@ -136,7 +140,17 @@ export default function Page() {
     setError,
     setInput,
     status
-  } = useChatController({ apiBaseUrl, onActivityChanged: refreshActivityFeed });
+  } = useChatController({
+    apiBaseUrl,
+    requestContext: {
+      templateId: selectedTemplateId,
+      contextItemIds: selectedContextId ? [selectedContextId] : [],
+      artifactIds: selectedArtifactId ? [selectedArtifactId] : [],
+      connectorIds: selectedConnectorId ? [selectedConnectorId] : [],
+      workflowIds: selectedWorkflowActionId ? [selectedWorkflowActionId] : []
+    },
+    onActivityChanged: refreshActivityFeed
+  });
   const { templatePanel, setTemplatePanel } = useTemplatePanel(apiBaseUrl);
   const {
     contextPanel,
@@ -184,6 +198,8 @@ export default function Page() {
       ? "例如：帮我写一封客户更新邮件，整理当前结果、时间线、风险和下一步。"
       : "例如：归纳这批资料，复核风险并列出还需要补充的上下文。";
   const templateItems = templatePanel.items;
+  const selectedTemplate =
+    templateItems.find((template) => template.id === selectedTemplateId) ?? null;
   const contextPanelItems = contextPanel.items;
   const approvalRequests = approvalPanel.items;
   const artifactItems = artifactPanel.items;
@@ -243,6 +259,7 @@ export default function Page() {
     setSelectedConnectorId,
     setSelectedContextId,
     setSelectedSessionHistoryId,
+    setSelectedTemplateId,
     setSelectedWorkflowActionId,
     setSessionHistoryPanel,
     setTemplatePanel,
@@ -454,7 +471,7 @@ export default function Page() {
                   className="inline-flex h-9 items-center justify-center gap-2 rounded-[6px] border border-slate-200 bg-white px-3 text-sm font-medium text-slate-700 transition-colors duration-200 hover:border-blue-200 hover:bg-blue-50 hover:text-blue-700 focus-visible:outline focus-visible:outline-2 focus-visible:outline-blue-600"
                 >
                   <Wand2 className="size-4" aria-hidden="true" />
-                  ????
+                  模板管理
                 </a>
                 <Button
                   type="button"
@@ -574,6 +591,9 @@ export default function Page() {
                               contextPanelItems
                             )}
                         </span>
+                      ) : null}
+                      {selectedTemplate ? (
+                        <span>模板: {selectedTemplate.title}</span>
                       ) : null}
                     </div>
                   </form>

@@ -30,6 +30,9 @@ export function useDailyWorkSelectionState() {
   const [selectedSessionHistoryId, setSelectedSessionHistoryId] = useState<
     string | null
   >(sessionHistoryItems[0]?.id ?? null);
+  const [selectedTemplateId, setSelectedTemplateId] = useState<string | null>(
+    null
+  );
   const [selectedContextId, setSelectedContextId] = useState<string | null>(null);
   const [connectorFilter, setConnectorFilter] = useState<ConnectorFilter>("全部");
   const [selectedConnectorId, setSelectedConnectorId] = useState<string | null>(
@@ -58,6 +61,7 @@ export function useDailyWorkSelectionState() {
     selectedConnectorId,
     selectedContextId,
     selectedSessionHistoryId,
+    selectedTemplateId,
     selectedWorkflowActionId,
     sessionHistoryFilter,
     setArtifactFilter,
@@ -68,6 +72,7 @@ export function useDailyWorkSelectionState() {
     setSelectedConnectorId,
     setSelectedContextId,
     setSelectedSessionHistoryId,
+    setSelectedTemplateId,
     setSelectedWorkflowActionId,
     setSessionHistoryFilter,
     setWorkflowActionFilter,

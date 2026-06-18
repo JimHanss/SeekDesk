@@ -155,6 +155,17 @@ export function mapTemplateDtoToItem(
       template.status !== "archived" &&
       template.status !== "disabled" &&
       template.enabled !== false,
+    ...(template.systemPrompt ? { systemPrompt: template.systemPrompt } : {}),
+    ...(template.promptTemplate ? { promptTemplate: template.promptTemplate } : {}),
+    ...(template.defaultModelRoute
+      ? { defaultModelRoute: template.defaultModelRoute }
+      : {}),
+    ...(template.allowedToolNames
+      ? { allowedToolNames: template.allowedToolNames }
+      : {}),
+    ...(template.contextPolicy ? { contextPolicy: template.contextPolicy } : {}),
+    ...(template.status ? { status: template.status } : {}),
+    ...(template.version ? { version: template.version } : {}),
     icon: templateIcon({
       category,
       artifactType,

@@ -3726,6 +3726,91 @@ describe("api server", () => {
     }
   });
 
+  it("applies selected daily-work template policy to model routing and tool exposure", async () => {
+    const repository = new SeedDailyWorkRepository();
+    const now = "2026-06-19T00:00:00.000Z";
+    await repository.upsertTemplate({
+      id: "runtime-pro-template",
+      mode: "daily_work",
+      category: "research",
+      title: "Runtime Pro Template",
+      description: "Template with runtime constraints.",
+      prompt: "Use the runtime template.",
+      systemPrompt: "Use the runtime template system instruction.",
+      promptTemplate: "Answer with a concise brief.",
+      defaultModelRoute: "pro",
+      allowedToolNames: ["daily.persist_artifact"],
+      contextPolicy: {
+        maxContextTokens: 4000,
+        includeSelectedContext: false,
+        includeRecentSession: false,
+        includeArtifacts: false
+      },
+      status: "active",
+      artifactType: "brief",
+      tags: ["runtime"],
+      enabled: true,
+      version: 1,
+      createdAt: now,
+      updatedAt: now
+    });
+    process.env.DEEPSEEK_API_KEY = "sk-test-secret-value";
+    process.env.DEEPSEEK_BASE_URL = "https://api.deepseek.example";
+    process.env.DEEPSEEK_MODEL_FAST = "deepseek-v4-flash";
+    process.env.DEEPSEEK_MODEL_PRO = "deepseek-v4-pro";
+
+    const fetchMock = vi.fn().mockResolvedValueOnce(
+      createDeepSeekStreamResponse([
+        `data: ${JSON.stringify({
+          choices: [{ delta: { content: "Template runtime acknowledged." } }]
+        })}\n\n`,
+        "data: [DONE]\n\n"
+      ])
+    );
+    vi.stubGlobal("fetch", fetchMock);
+
+    const app = await buildServer({ dailyWorkRepository: repository });
+
+    try {
+      const response = await app.inject({
+        method: "POST",
+        url: "/api/chat",
+        payload: {
+          mode: "daily_work",
+          templateId: "runtime-pro-template",
+          prompt: "Use the selected template."
+        }
+      });
+
+      expect(response.statusCode).toBe(200);
+      expect(response.body).toContain("Template runtime acknowledged.");
+      expect(fetchMock).toHaveBeenCalledTimes(1);
+
+      const [, init] = fetchMock.mock.calls[0] ?? [];
+      const requestBody = JSON.parse(String(init?.body));
+      const contextMessage = requestBody.messages
+        .map((message: { content?: string }) => message.content ?? "")
+        .join("\n");
+      const toolNames = (requestBody.tools ?? []).map(
+        (tool: { function?: { name?: string } }) => tool.function?.name
+      );
+
+      expect(requestBody.model).toBe("deepseek-v4-pro");
+      expect(toolNames).toEqual(["daily_persist_artifact"]);
+      expect(contextMessage).toContain(
+        "Template system instruction: Use the runtime template system instruction."
+      );
+      expect(contextMessage).toContain("includeSelectedContext=false");
+      expect(contextMessage).toContain(
+        "Context items: disabled by selected template context policy."
+      );
+      expect(contextMessage).toContain(
+        "Template tool policy: only these daily_work tools may be called: daily.persist_artifact."
+      );
+    } finally {
+      await app.close();
+    }
+  });
   it("executes preview-only daily-work tool calls and persists artifacts", async () => {
     const dataDir = await mkdtemp(join(tmpdir(), "seekdesk-api-data-"));
     process.env.SEEKDESK_DATA_DIR = dataDir;
