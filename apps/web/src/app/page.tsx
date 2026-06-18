@@ -1,5 +1,6 @@
 "use client";
 
+import Link from "next/link";
 import { useMemo, useState, type ReactNode } from "react";
 import {
   Activity,
@@ -14,6 +15,7 @@ import {
   Presentation,
   Search,
   Send,
+  Settings2,
   ShieldCheck,
   Square,
   Sparkles,
@@ -280,7 +282,7 @@ export default function Page() {
   const restoreSessionAndOpenAssistant = openAssistantAfter(restoreSessionHistory);
   const useContextAndOpenAssistant = openAssistantAfter(useContextItem);
 
-  const views: ViewConfig[] = [
+  const primaryViews: ViewConfig[] = [
     {
       id: "assistant",
       label: "对话工作台",
@@ -293,67 +295,131 @@ export default function Page() {
       label: "模板库",
       description: "从固定工作模式开始，不让模板列表挤占聊天区。",
       icon: <Wand2 className="size-4" aria-hidden="true" />,
-      badge: `${templateItems.length}`
+      badge: String(templateItems.length)
     },
     {
       id: "knowledge",
       label: "上下文",
-      description: "管理可引用的会话知识、数据层和同步状态。",
+      description: "管理可引用的会话知识、资料上传和数据层状态。",
       icon: <Database className="size-4" aria-hidden="true" />,
-      badge: `${contextPanelItems.length}`
+      badge: String(contextPanelItems.length)
     },
     {
       id: "workflows",
       label: "工作流",
       description: "预演自动化动作，把流程编排从聊天主屏拆出来。",
       icon: <Workflow className="size-4" aria-hidden="true" />,
-      badge: `${filteredWorkflowActions.length}`
-    },
-    {
-      id: "connectors",
-      label: "连接器",
-      description: "集中查看外部系统目录、权限状态和调用预览。",
-      icon: <Globe className="size-4" aria-hidden="true" />,
-      badge: `${filteredConnectors.length}`
+      badge: String(filteredWorkflowActions.length)
     },
     {
       id: "artifacts",
       label: "产物",
       description: "把文档、摘要和可复用成果放到独立资产视图。",
       icon: <FileText className="size-4" aria-hidden="true" />,
-      badge: `${filteredArtifacts.length}`
-    },
-    {
-      id: "approvals",
-      label: "审批",
-      description: "把风险决策和模式快照收束在治理视图。",
-      icon: <ShieldCheck className="size-4" aria-hidden="true" />,
-      badge: `${approvalRequests.length}`
-    },
-    {
-      id: "activity",
-      label: "活动",
-      description: "查看实时事件流、同步来源和最近状态。",
-      icon: <Activity className="size-4" aria-hidden="true" />,
-      badge: `${activityFeedEvents.length}`
+      badge: String(filteredArtifacts.length)
     },
     {
       id: "sessions",
       label: "历史",
       description: "恢复最近会话和工作流，不塞在当前对话下方。",
       icon: <PanelLeft className="size-4" aria-hidden="true" />,
-      badge: `${filteredSessionHistory.length}`
-    },
-    {
-      id: "models",
-      label: "模型",
-      description: "查看模型路由、用量预算和同步状态。",
-      icon: <Bot className="size-4" aria-hidden="true" />,
-      badge: modelRouteMode === "fast" ? "快速" : "深度"
+      badge: String(filteredSessionHistory.length)
     }
   ];
 
+  const settingsViews: ViewConfig[] = [
+    {
+      id: "models",
+      label: "模型与用量",
+      description: "查看模型路由、token 用量和持久化状态。",
+      icon: <Bot className="size-4" aria-hidden="true" />,
+      badge: modelRouteMode === "fast" ? "快速" : "深度"
+    },
+    {
+      id: "connectors",
+      label: "连接器",
+      description: "集中查看外部系统授权、权限状态和调用预览。",
+      icon: <Globe className="size-4" aria-hidden="true" />,
+      badge: String(filteredConnectors.length)
+    },
+    {
+      id: "approvals",
+      label: "审批与权限",
+      description: "把风险决策和模式快照收束在治理视图。",
+      icon: <ShieldCheck className="size-4" aria-hidden="true" />,
+      badge: String(approvalRequests.length)
+    },
+    {
+      id: "activity",
+      label: "活动审计",
+      description: "查看实时事件流、同步来源和最近状态。",
+      icon: <Activity className="size-4" aria-hidden="true" />,
+      badge: String(activityFeedEvents.length)
+    }
+  ];
+
+  const views = [...primaryViews, ...settingsViews];
   const currentView = views.find((view) => view.id === activeView) ?? views[0]!;
+  const isSettingsView = settingsViews.some((view) => view.id === activeView);
+
+  const renderNavButton = (
+    view: ViewConfig,
+    density: "primary" | "compact" = "primary"
+  ) => {
+    const isActive = activeView === view.id;
+
+    return (
+      <button
+        key={view.id}
+        type="button"
+        data-daily-view-nav={view.id}
+        aria-current={isActive ? "page" : undefined}
+        onClick={() => setActiveView(view.id)}
+        className={cn(
+          "flex cursor-pointer items-center gap-3 rounded-[8px] text-left text-sm transition-colors duration-200 focus-visible:outline focus-visible:outline-2 focus-visible:outline-teal-300 lg:min-w-0",
+          density === "compact"
+            ? "min-w-[132px] px-2.5 py-2"
+            : "min-w-[148px] px-3 py-2.5",
+          isActive
+            ? "bg-white text-slate-950 shadow-sm"
+            : "text-slate-300 hover:bg-white/10 hover:text-white"
+        )}
+      >
+        <span
+          className={cn(
+            "grid shrink-0 place-items-center rounded-[8px]",
+            density === "compact" ? "size-7" : "size-8",
+            isActive ? "bg-teal-50 text-teal-700" : "bg-white/10"
+          )}
+        >
+          {view.icon}
+        </span>
+        <span className="min-w-0 flex-1">
+          <span className="block truncate font-medium">{view.label}</span>
+          {density === "primary" ? (
+            <span
+              className={cn(
+                "mt-0.5 block truncate text-[11px]",
+                isActive ? "text-slate-500" : "text-slate-400"
+              )}
+            >
+              {view.description}
+            </span>
+          ) : null}
+        </span>
+        {view.badge ? (
+          <span
+            className={cn(
+              "shrink-0 rounded-[999px] px-2 py-0.5 text-[11px] font-medium",
+              isActive ? "bg-slate-100 text-slate-600" : "bg-white/10 text-slate-300"
+            )}
+          >
+            {view.badge}
+          </span>
+        ) : null}
+      </button>
+    );
+  };
 
   return (
     <main
@@ -374,58 +440,20 @@ export default function Page() {
             </div>
           </div>
 
-          <nav className="flex gap-2 overflow-x-auto border-t border-white/10 px-3 py-3 lg:flex-1 lg:flex-col lg:overflow-y-auto lg:border-t-0">
-            {views.map((view) => {
-              const isActive = activeView === view.id;
+          <nav className="flex gap-3 overflow-x-auto border-t border-white/10 px-3 py-3 lg:flex-1 lg:flex-col lg:overflow-y-auto lg:border-t-0">
+            <div className="flex shrink-0 gap-2 lg:flex-col lg:gap-1">
+              <p className="hidden px-3 text-[11px] font-semibold uppercase tracking-[0.12em] text-slate-500 lg:block">
+                常用工作区
+              </p>
+              {primaryViews.map((view) => renderNavButton(view))}
+            </div>
 
-              return (
-                <button
-                  key={view.id}
-                  type="button"
-                  data-daily-view-nav={view.id}
-                  aria-current={isActive ? "page" : undefined}
-                  onClick={() => setActiveView(view.id)}
-                  className={cn(
-                    "flex min-w-[148px] cursor-pointer items-center gap-3 rounded-[8px] px-3 py-2.5 text-left text-sm transition-colors duration-200 focus-visible:outline focus-visible:outline-2 focus-visible:outline-teal-300 lg:min-w-0",
-                    isActive
-                      ? "bg-white text-slate-950 shadow-sm"
-                      : "text-slate-300 hover:bg-white/10 hover:text-white"
-                  )}
-                >
-                  <span
-                    className={cn(
-                      "grid size-8 shrink-0 place-items-center rounded-[8px]",
-                      isActive ? "bg-teal-50 text-teal-700" : "bg-white/10"
-                    )}
-                  >
-                    {view.icon}
-                  </span>
-                  <span className="min-w-0 flex-1">
-                    <span className="block truncate font-medium">{view.label}</span>
-                    <span
-                      className={cn(
-                        "mt-0.5 block truncate text-[11px]",
-                        isActive ? "text-slate-500" : "text-slate-400"
-                      )}
-                    >
-                      {view.description}
-                    </span>
-                  </span>
-                  {view.badge ? (
-                    <span
-                      className={cn(
-                        "shrink-0 rounded-[999px] px-2 py-0.5 text-[11px] font-medium",
-                        isActive
-                          ? "bg-slate-100 text-slate-600"
-                          : "bg-white/10 text-slate-300"
-                      )}
-                    >
-                      {view.badge}
-                    </span>
-                  ) : null}
-                </button>
-              );
-            })}
+            <div className="flex shrink-0 gap-2 border-l border-white/10 pl-3 lg:mt-auto lg:flex-col lg:border-l-0 lg:border-t lg:pl-0 lg:pt-3">
+              <p className="hidden px-3 text-[11px] font-semibold uppercase tracking-[0.12em] text-slate-500 lg:block">
+                设置与治理
+              </p>
+              {settingsViews.map((view) => renderNavButton(view, "compact"))}
+            </div>
           </nav>
         </aside>
 
@@ -466,13 +494,22 @@ export default function Page() {
                   <Wand2 className="size-4" aria-hidden="true" />
                   模板
                 </Button>
-                <a
+                <Link
                   href="/templates"
                   className="inline-flex h-9 items-center justify-center gap-2 rounded-[6px] border border-slate-200 bg-white px-3 text-sm font-medium text-slate-700 transition-colors duration-200 hover:border-blue-200 hover:bg-blue-50 hover:text-blue-700 focus-visible:outline focus-visible:outline-2 focus-visible:outline-blue-600"
                 >
                   <Wand2 className="size-4" aria-hidden="true" />
                   模板管理
-                </a>
+                </Link>
+                <Button
+                  type="button"
+                  variant="secondary"
+                  size="sm"
+                  onClick={() => setActiveView("models")}
+                >
+                  <Settings2 className="size-4" aria-hidden="true" />
+                  设置
+                </Button>
                 <Button
                   type="button"
                   size="sm"
@@ -639,37 +676,6 @@ export default function Page() {
               </ModuleStack>
             ) : null}
 
-            {activeView === "connectors" ? (
-              <ModuleStack>
-                <ConnectorDirectoryPanel
-                  connectorFilter={connectorFilter}
-                  connectorPreviewPanel={connectorPreviewPanel}
-                  filteredConnectors={filteredConnectors}
-                  googleConnectorStatus={googleConnectorStatus}
-                  googleOAuthStartNotice={googleOAuthStartNotice}
-                  googleOAuthStartStatus={googleOAuthStartStatus}
-                  microsoftConnectorStatus={microsoftConnectorStatus}
-                  microsoftOAuthStartNotice={microsoftOAuthStartNotice}
-                  microsoftOAuthStartStatus={microsoftOAuthStartStatus}
-                  selectedConnector={selectedConnector}
-                  selectedConnectorApprovalRequests={selectedConnectorApprovalRequests}
-                  selectedConnectorPreviewStatus={selectedConnectorPreviewStatus}
-                  onApplyConnectorPrompt={applyConnectorAndOpenAssistant}
-                  onFilterChange={setConnectorFilter}
-                  onRefreshGoogleStatus={() => {
-                    void refreshGoogleConnectorStatus();
-                  }}
-                  onRefreshMicrosoftStatus={() => {
-                    void refreshMicrosoftConnectorStatus();
-                  }}
-                  onSelectConnector={setSelectedConnectorId}
-                  onStartGoogleOAuth={startGoogleOAuth}
-                  onStartMicrosoftOAuth={startMicrosoftOAuth}
-                  onUpdateConnectorPreviewDecision={updateConnectorPreviewDecision}
-                />
-              </ModuleStack>
-            ) : null}
-
             {activeView === "artifacts" ? (
               <ModuleStack>
                 <ArtifactPanel
@@ -680,32 +686,6 @@ export default function Page() {
                   selectedArtifact={selectedArtifact}
                   onFilterChange={setArtifactFilter}
                   onSelectArtifact={setSelectedArtifactId}
-                />
-              </ModuleStack>
-            ) : null}
-
-            {activeView === "approvals" ? (
-              <ModuleStack>
-                <ApprovalLedgerPanel
-                  approvalPanel={approvalPanel}
-                  approvalRequests={approvalRequests}
-                  onUpdateApprovalStatus={updateApprovalStatus}
-                />
-                <ModeSnapshotPanel approvalCount={approvalRequests.length} />
-              </ModuleStack>
-            ) : null}
-
-            {activeView === "activity" ? (
-              <ModuleStack>
-                <ActivityFeedPanel
-                  connectionStatus={activityConnectionStatus}
-                  events={activityFeedEvents}
-                  lastUpdated={activityLastUpdated}
-                  notice={activityFeedNotice}
-                  selectedEvent={selectedActivityEvent}
-                  source={activityFeedSource}
-                  onApplyEventPrompt={applyEventAndOpenAssistant}
-                  onSelectEvent={setSelectedActivityEventId}
                 />
               </ModuleStack>
             ) : null}
@@ -725,13 +705,98 @@ export default function Page() {
               </ModuleStack>
             ) : null}
 
-            {activeView === "models" ? (
+            {isSettingsView ? (
               <ModuleStack>
-                <ModelUsagePanel
-                  modelRouteMode={modelRouteMode}
-                  modelUsagePanel={modelUsagePanel}
-                  onSwitchModelRoute={switchModelRoute}
-                />
+                <section className="flex flex-col gap-4">
+                  <div className="flex flex-wrap items-center gap-2 border-b border-slate-200 pb-3" aria-label="设置分区">
+                    {settingsViews.map((view) => {
+                      const isActive = activeView === view.id;
+
+                      return (
+                        <button
+                          key={view.id}
+                          type="button"
+                          data-daily-settings-section={view.id}
+                          aria-pressed={isActive}
+                          onClick={() => setActiveView(view.id)}
+                          className={cn(
+                            "inline-flex cursor-pointer items-center gap-2 rounded-[8px] border px-3 py-2 text-sm font-medium transition-colors duration-200 focus-visible:outline focus-visible:outline-2 focus-visible:outline-teal-500",
+                            isActive
+                              ? "border-teal-200 bg-teal-50 text-teal-800"
+                              : "border-slate-200 bg-white text-slate-600 hover:border-slate-300 hover:bg-slate-100"
+                          )}
+                        >
+                          {view.icon}
+                          {view.label}
+                        </button>
+                      );
+                    })}
+                  </div>
+
+                  {activeView === "connectors" ? (
+                    <ConnectorDirectoryPanel
+                      connectorFilter={connectorFilter}
+                      connectorPreviewPanel={connectorPreviewPanel}
+                      filteredConnectors={filteredConnectors}
+                      googleConnectorStatus={googleConnectorStatus}
+                      googleOAuthStartNotice={googleOAuthStartNotice}
+                      googleOAuthStartStatus={googleOAuthStartStatus}
+                      microsoftConnectorStatus={microsoftConnectorStatus}
+                      microsoftOAuthStartNotice={microsoftOAuthStartNotice}
+                      microsoftOAuthStartStatus={microsoftOAuthStartStatus}
+                      selectedConnector={selectedConnector}
+                      selectedConnectorApprovalRequests={selectedConnectorApprovalRequests}
+                      selectedConnectorPreviewStatus={selectedConnectorPreviewStatus}
+                      onApplyConnectorPrompt={applyConnectorAndOpenAssistant}
+                      onFilterChange={setConnectorFilter}
+                      onRefreshGoogleStatus={() => {
+                        void refreshGoogleConnectorStatus();
+                      }}
+                      onRefreshMicrosoftStatus={() => {
+                        void refreshMicrosoftConnectorStatus();
+                      }}
+                      onSelectConnector={setSelectedConnectorId}
+                      onStartGoogleOAuth={startGoogleOAuth}
+                      onStartMicrosoftOAuth={startMicrosoftOAuth}
+                      onUpdateConnectorPreviewDecision={updateConnectorPreviewDecision}
+                    />
+                  ) : null}
+
+                  {activeView === "approvals" ? (
+                    <>
+                      <ApprovalLedgerPanel
+                        approvalPanel={approvalPanel}
+                        approvalRequests={approvalRequests}
+                        onUpdateApprovalStatus={updateApprovalStatus}
+                      />
+                      <ModeSnapshotPanel approvalCount={approvalRequests.length} />
+                    </>
+                  ) : null}
+
+                  {activeView === "activity" ? (
+                    <ActivityFeedPanel
+                      connectionStatus={activityConnectionStatus}
+                      events={activityFeedEvents}
+                      lastUpdated={activityLastUpdated}
+                      notice={activityFeedNotice}
+                      selectedEvent={selectedActivityEvent}
+                      source={activityFeedSource}
+                      onApplyEventPrompt={applyEventAndOpenAssistant}
+                      onSelectEvent={setSelectedActivityEventId}
+                    />
+                  ) : null}
+
+                  {activeView === "models" ? (
+                    <>
+                      <ModelUsagePanel
+                        modelRouteMode={modelRouteMode}
+                        modelUsagePanel={modelUsagePanel}
+                        onSwitchModelRoute={switchModelRoute}
+                      />
+                      <PersistenceStatusPanel state={persistencePanel} />
+                    </>
+                  ) : null}
+                </section>
               </ModuleStack>
             ) : null}
           </div>
