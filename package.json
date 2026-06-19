@@ -36,7 +36,8 @@
     "verify:secrets": "node scripts/verify-secret-hygiene.mjs",
     "db:generate": "drizzle-kit generate",
     "db:migrate": "drizzle-kit migrate",
-    "db:studio": "drizzle-kit studio"
+    "db:studio": "drizzle-kit studio",
+    "cleanup:smoke-data": "node scripts/cleanup-smoke-data.mjs"
   },
   "engines": {
     "node": ">=22.12.0",

@@ -1,5 +1,11 @@
 #!/usr/bin/env node
 
+import { spawnSync } from "node:child_process";
+import { dirname, resolve } from "node:path";
+import { fileURLToPath } from "node:url";
+
+process.on("exit", cleanupVerificationData);
+
 const args = parseArgs(process.argv.slice(2));
 const baseUrl = trimTrailingSlash(args.baseUrl ?? "http://127.0.0.1:4000");
 const requireGoogle = args.requireGoogle ?? false;
@@ -506,6 +512,7 @@ async function sendChat(input) {
     method: "POST",
     headers: {
       "content-type": "application/json",
+      "x-seekdesk-automation-run": "verify-real-agent",
       origin: "http://localhost:3000"
     },
     body: JSON.stringify({
@@ -744,4 +751,28 @@ function normalizeStringList(value) {
   return Array.isArray(value)
     ? value.filter((item) => typeof item === "string" && item.trim())
     : [];
+}
+
+
+function cleanupVerificationData() {
+  if (process.env.SEEKDESK_VERIFY_SKIP_DATA_CLEANUP === "1") {
+    return;
+  }
+
+  const scriptPath = resolve(
+    dirname(fileURLToPath(import.meta.url)),
+    "cleanup-smoke-data.mjs"
+  );
+  const result = spawnSync(process.execPath, [scriptPath], {
+    cwd: resolve(dirname(fileURLToPath(import.meta.url)), ".."),
+    env: process.env,
+    encoding: "utf8"
+  });
+
+  if (result.status !== 0) {
+    const output = [result.stdout, result.stderr].filter(Boolean).join("\n").trim();
+    console.warn(
+      "Real-agent verification data cleanup failed: " + (output || "exit " + result.status)
+    );
+  }
 }

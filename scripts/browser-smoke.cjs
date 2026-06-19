@@ -73,6 +73,8 @@ async function main() {
     };
     console.log(JSON.stringify(payload, null, 2));
   } finally {
+    await cleanupSmokeData().catch((error) => console.warn("Smoke data cleanup failed: " + error.message));
+
     if (client) {
       client.close();
     }
@@ -2890,7 +2892,8 @@ async function fetchCodeFenceProbe(endpoint) {
     const response = await fetch(endpoint, {
       method: "POST",
       headers: {
-        "Content-Type": "application/json"
+        "Content-Type": "application/json",
+        "X-SeekDesk-Automation-Run": "browser-smoke"
       },
       body: JSON.stringify({
         mode: "daily_work",
@@ -2934,7 +2937,8 @@ async function fetchChatTextResponse(endpoint, prompt) {
   const response = await fetch(endpoint, {
     method: "POST",
     headers: {
-      "Content-Type": "application/json"
+      "Content-Type": "application/json",
+      "X-SeekDesk-Automation-Run": "browser-smoke"
     },
     body: JSON.stringify({
       mode: "daily_work",
@@ -4112,6 +4116,28 @@ async function isReachable(url) {
     return true;
   } catch {
     return false;
+  }
+}
+
+async function cleanupSmokeData() {
+  if (process.env.SEEKDESK_SMOKE_SKIP_DATA_CLEANUP === "1") {
+    return;
+  }
+
+  const cleanupScript = path.join(rootDir, "scripts", "cleanup-smoke-data.mjs");
+  if (!fs.existsSync(cleanupScript)) {
+    return;
+  }
+
+  const result = spawnSync(process.execPath, [cleanupScript], {
+    cwd: rootDir,
+    env: process.env,
+    encoding: "utf8"
+  });
+
+  if (result.status !== 0) {
+    const detail = [result.stdout, result.stderr].filter(Boolean).join("\n").trim();
+    console.warn("Smoke data cleanup failed: " + (detail || "exit " + result.status));
   }
 }
 
