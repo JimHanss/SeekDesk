@@ -361,18 +361,25 @@ export default function Page() {
     ? conversationTitleOverrides[selectedSessionHistory.id] ??
       selectedSessionHistory.title
     : null;
+  const isViewingHistorySession = Boolean(selectedSessionHistoryId);
+  const currentConversationId =
+    !isViewingHistorySession && activeSessionId
+      ? activeSessionId
+      : "current-conversation";
   const currentConversation = {
-    id: activeSessionId ?? "current-conversation",
+    id: currentConversationId,
     title: currentConversationTitle,
-    summary: activeSessionId
+    summary: activeSessionId && !isViewingHistorySession
       ? "\u5f53\u524d\u4f1a\u8bdd"
       : "\u53d1\u9001\u7b2c\u4e00\u6761\u6d88\u606f\u540e\u81ea\u52a8\u751f\u6210\u6807\u9898",
     status: statusLabel(status),
     updatedAt: "\u73b0\u5728",
-    messageCount: Math.max(messages.length, activeSessionId ? 1 : 0)
+    messageCount: isViewingHistorySession
+      ? 0
+      : Math.max(messages.length, activeSessionId ? 1 : 0)
   };
   const sidebarConversationItems = sessionHistoryPanelItems
-    .filter((item) => item.id !== activeSessionId)
+    .filter((item) => isViewingHistorySession || item.id !== activeSessionId)
     .filter((item) => !hiddenConversationIds.includes(item.id))
     .map((item, sourceIndex) => ({
       id: item.id,
@@ -381,6 +388,7 @@ export default function Page() {
       status: item.status,
       updatedAt: item.updatedAt,
       messageCount: item.messageCount,
+      createdAt: item.createdAt,
       pinned: pinnedConversationIds.includes(item.id),
       sourceIndex
     }))
@@ -392,9 +400,17 @@ export default function Page() {
         return rightPinned - leftPinned;
       }
 
+      const createdAtOrder =
+        parseConversationCreatedAt(left.createdAt, left.sourceIndex) -
+        parseConversationCreatedAt(right.createdAt, right.sourceIndex);
+      if (createdAtOrder !== 0) {
+        return createdAtOrder;
+      }
+
       return left.sourceIndex - right.sourceIndex;
     })
-    .map(({ sourceIndex, ...item }) => {
+    .map(({ createdAt, sourceIndex, ...item }) => {
+      void createdAt;
       void sourceIndex;
       return item;
     });
@@ -704,4 +720,9 @@ export default function Page() {
             ) : null}
     </DailyWorkDashboardShell>
   );
+}
+
+function parseConversationCreatedAt(value: string, fallbackIndex: number) {
+  const timestamp = Date.parse(value);
+  return Number.isNaN(timestamp) ? fallbackIndex : timestamp;
 }

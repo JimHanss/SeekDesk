@@ -234,6 +234,7 @@ export interface WorkflowSnapshotItem {
   id: string;
   title: string;
   status: SessionHistoryStatus;
+  createdAt: string;
   updatedAt: string;
   summary: string;
   artifactCount: number;
