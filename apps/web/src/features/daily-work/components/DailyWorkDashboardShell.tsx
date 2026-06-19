@@ -93,11 +93,11 @@ export function DailyWorkDashboardShell({
 
   return (
     <main
-      className="min-h-screen overflow-x-hidden bg-slate-100 px-3 py-3 text-slate-950 md:px-4"
+      className="h-dvh overflow-hidden bg-slate-100 text-slate-950"
       data-daily-active-view={activeView}
     >
-      <div className="mx-auto grid min-h-[calc(100vh-1.5rem)] w-full max-w-[1500px] overflow-hidden rounded-[8px] border border-slate-200 bg-white shadow-[0_18px_70px_rgba(15,23,42,0.12)] lg:grid-cols-[224px_minmax(0,1fr)]">
-        <aside className="flex min-h-0 flex-col border-b border-slate-200 bg-slate-950 text-white lg:border-b-0 lg:border-r">
+      <div className="flex h-full w-full overflow-hidden bg-white lg:grid lg:grid-cols-[224px_minmax(0,1fr)]">
+        <aside className="flex shrink-0 flex-col border-b border-slate-200 bg-slate-950 text-white lg:min-h-0 lg:border-b-0 lg:border-r">
           <div className="flex h-14 items-center gap-3 px-4">
             <div className="grid size-9 shrink-0 place-items-center rounded-[8px] bg-teal-500 text-white shadow-sm">
               <Sparkles className="size-5" aria-hidden="true" />
@@ -123,7 +123,7 @@ export function DailyWorkDashboardShell({
           </nav>
         </aside>
 
-        <section className="flex min-h-0 flex-col bg-slate-50">
+        <section className="flex min-h-0 flex-1 flex-col bg-slate-50">
           <header className="flex h-14 shrink-0 items-center justify-between gap-3 border-b border-slate-200 bg-white px-3 md:px-5">
             <div className="flex min-w-0 items-center gap-2 text-sm font-semibold text-slate-950">
               <span className="grid size-8 shrink-0 place-items-center rounded-[8px] bg-teal-50 text-teal-700">
@@ -179,7 +179,7 @@ export function DailyWorkDashboardShell({
             </div>
           </header>
 
-          <div className="min-h-0 flex-1 overflow-y-auto px-3 py-3 md:px-4">
+          <div className="min-h-0 flex-1 overflow-y-auto p-3 md:p-4">
             {children}
           </div>
         </section>

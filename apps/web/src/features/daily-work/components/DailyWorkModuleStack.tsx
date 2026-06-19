@@ -1,5 +1,5 @@
 import type { ReactNode } from "react";
 
 export function DailyWorkModuleStack({ children }: { children: ReactNode }) {
-  return <div className="mx-auto flex w-full max-w-6xl flex-col gap-4">{children}</div>;
+  return <div className="flex min-h-full w-full flex-col gap-4">{children}</div>;
 }

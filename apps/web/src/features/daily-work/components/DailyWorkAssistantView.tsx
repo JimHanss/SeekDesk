@@ -104,8 +104,8 @@ export function DailyWorkAssistantView({
   };
 
   return (
-    <div className="grid min-h-full gap-3 xl:grid-cols-[minmax(0,1fr)_340px]">
-      <section className="flex min-h-[640px] flex-col overflow-hidden rounded-[8px] border border-slate-200 bg-white shadow-sm">
+    <div className="relative flex h-full min-h-0 flex-col gap-3 xl:grid xl:grid-cols-[minmax(0,1fr)_360px]">
+      <section className="flex min-h-0 flex-1 flex-col overflow-hidden rounded-[8px] border border-slate-200 bg-white shadow-sm">
         <div className="flex h-12 shrink-0 items-center justify-between gap-2 border-b border-slate-200 px-3 md:px-4">
           <div className="flex min-w-0 items-center gap-2 text-sm font-semibold text-slate-950">
             <span className="grid size-7 shrink-0 place-items-center rounded-[6px] bg-teal-50 text-teal-700">
@@ -211,8 +211,10 @@ export function DailyWorkAssistantView({
 
       <aside
         className={cn(
-          "min-h-0 overflow-hidden rounded-[8px] border border-slate-200 bg-white shadow-sm",
-          activePanel ? "flex flex-col" : "hidden"
+          "overflow-hidden rounded-[8px] border border-slate-200 bg-white shadow-sm",
+          activePanel
+            ? "fixed inset-x-3 bottom-3 top-20 z-30 flex flex-col xl:static xl:z-auto xl:h-full xl:min-h-0"
+            : "hidden"
         )}
         data-assistant-side-panel={activePanel ?? "closed"}
       >
