@@ -335,12 +335,35 @@ export default function Page() {
     ? selectedContextItem?.title ??
       selectedContextLabel(selectedContextId, contextPanelItems)
     : null;
+  const sidebarConversationItems = sessionHistoryPanelItems.map((item) => ({
+    id: item.id,
+    title: item.title,
+    summary: item.summary,
+    status: item.status,
+    updatedAt: item.updatedAt,
+    messageCount: item.messageCount
+  }));
+
+  const selectSidebarConversation = (conversationId: string) => {
+    const conversation = sessionHistoryPanelItems.find(
+      (item) => item.id === conversationId
+    );
+
+    if (conversation) {
+      selectSessionHistory(conversation);
+    }
+
+    setActiveView("assistant");
+  };
 
   return (
     <DailyWorkDashboardShell
+      activeConversationId={activeView === "assistant" ? selectedSessionHistoryId : null}
       activeView={activeView}
+      conversationItems={sidebarConversationItems}
       primaryViews={primaryViews}
       settingsViews={settingsViews}
+      onConversationSelect={selectSidebarConversation}
       onViewChange={setActiveView}
     >
             {activeView === "assistant" ? (
