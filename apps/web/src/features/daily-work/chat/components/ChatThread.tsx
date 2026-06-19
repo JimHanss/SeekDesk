@@ -4,12 +4,10 @@ import {
   AlertCircle,
   Bot,
   CheckCircle2,
-  ChevronDown,
   Cpu,
   Database,
   FileText,
   Loader2,
-  MessageSquare,
   Play,
   ShieldCheck,
   Sparkles,
@@ -20,7 +18,6 @@ import {
 import { Button } from "@/components/ui/button";
 import { cn } from "@/lib/utils";
 
-import { statusLabel } from "../../domain";
 import type {
   AgentToolActivityTraceItem,
   AgentToolCallTraceItem,
@@ -36,24 +33,18 @@ import {
 } from "../mappers/message-content";
 
 export function ChatThread({
-  agentTrace,
-  endpoint,
   error,
   lastSubmittedPrompt,
   messages,
   messagesEndRef,
-  modelName,
   onDismissError,
   onRetry,
   status
 }: {
-  agentTrace: AgentTraceState;
-  endpoint: string;
   error: string | null;
   lastSubmittedPrompt: string | null;
   messages: ChatMessage[];
   messagesEndRef: RefObject<HTMLDivElement | null>;
-  modelName: string;
   onDismissError: () => void;
   onRetry: () => void;
   status: ChatStatus;
@@ -62,54 +53,14 @@ export function ChatThread({
 
   return (
     <div
-      className="rounded-[8px] border border-teal-100 bg-white p-3 shadow-sm"
+      className="min-h-full"
       data-chat-message-count={messages.length}
       data-chat-status={status}
       data-chat-thread
     >
-      <div className="mb-3 flex flex-col gap-2 md:flex-row md:items-start md:justify-between">
-        <div className="min-w-0">
-          <div className="flex items-center gap-2 text-sm font-semibold text-teal-950">
-            <MessageSquare
-              className="size-4 shrink-0 text-teal-700"
-              aria-hidden="true"
-            />
-            <span className="min-w-0 break-words">Daily Work Chat</span>
-          </div>
-          <p className="mt-1 text-xs leading-5 text-teal-700">
-            对话区默认保持简洁；工具计划、token 和权限边界可在运行详情中查看。
-          </p>
-        </div>
-        <span className="inline-flex shrink-0 items-center gap-1 rounded-[999px] bg-teal-50 px-2.5 py-1 text-[11px] font-medium text-teal-700">
-          <Activity className="size-3.5" aria-hidden="true" />
-          {statusLabel(status)}
-        </span>
-      </div>
-
       <div className="space-y-3">
-        <details
-          className="group rounded-[8px] border border-slate-200 bg-slate-50/80"
-          data-agent-trace-disclosure
-        >
-          <summary className="flex cursor-pointer list-none items-center justify-between gap-3 px-3 py-2 text-xs text-slate-700 transition-colors duration-200 hover:bg-slate-100 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-teal-600">
-            <span className="flex min-w-0 items-center gap-2 font-semibold text-slate-900">
-              <Cpu className="size-4 shrink-0 text-teal-700" aria-hidden="true" />
-              <span className="min-w-0 truncate">运行详情</span>
-            </span>
-            <span className="ml-auto flex shrink-0 items-center gap-2 text-[11px] text-slate-500">
-              <span>工具 {agentTrace.toolCalls.length}</span>
-              <span>Token {agentTrace.modelUsageSummary.totalTokens}</span>
-              <ChevronDown
-                className="size-4 transition-transform duration-200 group-open:rotate-180"
-                aria-hidden="true"
-              />
-            </span>
-          </summary>
-          <AgentTracePanel agentTrace={agentTrace} modelName={modelName} />
-        </details>
-
         {messages.length === 0 ? (
-          <ChatEmptyState endpoint={endpoint} modelName={modelName} />
+          <ChatEmptyState />
         ) : (
           messages.map((message, index) => (
             <ChatBubble
@@ -141,7 +92,7 @@ export function ChatThread({
   );
 }
 
-function AgentTracePanel({
+export function AgentTracePanel({
   agentTrace,
   modelName
 }: {
@@ -439,50 +390,22 @@ function TraceMetric({
   );
 }
 
-function ChatEmptyState({
-  endpoint,
-  modelName
-}: {
-  endpoint: string;
-  modelName: string;
-}) {
+function ChatEmptyState() {
   return (
     <div
-      className="rounded-[8px] border border-dashed border-teal-200 bg-teal-50/70 px-4 py-4"
+      className="flex min-h-[280px] items-center justify-center rounded-[8px] border border-dashed border-slate-200 bg-slate-50 px-4 py-8"
       data-chat-empty-state
     >
-      <div className="flex flex-col gap-3 md:flex-row md:items-start md:justify-between">
-        <div className="min-w-0">
-          <div className="flex items-center gap-2 text-sm font-semibold text-teal-950">
-            <Bot className="size-4 shrink-0 text-teal-700" aria-hidden="true" />
-            <span className="min-w-0 break-words">
-              Ready for a daily-work task
-            </span>
-          </div>
-          <p className="mt-1 text-xs leading-5 text-teal-700">
-            The current conversation keeps a preview-only boundary while it can
-            produce prose, checklists, highlighted code, and reviewable local
-            artifacts.
-          </p>
-        </div>
-        <span className="inline-flex shrink-0 items-center gap-1 rounded-[999px] bg-white px-2.5 py-1 text-[11px] font-medium text-teal-700">
-          <CheckCircle2 className="size-3.5" aria-hidden="true" />
-          API ready
-        </span>
-      </div>
-      <div className="mt-3 grid gap-2 md:grid-cols-2">
-        <ChatInfoRow label="Endpoint" value={endpoint} />
-        <ChatInfoRow label="Model" value={modelName} />
+      <div className="flex items-center gap-2 text-sm font-medium text-slate-500">
+        <Bot className="size-4 shrink-0 text-teal-700" aria-hidden="true" />
+        <span>准备就绪</span>
       </div>
     </div>
   );
 }
 
 function ChatProgress({ status }: { status: ChatStatus }) {
-  const label =
-    status === "submitting"
-      ? "Connecting to the daily-work model..."
-      : "Receiving the streaming response...";
+  const label = status === "submitting" ? "连接中" : "接收中";
 
   return (
     <div
@@ -639,15 +562,6 @@ function CodeBlock({ code, language }: { code: string; language: string }) {
           ))}
         </code>
       </pre>
-    </div>
-  );
-}
-
-function ChatInfoRow({ label, value }: { label: string; value: string }) {
-  return (
-    <div className="rounded-[8px] bg-white px-3 py-2 text-xs">
-      <div className="font-medium text-teal-950">{label}</div>
-      <div className="mt-1 break-words text-teal-700">{value}</div>
     </div>
   );
 }
