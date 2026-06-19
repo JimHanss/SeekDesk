@@ -1,6 +1,6 @@
 "use client";
 
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import {
   Activity,
   Bot,
@@ -39,6 +39,7 @@ import {
   useDailyWorkDerivedSelections,
   useDailyWorkSelectionState
 } from "@/features/daily-work/hooks/useDailyWorkSelectionState";
+import type { ChatMessage } from "@/features/daily-work/types";
 import { PersistenceStatusPanel } from "@/features/daily-work/components/DailyWorkPrimitives";
 import { ActivityFeedPanel } from "@/features/daily-work/components/panels/ActivityFeedPanel";
 import { ApprovalLedgerPanel } from "@/features/daily-work/components/panels/ApprovalLedgerPanel";
@@ -108,6 +109,7 @@ export default function Page() {
     inputRef,
     isBusy,
     lastSubmittedPrompt,
+    loadSessionMessages,
     messages,
     messagesEndRef,
     retryLastPrompt,
@@ -343,6 +345,55 @@ export default function Page() {
     updatedAt: item.updatedAt,
     messageCount: item.messageCount
   }));
+
+  const selectedSessionMessageKey = selectedSessionHistory
+    ? selectedSessionHistory.recentMessages
+        .map((message) => message.id + ":" + message.createdAt)
+        .join("|")
+    : "";
+
+  useEffect(() => {
+    if (activeView !== "assistant" || !selectedSessionHistory) {
+      return;
+    }
+
+    const historyMessages: ChatMessage[] =
+      selectedSessionHistory.recentMessages.length > 0
+        ? selectedSessionHistory.recentMessages.map((message, index) => ({
+            id:
+              "session-" +
+              selectedSessionHistory.id +
+              "-" +
+              message.id +
+              "-" +
+              index,
+            role: message.role === "user" ? "user" : "assistant",
+            content: message.content
+          }))
+        : [
+            {
+              id: "session-" + selectedSessionHistory.id + "-summary",
+              role: "assistant",
+              content:
+                "\u5df2\u6253\u5f00\u4f1a\u8bdd\u300c" +
+                selectedSessionHistory.title +
+                "\u300d\n\n\u72b6\u6001\uff1a" +
+                selectedSessionHistory.status +
+                " / " +
+                selectedSessionHistory.updatedAt +
+                "\n\n\u6458\u8981\uff1a" +
+                selectedSessionHistory.summary +
+                "\n\n\u540e\u7aef\u6682\u672a\u8fd4\u56de\u8fd9\u6761\u4f1a\u8bdd\u7684 recentMessages\uff0c\u5f53\u524d\u5148\u5c55\u793a\u4f1a\u8bdd\u6458\u8981\u3002"
+            }
+          ];
+
+    loadSessionMessages(selectedSessionHistory.id, historyMessages);
+  }, [
+    activeView,
+    loadSessionMessages,
+    selectedSessionHistory,
+    selectedSessionMessageKey
+  ]);
 
   const selectSidebarConversation = (conversationId: string) => {
     const conversation = sessionHistoryPanelItems.find(
