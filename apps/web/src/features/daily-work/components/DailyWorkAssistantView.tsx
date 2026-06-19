@@ -61,21 +61,21 @@ type AssistantPanel = "prompts" | "runtime" | "trace" | null;
 
 const primaryPrompt = {
   icon: FileCode2,
-  title: "????",
-  text: "?????????????????????????????????????"
+  title: "阅读代码",
+  text: "帮我梳理这个功能的入口文件、调用链和关键风险。"
 };
 
 const promptCards = [
   primaryPrompt,
   {
     icon: Presentation,
-    title: "????",
-    text: "?????????????????????????????????"
+    title: "生成修改方案",
+    text: "先给出实现计划和需要改动的文件，等我确认后再执行。"
   },
   {
     icon: Search,
-    title: "????",
-    text: "??????????????????????????????? diff?"
+    title: "检查变更",
+    text: "查看当前 git diff，说明改动影响、风险和建议测试。"
   }
 ];
 
@@ -185,7 +185,7 @@ export function DailyWorkAssistantView({
               ref={inputRef}
               className="max-h-40 min-h-10 min-w-0 flex-1 resize-none bg-transparent py-2 text-sm leading-5 text-slate-950 outline-none placeholder:text-slate-400"
               placeholder={modelInputPlaceholder}
-              aria-label="输入日常工作请求"
+              aria-label="输入编程请求"
               value={input}
               onChange={(event) => onInputChange(event.target.value)}
               disabled={isBusy}

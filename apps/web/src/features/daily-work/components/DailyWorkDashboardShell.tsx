@@ -9,6 +9,11 @@ import { cn } from "@/lib/utils";
 
 export type DailyWorkView =
   | "assistant"
+  | "files"
+  | "search"
+  | "diff"
+  | "terminal"
+  | "trace"
   | "templates"
   | "knowledge"
   | "workflows"
@@ -77,7 +82,7 @@ export function DailyWorkDashboardShell({
   const settingsEntry: DailyWorkViewConfig = {
     id: "models",
     label: "\u8bbe\u7f6e",
-    description: "\u6a21\u578b\u3001\u8fde\u63a5\u5668\u3001\u5ba1\u6279\u548c\u5ba1\u8ba1\u3002",
+    description: "模型、运行时、审批和审计。",
     icon: <Settings2 className="size-4" aria-hidden="true" />
   };
 
@@ -137,7 +142,7 @@ export function DailyWorkDashboardShell({
                 SeekDesk
               </h1>
               <div className="truncate text-[11px] font-medium text-slate-400">
-                coding_agent
+                coding agent
               </div>
             </div>
           </div>

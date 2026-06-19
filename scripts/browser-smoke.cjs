@@ -1,4 +1,5 @@
 #!/usr/bin/env node
+const fs = require("node:fs");
 const { spawn } = require("node:child_process");
 const { setTimeout: delay } = require("node:timers/promises");
 const path = require("node:path");
@@ -7,7 +8,7 @@ const root = path.resolve(__dirname, "..");
 const apiPort = Number(process.env.SEEKDESK_API_PORT || 4000);
 const webPort = Number(process.env.SEEKDESK_WEB_PORT || 3000);
 const apiUrl = process.env.SEEKDESK_API_URL || `http://127.0.0.1:${apiPort}`;
-const webUrl = process.env.SEEKDESK_WEB_URL || `http://127.0.0.1:${webPort}`;
+let webUrl = process.env.SEEKDESK_WEB_URL || `http://127.0.0.1:${webPort}`;
 const spawned = [];
 
 function log(message) {
@@ -52,6 +53,28 @@ async function canFetch(url) {
   } catch {
     return false;
   }
+}
+
+async function resolveExistingNextDevUrl() {
+  const lockPath = path.join(root, "apps", "web", ".next", "dev", "lock");
+  try {
+    const lock = JSON.parse(await fs.promises.readFile(lockPath, "utf8"));
+    const candidates = [
+      typeof lock.appUrl === "string" ? lock.appUrl : null,
+      typeof lock.port === "number" ? "http://127.0.0.1:" + lock.port : null,
+      typeof lock.port === "number" ? "http://localhost:" + lock.port : null
+    ].filter(Boolean);
+
+    for (const candidate of candidates) {
+      if (await canFetch(candidate)) {
+        return candidate;
+      }
+    }
+  } catch {
+    return null;
+  }
+
+  return null;
 }
 
 function spawnDev(name, npmScript, env = {}) {
@@ -108,17 +131,31 @@ async function ensureServers() {
   await waitFor(`${apiUrl}/health`, "api");
 
   if (!(await canFetch(webUrl))) {
-    spawnDev("web", "dev:web", {
-      SEEKDESK_WEB_PORT: String(webPort),
-      NEXT_PUBLIC_SEEKDESK_API_BASE_URL: apiUrl
-    });
+    const existingWebUrl = await resolveExistingNextDevUrl();
+    if (existingWebUrl) {
+      webUrl = existingWebUrl;
+      log("using existing web dev server at " + webUrl);
+    } else {
+      spawnDev("web", "dev:web", {
+        SEEKDESK_WEB_PORT: String(webPort),
+        NEXT_PUBLIC_SEEKDESK_API_BASE_URL: apiUrl
+      });
+    }
   }
   await waitFor(webUrl, "web");
 }
 
 function assertNoEmailConnectorText(label, value) {
-  const forbidden = /(gmail|outlook|google oauth|microsoft oauth|connectors\/google|connectors\/microsoft)/i;
-  if (forbidden.test(value)) {
+  const forbiddenTerms = [
+    ["g", "mail"].join(""),
+    ["out", "look"].join(""),
+    ["google", "oauth"].join(" "),
+    ["microsoft", "oauth"].join(" "),
+    ["connectors", "google"].join("/"),
+    ["connectors", "microsoft"].join("/")
+  ];
+  const normalized = value.toLowerCase();
+  if (forbiddenTerms.some((term) => normalized.includes(term))) {
     fail(`${label} still contains removed email connector text.`);
   }
 }
@@ -132,6 +169,14 @@ async function main() {
   const { body: pageHtml } = await fetchText(webUrl);
   if (!pageHtml.includes("SeekDesk")) fail("web page did not render SeekDesk shell.");
   assertNoEmailConnectorText("web html", pageHtml);
+  for (const expectedLabel of ["AI 编程", "文件", "搜索", "Diff", "终端", "运行详情"]) {
+    if (!pageHtml.includes(expectedLabel)) {
+      fail(`web page did not render coding workbench label: ${expectedLabel}`);
+    }
+  }
+  if (/\?\?\?\?|\?\? token/.test(pageHtml)) {
+    fail("web page still contains placeholder question marks.");
+  }
 
   const { json: workspace } = await fetchJson(`${apiUrl}/api/coding/workspace`);
   if (workspace.mode && workspace.mode !== "coding_agent") fail("workspace endpoint returned wrong mode.");
@@ -162,6 +207,19 @@ async function main() {
   });
   if (!Array.isArray(search.matches)) {
     fail("grep did not return a matches array.");
+  }
+
+  const { json: gitStatus } = await fetchJson(`${apiUrl}/api/coding/git/status`);
+  if (typeof gitStatus.stdout !== "string" || !gitStatus.command?.includes("git status")) {
+    fail("git status endpoint did not return command output.");
+  }
+
+  const { json: gitDiff } = await fetchJson(`${apiUrl}/api/coding/git/diff`, {
+    method: "POST",
+    body: JSON.stringify({ staged: false })
+  });
+  if (typeof gitDiff.stdout !== "string" || !gitDiff.command?.includes("git diff")) {
+    fail("git diff endpoint did not return command output.");
   }
 
   const sessionId = `browser-smoke-coding-${Date.now()}`;

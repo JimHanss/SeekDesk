@@ -4,13 +4,14 @@ import { useCallback, useEffect, useMemo, useState } from "react";
 import {
   Activity,
   Bot,
-  Database,
+  FileCode2,
   FileText,
+  GitCompare,
   MessageSquare,
   PanelLeft,
+  Search,
   ShieldCheck,
-  Wand2,
-  Workflow
+  Terminal
 } from "lucide-react";
 
 import {
@@ -20,6 +21,7 @@ import {
 } from "@/features/daily-work/domain";
 
 import { useChatController } from "@/features/daily-work/chat/hooks/useChatController";
+import { AgentTracePanel } from "@/features/daily-work/chat/components/ChatThread";
 import {
   useActivityFeed,
   useApprovalLedger,
@@ -32,6 +34,7 @@ import {
   useWorkflowPreview
 } from "@/features/daily-work/hooks/useDailyWorkPanels";
 import { useDailyWorkActions } from "@/features/daily-work/hooks/useDailyWorkActions";
+import { useCodingWorkbench } from "@/features/daily-work/hooks/useCodingWorkbench";
 import {
   useDailyWorkDerivedSelections,
   useDailyWorkSelectionState
@@ -47,6 +50,12 @@ import { ModelUsagePanel } from "@/features/daily-work/components/panels/ModelUs
 import { SessionHistoryPanel } from "@/features/daily-work/components/panels/SessionHistoryPanel";
 import { TemplateLibraryPanel } from "@/features/daily-work/components/panels/TemplateLibraryPanel";
 import { WorkflowPreviewPanel } from "@/features/daily-work/components/panels/WorkflowPreviewPanel";
+import {
+  CodingDiffPanel,
+  CodingFilesPanel,
+  CodingSearchPanel,
+  CodingTerminalPanel
+} from "@/features/daily-work/components/panels/CodingWorkbenchPanels";
 import {
   DailyWorkDashboardShell,
   type DailyWorkView,
@@ -169,6 +178,7 @@ export default function Page() {
     agentTrace.sessionId
   );
   const { persistencePanel } = usePersistencePanel(apiBaseUrl);
+  const codingWorkbench = useCodingWorkbench(apiBaseUrl, agentTrace);
   const activeModelSnapshot = modelUsagePanel.modelSnapshots[modelRouteMode];
   const modelInputPlaceholder =
     modelRouteMode === "fast"
@@ -250,46 +260,68 @@ export default function Page() {
   const restoreSessionAndOpenAssistant = openAssistantAfter(restoreSessionHistory);
   const useContextAndOpenAssistant = openAssistantAfter(useContextItem);
 
+  const openCodingFile = useCallback(
+    (path: string) => {
+      void codingWorkbench.actions.readFile(path);
+      setActiveView("files");
+    },
+    [codingWorkbench.actions]
+  );
+
   const primaryViews: DailyWorkViewConfig[] = [
     {
       id: "assistant",
-      label: "AI \u5de5\u5177",
-      description: "\u901a\u7528 AI tools \u5165\u53e3\uff0c\u5f53\u524d\u4f18\u5148\u627f\u8f7d\u65e5\u5e38\u5de5\u4f5c\u76f8\u5173\u80fd\u529b\u3002",
+      label: "AI 编程",
+      description: "通过对话规划、读取代码、生成工具计划并执行授权动作。",
       icon: <MessageSquare className="size-4" aria-hidden="true" />,
       badge: statusLabel(status)
     },
     {
-      id: "templates",
-      label: "模板库",
-      description: "从固定工作模式开始，不让模板列表挤占聊天区。",
-      icon: <Wand2 className="size-4" aria-hidden="true" />,
-      badge: String(templateItems.length)
+      id: "files",
+      label: "文件",
+      description: "查看 workspace 文件树并读取文本文件。",
+      icon: <FileCode2 className="size-4" aria-hidden="true" />,
+      badge: String(codingWorkbench.state.treeEntries.length)
     },
     {
-      id: "knowledge",
-      label: "上下文",
-      description: "管理可引用的会话知识、资料上传和数据层状态。",
-      icon: <Database className="size-4" aria-hidden="true" />,
-      badge: String(contextPanelItems.length)
+      id: "search",
+      label: "搜索",
+      description: "搜索代码和文档内容，并跳转到文件。",
+      icon: <Search className="size-4" aria-hidden="true" />,
+      badge: String(codingWorkbench.state.search.matches.length)
     },
     {
-      id: "workflows",
-      label: "工作流",
-      description: "预演自动化动作，把流程编排从聊天主屏拆出来。",
-      icon: <Workflow className="size-4" aria-hidden="true" />,
-      badge: String(filteredWorkflowActions.length)
+      id: "diff",
+      label: "Diff",
+      description: "查看 git status 和未暂存 diff。",
+      icon: <GitCompare className="size-4" aria-hidden="true" />,
+      badge: codingWorkbench.state.git.diffText ? "有变更" : "只读"
+    },
+    {
+      id: "terminal",
+      label: "终端",
+      description: "查看已授权 shell 和测试输出。",
+      icon: <Terminal className="size-4" aria-hidden="true" />,
+      badge: String(codingWorkbench.state.terminalToolCalls.length)
+    },
+    {
+      id: "trace",
+      label: "运行详情",
+      description: "查看工具计划、审批、活动和 token 记录。",
+      icon: <Activity className="size-4" aria-hidden="true" />,
+      badge: String(agentTrace.toolCalls.length)
     },
     {
       id: "artifacts",
       label: "产物",
-      description: "把文档、摘要和可复用成果放到独立资产视图。",
+      description: "查看当前会话生成的文档、补丁说明和执行记录。",
       icon: <FileText className="size-4" aria-hidden="true" />,
       badge: String(filteredArtifacts.length)
     },
     {
       id: "sessions",
       label: "历史",
-      description: "恢复最近会话和工作流，不塞在当前对话下方。",
+      description: "恢复最近会话并保持创建时间倒序。",
       icon: <PanelLeft className="size-4" aria-hidden="true" />,
       badge: String(filteredSessionHistory.length)
     }
@@ -306,14 +338,14 @@ export default function Page() {
     {
       id: "approvals",
       label: "审批与权限",
-      description: "把风险决策和模式快照收束在治理视图。",
+      description: "查看会话授权、审批策略和安全边界。",
       icon: <ShieldCheck className="size-4" aria-hidden="true" />,
       badge: String(approvalRequests.length)
     },
     {
       id: "activity",
       label: "活动审计",
-      description: "查看实时事件流、同步来源和最近状态。",
+      description: "查看工具计划、执行结果和审计事件。",
       icon: <Activity className="size-4" aria-hidden="true" />,
       badge: String(activityFeedEvents.length)
     }
@@ -582,6 +614,53 @@ export default function Page() {
                   onApplyWorkflowActionPrompt={applyWorkflowAndOpenAssistant}
                   onFilterChange={setWorkflowActionFilter}
                   onSelectAction={setSelectedWorkflowActionId}
+                />
+              </DailyWorkModuleStack>
+            ) : null}
+
+            {activeView === "files" ? (
+              <DailyWorkModuleStack>
+                <CodingFilesPanel
+                  state={codingWorkbench.state}
+                  onOpenFile={openCodingFile}
+                  onRefreshTree={() => void codingWorkbench.actions.refreshFileTree()}
+                />
+              </DailyWorkModuleStack>
+            ) : null}
+
+            {activeView === "search" ? (
+              <DailyWorkModuleStack>
+                <CodingSearchPanel
+                  state={codingWorkbench.state}
+                  onOpenFile={openCodingFile}
+                  onRunSearch={() => void codingWorkbench.actions.runSearch()}
+                  onUpdateSearch={codingWorkbench.actions.updateSearchDraft}
+                />
+              </DailyWorkModuleStack>
+            ) : null}
+
+            {activeView === "diff" ? (
+              <DailyWorkModuleStack>
+                <CodingDiffPanel
+                  state={codingWorkbench.state}
+                  onRefreshGit={() => void codingWorkbench.actions.refreshGit()}
+                />
+              </DailyWorkModuleStack>
+            ) : null}
+
+            {activeView === "terminal" ? (
+              <DailyWorkModuleStack>
+                <CodingTerminalPanel state={codingWorkbench.state} />
+              </DailyWorkModuleStack>
+            ) : null}
+
+            {activeView === "trace" ? (
+              <DailyWorkModuleStack>
+                <AgentTracePanel
+                  agentTrace={agentTrace}
+                  modelName={activeModelSnapshot.selectedModel}
+                  onAuthorizeToolCall={authorizeToolCallForSession}
+                  onExecuteToolCall={executeToolCall}
                 />
               </DailyWorkModuleStack>
             ) : null}

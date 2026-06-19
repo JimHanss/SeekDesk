@@ -48,7 +48,7 @@ export function ModelUsagePanel({
             <span className="min-w-0 break-words">模型与用量</span>
           </div>
           <p className="mt-1 text-xs leading-5 text-teal-700">
-            DeepSeek 日常工作模式快照；启动后同步后端 daily_work 模型配置与用量统计。
+            DeepSeek 编程 Agent 模型快照；同步后端模型配置与 token 用量统计。
           </p>
         </div>
 
@@ -178,7 +178,7 @@ export function ModelUsagePanel({
 
           <div className="mt-3 space-y-2">
             <SnapshotRow label="窗口" value={activeUsageSnapshot.usageWindow} />
-            <SnapshotRow label="成本" value={activeUsageSnapshot.estimatedCost} />
+            <SnapshotRow label="计费展示" value="仅展示 token，不展示金额" />
             <SnapshotRow label="预算/安全" value={activeUsageSnapshot.budgetState} />
           </div>
 
@@ -214,13 +214,13 @@ export function ModelUsagePanel({
                 {formatTokenCount(aggregate.totalTokens)}
               </div>
               <div className="mt-1 text-[11px] leading-5 text-slate-600">
-                ?? {formatTokenCount(aggregate.promptTokens)} / ?? {formatTokenCount(aggregate.completionTokens)} / {formatTokenCount(aggregate.recordCount)} ?
+                输入 {formatTokenCount(aggregate.promptTokens)} / 输出 {formatTokenCount(aggregate.completionTokens)} / 调用 {formatTokenCount(aggregate.recordCount)}
               </div>
             </div>
           ))
         ) : (
           <div className="rounded-[8px] border border-slate-200 bg-white px-3 py-2 text-xs text-slate-600 md:col-span-4">
-            ???? token ??????????????????????24h?7d ??????
+            暂无 token 聚合数据；发送一次请求后会显示当前会话、24h、7d 和总计。
           </div>
         )}
       </div>
@@ -230,18 +230,18 @@ export function ModelUsagePanel({
         data-model-usage-records={modelUsagePanel.usageRecords.length}
       >
         <div className="border-b border-slate-200 px-3 py-2 text-xs font-medium text-slate-700">
-          ????
+          调用明细
         </div>
         <div className="overflow-x-auto">
           <table className="w-full min-w-[620px] text-left text-xs">
             <thead className="bg-slate-50 text-slate-500">
               <tr>
-                <th className="px-3 py-2 font-medium">??</th>
-                <th className="px-3 py-2 font-medium">??</th>
-                <th className="px-3 py-2 font-medium">??</th>
-                <th className="px-3 py-2 font-medium">??</th>
-                <th className="px-3 py-2 font-medium">??</th>
-                <th className="px-3 py-2 font-medium">??</th>
+                <th className="px-3 py-2 font-medium">时间</th>
+                <th className="px-3 py-2 font-medium">模型</th>
+                <th className="px-3 py-2 font-medium">会话</th>
+                <th className="px-3 py-2 font-medium">输入</th>
+                <th className="px-3 py-2 font-medium">输出</th>
+                <th className="px-3 py-2 font-medium">合计</th>
               </tr>
             </thead>
             <tbody className="divide-y divide-slate-100 text-slate-700">
@@ -258,7 +258,7 @@ export function ModelUsagePanel({
               {modelUsagePanel.usageRecords.length === 0 ? (
                 <tr>
                   <td className="px-3 py-3 text-slate-500" colSpan={6}>
-                    ???????
+                    暂无调用明细
                   </td>
                 </tr>
               ) : null}
@@ -279,7 +279,7 @@ export function ModelUsagePanel({
       </div>
 
       <div className="mt-3 rounded-[8px] border border-slate-200 bg-white px-3 py-2 text-xs leading-5 text-slate-700">
-        边界：当前面板只读取 daily_work 的模型用量；coding_agent 路径仅作为兼容说明，不在此处切换或暴露编码工具状态。
+        边界：当前面板只展示 token 与模型路由，不展示密钥，不执行任何工具。
       </div>
 
       <div className="mt-3 grid gap-2 md:grid-cols-2">

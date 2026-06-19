@@ -416,7 +416,7 @@ function normalizeSessionTitle(value: string) {
   const title = value
     .replace(/[\r\n]+/g, " ")
     .replace(/^title\s*[:?]\s*/i, "")
-    .replace(/^["'????]+|["'?????.?,]+$/g, "")
+    .replace(/^["'“”‘’]+|["'“”‘’.,，。]+$/g, "")
     .replace(/\s+/g, " ")
     .trim();
 
@@ -424,7 +424,7 @@ function normalizeSessionTitle(value: string) {
     return null;
   }
 
-  return title.length > 32 ? `${title.slice(0, 31)}?` : title;
+  return title.length > 32 ? `${title.slice(0, 31)}...` : title;
 }
 
 async function recordToolCallChunk(
