@@ -44,12 +44,23 @@ export function DailyWorkDashboardShell({
 }: DailyWorkDashboardShellProps) {
   const views = [...primaryViews, ...settingsViews];
   const currentView = views.find((view) => view.id === activeView) ?? views[0]!;
+  const isSettingsActive = settingsViews.some((view) => view.id === activeView);
+  const settingsEntry: DailyWorkViewConfig = {
+    id: "models",
+    label: "\u8bbe\u7f6e",
+    description: "\u6a21\u578b\u3001\u8fde\u63a5\u5668\u3001\u5ba1\u6279\u548c\u5ba1\u8ba1\u3002",
+    icon: <Settings2 className="size-4" aria-hidden="true" />
+  };
 
   const renderNavButton = (
     view: DailyWorkViewConfig,
-    density: "primary" | "compact" = "primary"
+    density: "primary" | "compact" = "primary",
+    options?: {
+      active?: boolean;
+      onClick?: () => void;
+    }
   ) => {
-    const isActive = activeView === view.id;
+    const isActive = options?.active ?? activeView === view.id;
 
     return (
       <button
@@ -58,7 +69,7 @@ export function DailyWorkDashboardShell({
         data-daily-view-nav={view.id}
         aria-current={isActive ? "page" : undefined}
         aria-label={`${view.label}，${view.description}`}
-        onClick={() => onViewChange(view.id)}
+        onClick={options?.onClick ?? (() => onViewChange(view.id))}
         className={cn(
           "flex w-full cursor-pointer items-center gap-2 rounded-[8px] text-left text-sm transition-colors duration-200 focus-visible:outline focus-visible:outline-2 focus-visible:outline-teal-300",
           density === "compact" ? "px-2.5 py-2" : "px-3 py-2.5",
@@ -118,7 +129,10 @@ export function DailyWorkDashboardShell({
             </div>
 
             <div className="flex shrink-0 gap-2 border-l border-white/10 pl-3 lg:mt-auto lg:flex-col lg:border-l-0 lg:border-t lg:pl-0 lg:pt-3">
-              {settingsViews.map((view) => renderNavButton(view, "compact"))}
+              {renderNavButton(settingsEntry, "compact", {
+                active: isSettingsActive,
+                onClick: () => onViewChange("models")
+              })}
             </div>
           </nav>
         </aside>
