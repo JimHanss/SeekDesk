@@ -4,6 +4,7 @@ import {
   AlertCircle,
   Bot,
   CheckCircle2,
+  ChevronDown,
   Cpu,
   Database,
   FileText,
@@ -76,8 +77,7 @@ export function ChatThread({
             <span className="min-w-0 break-words">Daily Work Chat</span>
           </div>
           <p className="mt-1 text-xs leading-5 text-teal-700">
-            Messages stream through /api/chat. Model responses, tool plans, tool
-            results, usage, and local artifacts are attached to this session.
+            对话区默认保持简洁；工具计划、token 和权限边界可在运行详情中查看。
           </p>
         </div>
         <span className="inline-flex shrink-0 items-center gap-1 rounded-[999px] bg-teal-50 px-2.5 py-1 text-[11px] font-medium text-teal-700">
@@ -87,7 +87,26 @@ export function ChatThread({
       </div>
 
       <div className="space-y-3">
-        <AgentTracePanel agentTrace={agentTrace} modelName={modelName} />
+        <details
+          className="group rounded-[8px] border border-slate-200 bg-slate-50/80"
+          data-agent-trace-disclosure
+        >
+          <summary className="flex cursor-pointer list-none items-center justify-between gap-3 px-3 py-2 text-xs text-slate-700 transition-colors duration-200 hover:bg-slate-100 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-teal-600">
+            <span className="flex min-w-0 items-center gap-2 font-semibold text-slate-900">
+              <Cpu className="size-4 shrink-0 text-teal-700" aria-hidden="true" />
+              <span className="min-w-0 truncate">运行详情</span>
+            </span>
+            <span className="ml-auto flex shrink-0 items-center gap-2 text-[11px] text-slate-500">
+              <span>工具 {agentTrace.toolCalls.length}</span>
+              <span>Token {agentTrace.modelUsageSummary.totalTokens}</span>
+              <ChevronDown
+                className="size-4 transition-transform duration-200 group-open:rotate-180"
+                aria-hidden="true"
+              />
+            </span>
+          </summary>
+          <AgentTracePanel agentTrace={agentTrace} modelName={modelName} />
+        </details>
 
         {messages.length === 0 ? (
           <ChatEmptyState endpoint={endpoint} modelName={modelName} />
@@ -138,7 +157,7 @@ function AgentTracePanel({
 
   return (
     <div
-      className="border-y border-slate-100 bg-slate-50/70 px-3 py-3"
+      className="border-t border-slate-200 bg-white px-3 py-3"
       data-agent-trace-panel
       data-agent-trace-status={agentTrace.syncStatus}
     >
