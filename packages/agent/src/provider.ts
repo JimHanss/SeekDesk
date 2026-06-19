@@ -85,7 +85,7 @@ export interface ModelProvider {
 }
 
 export function resolveModelMode(mode?: AppMode): AppMode {
-  return mode ?? "daily_work";
+  return mode ?? "coding_agent";
 }
 
 export function getModeSystemMessage(mode?: AppMode): ModelMessage {
@@ -95,13 +95,13 @@ export function getModeSystemMessage(mode?: AppMode): ModelMessage {
     return {
       role: "system",
       content:
-        "SeekDesk coding-agent compatibility mode is reserved in this build. Help with planning and explanation, but do not claim filesystem, shell, git, or IDE tools are active."
+        "SeekDesk is running coding-agent mode. Help the user inspect, edit, test, and reason about the local workspace. Use coding tools when useful. Read-only tools may run directly. File writes, shell commands, and test commands require same-session authorization and must be auditable."
     };
   }
 
   return {
     role: "system",
     content:
-      "SeekDesk is running daily-work mode. Help with writing, research, meeting summaries, knowledge organization, and safe workflow planning. Do not claim private connectors are active unless the user explicitly authorizes them."
+      "SeekDesk legacy daily-work mode is disabled in this build. Prefer coding-agent workflows and avoid email, calendar, or external connector actions."
   };
 }

@@ -1,45 +1,37 @@
 import { describe, expect, it } from "vitest";
 
 import {
-  dailyWorkToolInputSchemas,
-  dailyWorkToolNameSchema,
-  outlookCalendarCreateEventInputSchema,
-  outlookSendMailInputSchema
+  codingEditFileInputSchema,
+  codingRunShellInputSchema,
+  codingToolInputSchemas,
+  codingToolNameSchema
 } from "./tools.js";
 
-describe("daily-work Microsoft write tool schemas", () => {
-  it("registers Microsoft write tool names", () => {
-    expect(dailyWorkToolNameSchema.parse("outlook.create_draft")).toBe(
-      "outlook.create_draft"
-    );
-    expect(dailyWorkToolNameSchema.parse("outlook.send_mail")).toBe(
-      "outlook.send_mail"
-    );
-    expect(dailyWorkToolNameSchema.parse("outlook.calendar.create_event")).toBe(
-      "outlook.calendar.create_event"
-    );
+describe("coding tool schemas", () => {
+  it("registers coding tool names", () => {
+    expect(codingToolNameSchema.parse("coding.read_file")).toBe("coding.read_file");
+    expect(codingToolNameSchema.parse("coding.edit_file")).toBe("coding.edit_file");
+    expect(codingToolNameSchema.parse("coding.run_shell")).toBe("coding.run_shell");
   });
 
-  it("validates send mail input with safe defaults", () => {
+  it("validates edit input with a safe replacement default", () => {
     expect(
-      outlookSendMailInputSchema.parse({
-        to: ["customer@example.com"],
-        subject: "Status update",
-        bodyText: "Hello"
+      codingEditFileInputSchema.parse({
+        path: "apps/web/src/app/page.tsx",
+        search: "daily_work",
+        replace: "coding_agent"
       })
     ).toEqual({
-      to: ["customer@example.com"],
-      cc: [],
-      bcc: [],
-      subject: "Status update",
-      bodyText: "Hello",
-      saveToSentItems: true
+      path: "apps/web/src/app/page.tsx",
+      search: "daily_work",
+      replace: "coding_agent",
+      expectedReplacements: 1
     });
   });
 
-  it("uses the same schema map for calendar writes", () => {
-    expect(dailyWorkToolInputSchemas["outlook.calendar.create_event"]).toBe(
-      outlookCalendarCreateEventInputSchema
+  it("uses the same schema map for command tools", () => {
+    expect(codingToolInputSchemas["coding.run_shell"]).toBe(
+      codingRunShellInputSchema
     );
   });
 });

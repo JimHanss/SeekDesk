@@ -9,12 +9,12 @@ import type {
 import { ToolOrchestrator, ToolRegistry } from "./tools.js";
 
 describe("runAgentLoop", () => {
-  it("adds read-only daily-work session and context before provider streaming", async () => {
+  it("adds coding-agent workspace context before provider streaming", async () => {
     const provider = new CapturingProvider();
 
     const result = await runAgentLoop({
       provider,
-      mode: "daily_work",
+      mode: "coding_agent",
       sessionId: "planning-refresh-session",
       prompt: "draft the next action list",
       context: {
@@ -27,7 +27,7 @@ describe("runAgentLoop", () => {
       },
       contextSummaryLines: [
         "Context item project-brief: Project Brief; summary=Current scope.",
-        "Connector customer-email: Customer Email; provider=gmail; status=available."
+        "Workspace root: /Users/jimhuang/project/SeekDesk; read-only inspection is available."
       ]
     });
 
@@ -38,12 +38,12 @@ describe("runAgentLoop", () => {
     ]);
     expect(provider.request).toEqual(
       expect.objectContaining({
-        mode: "daily_work",
+        mode: "coding_agent",
         maxTurns: 1,
         messages: [
           expect.objectContaining({
             role: "system",
-            content: expect.stringContaining("read-only")
+            content: expect.stringContaining("workspace root")
           }),
           {
             role: "user",
@@ -62,10 +62,10 @@ describe("runAgentLoop", () => {
       "Context item project-brief: Project Brief"
     );
     expect(provider.request?.messages[0]?.content).toContain(
-      "Connector customer-email: Customer Email"
+      "Workspace root: /Users/jimhuang/project/SeekDesk"
     );
     expect(provider.request?.messages[0]?.content).toContain(
-      "Do not execute tools"
+      "Do not claim filesystem"
     );
   });
 

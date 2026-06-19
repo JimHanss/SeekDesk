@@ -125,7 +125,7 @@ export const defaultDailyWorkConnectors: DailyWorkConnector[] = [
     id: "workspace-documents",
     mode: "daily_work",
     category: "documents",
-    provider: "google_drive",
+    provider: "workspace_drive",
     displayName: "Workspace Documents",
     description:
       "Shared project documents and draft-ready writing context for daily work.",
@@ -134,7 +134,7 @@ export const defaultDailyWorkConnectors: DailyWorkConnector[] = [
     riskLevel: "medium",
     availableActions: ["search", "read_context", "draft_document"],
     lastSyncAt: "2026-06-02T08:30:00.000Z",
-    notes: ["Mock catalog entry only; no Google Drive OAuth is connected."],
+    notes: ["Mock catalog entry only; no external drive OAuth is connected."],
     relatedContextItemIds: ["project-brief", "meeting-notes"],
     requiredApprovalRequestIds: ["use-internal-meeting-notes"]
   },
@@ -142,7 +142,7 @@ export const defaultDailyWorkConnectors: DailyWorkConnector[] = [
     id: "team-calendar",
     mode: "daily_work",
     category: "calendar",
-    provider: "google_calendar",
+    provider: "local_schedule",
     displayName: "Team Calendar",
     description:
       "Follow-up windows and meeting context for planning next daily-work steps.",
@@ -150,7 +150,7 @@ export const defaultDailyWorkConnectors: DailyWorkConnector[] = [
     permissionState: "requires_review",
     riskLevel: "medium",
     availableActions: ["read_context", "prepare_calendar_follow_up"],
-    notes: ["Mock catalog entry only; no calendar writes are performed."],
+    notes: ["Mock catalog entry only; no external calendar writes are performed."],
     relatedContextItemIds: ["meeting-notes"],
     requiredApprovalRequestIds: ["schedule-calendar-follow-up"]
   },
@@ -158,7 +158,7 @@ export const defaultDailyWorkConnectors: DailyWorkConnector[] = [
     id: "customer-email",
     mode: "daily_work",
     category: "email",
-    provider: "gmail",
+    provider: "local_mail_archive",
     displayName: "Customer Email",
     description:
       "Customer thread context for reviewed summaries and external reply drafts.",
@@ -167,7 +167,7 @@ export const defaultDailyWorkConnectors: DailyWorkConnector[] = [
     riskLevel: "high",
     availableActions: ["read_context", "prepare_email_draft"],
     lastSyncAt: "2026-06-02T09:45:00.000Z",
-    notes: ["Mock catalog entry only; no inbox access or sending is enabled."],
+    notes: ["Mock catalog entry only; no live inbox access or sending is enabled."],
     relatedContextItemIds: ["customer-email", "meeting-notes"],
     requiredApprovalRequestIds: [
       "read-customer-email-context",

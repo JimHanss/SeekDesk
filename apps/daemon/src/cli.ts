@@ -8,18 +8,28 @@ export interface DaemonCliResult {
   output: string;
 }
 
-const runtimeMode = "local-preview";
+const runtimeMode = "local-runtime";
 const supportedCapabilities = [
   "health",
-  "preview-runtime-status",
-  "workspace-root-resolution"
+  "workspace-root-resolution",
+  "coding.list_files",
+  "coding.read_file",
+  "coding.grep",
+  "coding.git_status",
+  "coding.git_diff",
+  "coding.write_file",
+  "coding.edit_file",
+  "coding.run_shell",
+  "coding.run_tests"
 ] as const;
 const safetyBoundary = {
-  readsUserFiles: false,
-  writesUserFiles: false,
-  executesShell: false,
+  readsUserFiles: true,
+  writesUserFiles: true,
+  executesShell: true,
   startsLongRunningServices: false,
-  opensNetworkListeners: false
+  opensNetworkListeners: false,
+  workspaceRootLocked: true,
+  requiresApprovalForWritesAndCommands: true
 } as const;
 
 interface ParsedDaemonArgs {
@@ -37,7 +47,7 @@ function helpText() {
     "  seekdesk-daemon health [--workspace <path>]",
     "  seekdesk-daemon start [--workspace <path>]",
     "",
-    "The daemon currently starts in preview-only mode and reports runtime status only."
+    "The daemon reports a local coding runtime boundary. File writes and commands require API session approval."
   ].join("\n");
 }
 
@@ -86,16 +96,16 @@ function createRuntimeStatus(status: "ok" | "preview-ready", workspaceRoot: stri
     workspaceRoot,
     pid: process.pid,
     runtimeMode,
-    previewOnly: true,
+    previewOnly: false,
     supportedCapabilities,
     safetyBoundary,
     ipc: {
-      transport: "planned",
-      endpoint: null
+      transport: "api-mediated",
+      endpoint: "/api/coding"
     },
     webSocket: {
-      transport: "planned",
-      endpoint: null
+      transport: "api-mediated",
+      endpoint: "/api/coding"
     }
   };
 }
@@ -128,7 +138,7 @@ export function runDaemonCli(args: string[]): DaemonCliResult {
     return {
       exitCode: 0,
       output: JSON.stringify(
-        createRuntimeStatus("preview-ready", parsed.workspaceRoot),
+        createRuntimeStatus("ok", parsed.workspaceRoot),
         null,
         2
       )

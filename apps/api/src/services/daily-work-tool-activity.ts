@@ -15,41 +15,30 @@ export function createToolActivityEvent(input: {
   error?: string;
   toolCallId?: string;
 }): DailyActivityEvent {
-  const connectorIds = inferToolConnectorIds(input.toolName);
+  const isCodingTool = input.toolName.startsWith("coding.");
   const artifactIds = inferToolArtifactIds(input.outputJson);
   const boundary = inferToolSafetyBoundary(input.outputJson, input.error);
   const isCompleted = input.phase === "completed";
-  const summary = (isCompleted
+  const summary = isCompleted
     ? summarizeToolResult(input.toolName, input.outputJson, input.error)
-    : summarizeToolRequest(input.toolName, input.inputJson)) ??
-    "Agent tool activity recorded.";
+    : summarizeToolRequest(input.toolName, input.inputJson);
   const metadata = createToolActivityMetadata({
     toolName: input.toolName,
     phase: input.phase,
     inputJson: input.inputJson,
     outputJson: input.outputJson,
-    connectorIds,
     ...(input.error ? { error: input.error } : {})
   });
 
   return {
-    id:
-      `daily-event-agent-tool-${input.sessionId}-${input.toolCallId ?? input.toolName}-${input.phase}`,
-    mode: "daily_work",
-    eventType: isCompleted
-      ? boundary.previewOnly
-        ? "workflow.preview.completed"
-        : "connector.action.completed"
-      : "workflow.preview.queued",
+    id: `agent-tool-${input.sessionId}-${input.toolCallId ?? input.toolName}-${input.phase}`,
+    mode: isCodingTool ? "coding_agent" : "daily_work",
+    eventType: isCompleted ? "workflow.preview.completed" : "workflow.preview.queued",
     status: input.status,
     timestamp: input.timestamp,
-    title: isCompleted
-      ? boundary.previewOnly
-        ? "Agent tool completed"
-        : "External action completed"
-      : "Agent tool planned",
+    title: isCompleted ? "Agent tool completed" : "Agent tool planned",
     summary,
-    actor: "daily-work-agent",
+    actor: isCodingTool ? "coding-agent" : "daily-work-agent",
     relatedRefs: {
       sessionIds: [input.sessionId],
       templateIds: [],
@@ -57,32 +46,30 @@ export function createToolActivityEvent(input: {
       actionQueueItemIds: [],
       artifactIds,
       approvalRequestIds: [],
-      connectorIds,
+      connectorIds: [],
       contextItemIds: []
     },
     safetyBoundary: {
       previewOnly: boundary.previewOnly,
       externalEffects: boundary.externalEffects,
-      prohibitedExternalActions: boundary.previewOnly
-        ? [
-            "send_email",
-            "write_document",
-            "schedule_calendar_event",
-            "create_task"
-          ]
-        : ["write_document", "create_task"],
-      statement: boundary.previewOnly
-        ? "Agent tool execution is recorded in SeekDesk. Preview/read tools do not perform external writes."
-        : "A Microsoft external write was executed after same-session authorization and recorded for audit."
+      prohibitedExternalActions: [
+        "send_email",
+        "write_document",
+        "schedule_calendar_event",
+        "create_task"
+      ],
+      statement: isCodingTool
+        ? "Coding tool execution is scoped to the workspace root. Writes and commands require same-session authorization and are recorded for audit."
+        : "Agent tool execution is recorded in SeekDesk without email, calendar, or external connector actions."
     },
     nextAction: null,
     metadata: {
-      riskLevel: connectorIds.length > 0 ? "medium" : "low",
-      permissionState: boundary.previewOnly
-        ? connectorIds.length > 0
-          ? "requires_review"
-          : "workspace_shared"
-        : "authorized_external_write",
+      riskLevel: boundary.externalEffects.some((effect) => effect !== "none")
+        ? "medium"
+        : "low",
+      permissionState: boundary.externalEffects.some((effect) => effect !== "none")
+        ? "authorized_external_write"
+        : "workspace_shared",
       externalEffects: boundary.externalEffects,
       ...metadata
     }
@@ -104,12 +91,10 @@ function inferToolSafetyBoundary(
   const externalEffects = Array.isArray(output.externalEffects)
     ? output.externalEffects.filter(isWorkflowExternalEffect)
     : [];
-  const previewOnly = output.previewOnly !== false;
 
   return {
-    previewOnly,
-    externalEffects:
-      !previewOnly && externalEffects.length > 0 ? externalEffects : ["none"]
+    previewOnly: output.previewOnly !== false,
+    externalEffects: externalEffects.length > 0 ? externalEffects : ["none"]
   };
 }
 
@@ -120,30 +105,9 @@ function isWorkflowExternalEffect(value: unknown): value is WorkflowExternalEffe
     value === "write_document" ||
     value === "schedule_calendar_event" ||
     value === "create_task" ||
-    value === "microsoft.outlook.draft.create" ||
-    value === "microsoft.outlook.mail.send" ||
-    value === "microsoft.outlook.calendar.event.create"
+    value === "workspace.file.write" ||
+    value === "workspace.command.run"
   );
-}
-
-function inferToolConnectorIds(toolName: ToolCallRecord["name"]) {
-  if (toolName.startsWith("gmail.")) {
-    return ["customer-email"];
-  }
-
-  if (toolName.startsWith("calendar.")) {
-    return ["team-calendar"];
-  }
-
-  if (toolName.startsWith("outlook.calendar.")) {
-    return ["team-calendar"];
-  }
-
-  if (toolName.startsWith("outlook.")) {
-    return ["customer-email"];
-  }
-
-  return [];
 }
 
 function inferToolArtifactIds(outputJson: unknown) {
@@ -160,7 +124,7 @@ function summarizeToolRequest(
   toolName: ToolCallRecord["name"],
   inputJson: unknown
 ) {
-  return `Agent planned ${toolName} with ${summarizeJsonShape(inputJson)}. No external write was performed.`;
+  return `Agent planned ${toolName} with ${summarizeJsonShape(inputJson)}.`;
 }
 
 function summarizeToolResult(
@@ -169,82 +133,31 @@ function summarizeToolResult(
   error: string | undefined
 ) {
   if (error) {
-    return `Agent tool ${toolName} failed with ${error}. No external write was performed.`;
+    return `Agent tool ${toolName} failed with ${error}.`;
   }
 
   if (!outputJson || typeof outputJson !== "object") {
-    return (
-      "Agent tool " +
-      toolName +
-      " completed in preview-only mode. No external write was performed."
-    );
+    return `Agent tool ${toolName} completed.`;
   }
 
   const output = outputJson as Record<string, unknown>;
-  if (output.previewOnly === false) {
-    const effects = Array.isArray(output.externalEffects)
-      ? output.externalEffects.filter(isWorkflowExternalEffect)
-      : [];
-    return (
-      "Agent completed " +
-      toolName +
-      " after same-session authorization. External effects: " +
-      (effects.join(", ") || "microsoft_write") +
-      "."
-    );
+  if (typeof output.path === "string") {
+    return `Agent tool ${toolName} completed for ${output.path}.`;
   }
-
-  if (Array.isArray(output.threads)) {
-    return `Agent read Gmail thread metadata: ${output.threads.length} thread result(s). No email was sent or modified.`;
+  if (Array.isArray(output.entries)) {
+    return `Agent tool ${toolName} listed ${output.entries.length} workspace entr${output.entries.length === 1 ? "y" : "ies"}.`;
   }
-
-  if (Array.isArray(output.messages)) {
-    const provider = typeof output.provider === "string" ? output.provider : "";
-
-    return provider === "outlook"
-      ? `Agent read Outlook message metadata: ${output.messages.length} message result(s). Attachments and sends remained disabled.`
-      : `Agent read Gmail thread metadata: ${output.messages.length} message metadata record(s). Attachments and sends remained disabled.`;
+  if (Array.isArray(output.matches)) {
+    return `Agent tool ${toolName} returned ${output.matches.length} search match${output.matches.length === 1 ? "" : "es"}.`;
   }
-
-  if (Array.isArray(output.events)) {
-    const provider = typeof output.provider === "string" ? output.provider : "";
-
-    return provider === "outlook_calendar"
-      ? `Agent read Outlook Calendar metadata: ${output.events.length} event result(s). No calendar event was created or changed.`
-      : `Agent read Google Calendar metadata: ${output.events.length} event result(s). No calendar event was created or changed.`;
+  if (typeof output.command === "string") {
+    return `Agent tool ${toolName} ran command: ${output.command}.`;
   }
-
-  if (output.draftPayloadPreview) {
-    const provider = typeof output.provider === "string" ? output.provider : "";
-
-    return provider === "outlook"
-      ? "Agent created a local Outlook draft payload preview. SeekDesk did not call Microsoft Graph message create or send."
-      : "Agent created a local Gmail draft payload preview. SeekDesk did not call Gmail drafts.create or send.";
-  }
-
-  if (output.eventPayloadPreview) {
-    const provider = typeof output.provider === "string" ? output.provider : "";
-
-    return provider === "outlook_calendar"
-      ? "Agent created a local Outlook Calendar event JSON preview. SeekDesk did not call Microsoft Graph event create."
-      : "Agent created a local Calendar event JSON preview. SeekDesk did not call Calendar events.insert.";
-  }
-
   if (typeof output.artifactId === "string") {
-    return `Agent persisted local artifact ${output.artifactId} for review. No external provider write occurred.`;
+    return `Agent persisted local artifact ${output.artifactId}.`;
   }
 
-  return `Agent tool ${toolName} completed in preview-only mode. No external write was performed.`;
-}
-
-function summarizeJsonShape(value: unknown) {
-  if (!value || typeof value !== "object") {
-    return "no structured input";
-  }
-
-  const keys = Object.keys(value as Record<string, unknown>);
-
-  return keys.length ? `input fields: ${keys.join(", ")}` : "empty input";
+  return `Agent tool ${toolName} completed.`;
 }
 
 function createToolActivityMetadata(input: {
@@ -252,196 +165,53 @@ function createToolActivityMetadata(input: {
   phase: "requested" | "completed";
   inputJson?: unknown;
   outputJson?: unknown;
-  connectorIds: string[];
   error?: string;
 }) {
-  const outputSummary = summarizeOutputForMetadata(input.outputJson, input.error);
+  const reference = inferReference(input.outputJson);
 
   return {
     toolName: input.toolName,
     toolPhase: input.phase,
-    inputFields: listJsonKeys(input.inputJson),
-    ...(outputSummary.provider ? { provider: outputSummary.provider } : {}),
-    externalDataSummary: outputSummary.externalDataSummary,
-    ...(outputSummary.resultCount !== undefined
-      ? { resultCount: outputSummary.resultCount }
-      : {}),
-    ...(outputSummary.reference ? { reference: outputSummary.reference } : {}),
-    ...(input.connectorIds.length > 0
-      ? { connectorId: input.connectorIds[0] }
-      : {})
+    externalDataSummary: summarizeJsonShape(input.outputJson ?? input.inputJson),
+    ...(reference ? { reference } : {}),
+    provider: input.toolName.startsWith("coding.") ? "local_daemon" : "local",
+    previewOnly: inferPreviewOnly(input.outputJson, input.error),
+    ...(input.error ? { error: input.error } : {})
   };
 }
 
-function summarizeOutputForMetadata(outputJson: unknown, error: string | undefined) {
-  if (error) {
-    return {
-      externalDataSummary: `Tool failed with ${error}; no external write was performed.`
-    };
+function summarizeJsonShape(value: unknown) {
+  if (!value || typeof value !== "object") {
+    return "empty payload";
   }
 
+  const keys = Object.keys(value as Record<string, unknown>).slice(0, 8);
+  return keys.length ? `fields: ${keys.join(", ")}` : "empty object";
+}
+
+function inferReference(outputJson: unknown) {
   if (!outputJson || typeof outputJson !== "object") {
-    return {
-      externalDataSummary:
-        outputJson === undefined
-          ? "Tool result is pending."
-          : "Tool completed with a structured preview result."
-    };
+    return null;
   }
 
   const output = outputJson as Record<string, unknown>;
-  const provider = typeof output.provider === "string" ? output.provider : undefined;
-
-  if (output.previewOnly === false) {
-    const effects = Array.isArray(output.externalEffects)
-      ? output.externalEffects.filter((item): item is string => typeof item === "string")
-      : [];
-    return {
-      provider,
-      externalDataSummary:
-        effects.length > 0
-          ? "Authorized Microsoft write completed: " + effects.join(", ") + "."
-          : "Authorized Microsoft write completed.",
-      resultCount: 1,
-      reference:
-        typeof output.messageId === "string" && output.messageId.trim()
-          ? "outlook-message:" + output.messageId
-          : typeof output.eventId === "string" && output.eventId.trim()
-            ? "outlook-calendar-event:" + output.eventId
-            : typeof output.artifactId === "string" && output.artifactId.trim()
-              ? "artifact:" + output.artifactId
-              : undefined
-    };
+  if (typeof output.path === "string") {
+    return output.path;
+  }
+  if (typeof output.command === "string") {
+    return output.command;
+  }
+  if (typeof output.artifactId === "string") {
+    return output.artifactId;
   }
 
-  if (Array.isArray(output.threads)) {
-    return {
-      provider,
-      externalDataSummary: `${output.threads.length} Gmail thread metadata result(s).`,
-      resultCount: output.threads.length,
-      reference: firstReference(output.threads, "gmail-thread")
-    };
-  }
-
-  if (Array.isArray(output.messages)) {
-    if (provider === "outlook") {
-      return {
-        provider,
-        externalDataSummary: `${output.messages.length} Outlook message metadata result(s).`,
-        resultCount: output.messages.length,
-        reference: firstReference(output.messages, "outlook-message")
-      };
-    }
-
-    return {
-      provider,
-      externalDataSummary: `${output.messages.length} Gmail message metadata record(s).`,
-      resultCount: output.messages.length,
-      reference:
-        typeof output.threadId === "string" && output.threadId.trim()
-          ? `gmail-thread:${output.threadId}`
-          : undefined
-    };
-  }
-
-  if (Array.isArray(output.events)) {
-    if (provider === "outlook_calendar") {
-      return {
-        provider,
-        externalDataSummary: `${output.events.length} Outlook Calendar event metadata result(s).`,
-        resultCount: output.events.length,
-        reference: firstReference(output.events, "outlook-calendar-event")
-      };
-    }
-
-    return {
-      provider,
-      externalDataSummary: `${output.events.length} Google Calendar event metadata result(s).`,
-      resultCount: output.events.length,
-      reference: firstReference(output.events, "calendar-event")
-    };
-  }
-
-  if (output.draftPayloadPreview) {
-    if (provider === "outlook") {
-      return {
-        provider,
-        externalDataSummary:
-          "Local Outlook draft payload preview; no Microsoft Graph message create or send call.",
-        reference:
-          typeof output.conversationId === "string" && output.conversationId.trim()
-            ? `outlook-conversation:${output.conversationId}`
-            : undefined
-      };
-    }
-
-    return {
-      provider,
-      externalDataSummary:
-        "Local Gmail draft payload preview; no Gmail drafts.create or send call.",
-      reference:
-        typeof output.threadId === "string" && output.threadId.trim()
-          ? `gmail-thread:${output.threadId}`
-          : undefined
-    };
-  }
-
-  if (output.eventPayloadPreview) {
-    if (provider === "outlook_calendar") {
-      return {
-        provider,
-        externalDataSummary:
-          "Local Outlook Calendar event JSON preview; no Microsoft Graph event create call.",
-        reference:
-          typeof output.calendarId === "string" && output.calendarId.trim()
-            ? `outlook-calendar:${output.calendarId}`
-            : undefined
-      };
-    }
-
-    return {
-      provider,
-      externalDataSummary:
-        "Local Calendar event JSON preview; no Calendar events.insert call.",
-      reference:
-        typeof output.calendarId === "string" && output.calendarId.trim()
-          ? `calendar:${output.calendarId}`
-          : undefined
-    };
-  }
-
-  if (typeof output.artifactId === "string" && output.artifactId.trim()) {
-    return {
-      provider,
-      externalDataSummary:
-        "Local SeekDesk artifact persisted for review; no external provider write.",
-      resultCount: 1,
-      reference: `artifact:${output.artifactId}`
-    };
-  }
-
-  return {
-    provider,
-    externalDataSummary: `Structured tool result fields: ${listJsonKeys(output).join(", ") || "none"}.`
-  };
+  return null;
 }
 
-function listJsonKeys(value: unknown) {
-  if (!value || typeof value !== "object" || Array.isArray(value)) {
-    return [];
+function inferPreviewOnly(outputJson: unknown, error: string | undefined) {
+  if (error || !outputJson || typeof outputJson !== "object") {
+    return true;
   }
 
-  return Object.keys(value as Record<string, unknown>);
-}
-
-function firstReference(values: unknown[], prefix: string) {
-  const first = values
-    .map((value) =>
-      value && typeof value === "object"
-        ? (value as { id?: unknown }).id
-        : undefined
-    )
-    .find((id): id is string => typeof id === "string" && Boolean(id.trim()));
-
-  return first ? `${prefix}:${first}` : undefined;
+  return (outputJson as { previewOnly?: unknown }).previewOnly !== false;
 }

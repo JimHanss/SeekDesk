@@ -14,7 +14,7 @@ const defaultPermissionBoundary: AgentPermissionBoundary = {
   previewOnly: true,
   externalEffects: ["none"],
   statement:
-    "Daily-work tools can read authorized connector data and create local previews. Microsoft writes require same-session authorization and are audited in trace/activity/artifacts."
+    "Coding tools can inspect the workspace. File writes, shell commands, git writes, and tests require same-session authorization and are audited in trace/activity/artifacts."
 };
 
 const emptyUsageSummary: AgentModelUsageSummary = {
@@ -39,7 +39,7 @@ export function createEmptyAgentTraceState(
     modelUsageSummary: emptyUsageSummary,
     permissionGrants: [],
     permissionBoundary: defaultPermissionBoundary,
-    notice: "Agent trace is ready for the next daily-work request.",
+    notice: "Agent trace is ready for the next coding request.",
     ...overrides
   };
 }

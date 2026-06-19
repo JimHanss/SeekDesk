@@ -301,17 +301,17 @@ export function useChatController({
       return;
     }
 
-    const response = await fetch(apiBaseUrl + "/api/daily/permission-grants", {
+    const response = await fetch(apiBaseUrl + "/api/coding/permission-grants", {
       method: "POST",
       headers: {
         "Content-Type": "application/json"
       },
       body: JSON.stringify({
         mode: activeMode,
-        provider: "microsoft",
+        provider: "local_daemon",
         sessionId: activeSessionId,
         action: toolCall.name,
-        reason: "User allowed this Microsoft write for the current session."
+        reason: "User allowed this coding tool for the current session."
       })
     });
 
@@ -329,7 +329,7 @@ export function useChatController({
     }
 
     const response = await fetch(
-      apiBaseUrl + "/api/daily/tool-calls/" + encodeURIComponent(toolCall.id) + "/execute",
+      apiBaseUrl + "/api/coding/tool-calls/" + encodeURIComponent(toolCall.id) + "/execute",
       {
         method: "POST",
         headers: {

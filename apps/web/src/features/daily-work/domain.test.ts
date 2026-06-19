@@ -123,13 +123,13 @@ describe("daily-work domain mappers", () => {
     );
   });
 
-  it("rejects template responses for other modes", () => {
+  it("rejects template responses outside coding-agent mode", () => {
     expect(() =>
       mapTemplatesResponse({
-        mode: "coding_agent",
+        mode: "daily_work",
         templates: []
       })
-    ).toThrow(/daily_work/);
+    ).toThrow(/coding_agent/);
   });
 
   it("keeps template apply previews preview-only", () => {
@@ -202,10 +202,10 @@ describe("daily-work domain mappers", () => {
         toolCalls: [
           {
             id: "call-1",
-            name: "gmail.search_threads",
+            name: "coding.grep",
             status: "completed",
-            inputJson: { query: "from:customer" },
-            outputJson: { threads: [] },
+            inputJson: { query: "TODO" },
+            outputJson: { matches: [] },
             previewOnly: true,
             permissionRequired: false,
             createdAt: "2026-06-08T00:00:00.000Z",
@@ -220,12 +220,12 @@ describe("daily-work domain mappers", () => {
             status: "completed",
             timestamp: "2026-06-08T00:00:01.000Z",
             title: "Agent tool completed",
-            summary: "Agent read Gmail thread metadata.",
+            summary: "Agent searched workspace files.",
             actor: "daily-work-agent",
             relatedRefs: {
               sessionIds: ["session-1"],
               artifactIds: [],
-              connectorIds: ["customer-email"],
+              connectorIds: [],
               templateIds: [],
               workflowIds: [],
               actionQueueItemIds: [],
@@ -239,14 +239,13 @@ describe("daily-work domain mappers", () => {
             },
             nextAction: null,
             metadata: {
-              toolName: "gmail.search_threads",
+              toolName: "coding.grep",
               toolPhase: "completed",
-              provider: "gmail",
-              connectorId: "customer-email",
+              provider: "local_daemon",
               inputFields: ["query"],
-              externalDataSummary: "0 Gmail thread metadata result(s).",
+              externalDataSummary: "0 workspace search matches.",
               resultCount: 0,
-              reference: "gmail-thread:thread-1"
+              reference: "search:TODO"
             }
           }
         ],
@@ -276,17 +275,17 @@ describe("daily-work domain mappers", () => {
       syncStatus: "live",
       toolCalls: [
         expect.objectContaining({
-          name: "gmail.search_threads",
+          name: "coding.grep",
           status: "completed",
           previewOnly: true
         })
       ],
       toolActivityEvents: [
         expect.objectContaining({
-          toolName: "gmail.search_threads",
+          toolName: "coding.grep",
           toolPhase: "completed",
-          externalDataSummary: "0 Gmail thread metadata result(s).",
-          reference: "gmail-thread:thread-1",
+          externalDataSummary: "0 workspace search matches.",
+          reference: "search:TODO",
           previewOnly: true
         })
       ],

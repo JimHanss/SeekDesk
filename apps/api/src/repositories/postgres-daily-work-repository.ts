@@ -169,34 +169,7 @@ export class PostgresDailyWorkRepository implements DailyWorkRepository {
       dailyWorkConnectorSchema.array(),
       async () => cloneJson(defaultDailyWorkConnectors)
     );
-    const googleAccount = await this.getConnectorAccount("google");
-    const microsoftAccount = await this.getConnectorAccount("microsoft");
-
-    if (!googleAccount && !microsoftAccount) {
-      return connectors;
-    }
-
-    return connectors.map((connector) => {
-      if (connector.provider !== "gmail" && connector.provider !== "google_calendar") {
-        return connector;
-      }
-
-      const lastSyncAt = newestTimestamp([
-        googleAccount?.updatedAt,
-        microsoftAccount?.updatedAt
-      ]);
-
-      return {
-        ...connector,
-        status: "available" as const,
-        ...(lastSyncAt ? { lastSyncAt } : {}),
-        notes: [
-          ...formatConnectedConnectorAccountNotes("Google", googleAccount),
-          ...formatConnectedConnectorAccountNotes("Microsoft", microsoftAccount),
-          "Real reads are enabled for approved preview-only daily_work tools; sending email and creating calendar events remain disabled."
-        ]
-      };
-    });
+    return connectors;
   }
 
   async listWorkflows() {
@@ -277,7 +250,7 @@ export class PostgresDailyWorkRepository implements DailyWorkRepository {
       .values({
         id: parsed.id,
         sessionId: parsed.sessionId ?? null,
-        mode: "daily_work",
+        mode: inferToolCallMode(parsed.name),
         name: parsed.name,
         status: parsed.status,
         inputJson: parsed.inputJson,
@@ -577,6 +550,10 @@ export class PostgresDailyWorkRepository implements DailyWorkRepository {
   }
 }
 
+function inferToolCallMode(name: string) {
+  return name.startsWith("coding.") ? "coding_agent" : "daily_work";
+}
+
 function mapToolCallRow(row: typeof schema.toolCalls.$inferSelect): ToolCallRecord {
   return toolCallRecordSchema.parse({
     id: row.id,
@@ -695,12 +672,15 @@ function mergeChatMessageIntoSessions(
     sessions.unshift({
       id: message.sessionId,
       workspaceId: "workspace-seekdesk",
-      appMode: "daily_work",
+      appMode: message.appMode ?? "daily_work",
       title: createSessionTitle(parsedMessage.content),
       status: "active",
       createdAt: message.createdAt,
       updatedAt: message.createdAt,
-      summary: "AI daily-work chat session.",
+      summary:
+        (message.appMode ?? "daily_work") === "coding_agent"
+          ? "AI coding-agent chat session."
+          : "AI daily-work chat session.",
       lastAction: {
         at: message.createdAt,
         actor: message.role === "assistant" ? "daily-work-agent" : "user",
@@ -713,7 +693,10 @@ function mergeChatMessageIntoSessions(
       contextItemIds: parsedMessage.contextItemIds,
       approvalRequestIds: parsedMessage.approvalRequestIds,
       messageCount: 1,
-      tags: ["chat", "daily-work"],
+      tags:
+        (message.appMode ?? "daily_work") === "coding_agent"
+          ? ["chat", "coding-agent"]
+          : ["chat", "daily-work"],
       recentMessages: [parsedMessage]
     });
     return;
@@ -762,22 +745,6 @@ function parseConnectorAccount(
   };
 }
 
-function formatConnectedConnectorAccountNotes(
-  label: string,
-  account: DailyWorkConnectorAccount | null
-) {
-  if (!account) {
-    return [];
-  }
-
-  return [
-    `${label} account connected: ${account.accountEmail ?? "unknown account"}.`
-  ];
-}
-
-function newestTimestamp(values: Array<string | undefined>) {
-  return values.filter((value): value is string => Boolean(value)).sort().at(-1);
-}
 
 function parseStringArray(value: unknown): string[] {
   if (!Array.isArray(value)) {

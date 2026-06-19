@@ -1,7 +1,7 @@
 #!/usr/bin/env node
 
 import { execFileSync } from "node:child_process";
-import { readFileSync } from "node:fs";
+import { existsSync, readFileSync } from "node:fs";
 import { basename } from "node:path";
 
 const protectedEnvFiles = [
@@ -120,7 +120,7 @@ function verifyNoTrackedSecretLiterals(trackedFiles) {
   const issues = [];
 
   for (const file of trackedFiles) {
-    if (allowedSecretScanFiles.has(file)) {
+    if (allowedSecretScanFiles.has(file) || !existsSync(file)) {
       continue;
     }
 

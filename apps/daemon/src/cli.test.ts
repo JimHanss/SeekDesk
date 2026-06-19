@@ -39,10 +39,10 @@ describe("daemon cli", () => {
     expect(result.exitCode).toBe(0);
     expect(result.output).toContain("Usage:");
     expect(result.output).toContain("seekdesk-daemon health [--workspace <path>]");
-    expect(result.output).toContain("preview-only mode");
+    expect(result.output).toContain("local coding runtime boundary");
   });
 
-  it("prints health output with preview runtime details", () => {
+  it("prints health output with local runtime details", () => {
     const result = runDaemonCli(["health", "--workspace", "."]);
     const output = parseRuntimeStatus(result.output);
 
@@ -52,49 +52,57 @@ describe("daemon cli", () => {
       service: "seekdesk-daemon",
       workspaceRoot: path.resolve("."),
       pid: process.pid,
-      runtimeMode: "local-preview",
-      previewOnly: true,
+      runtimeMode: "local-runtime",
+      previewOnly: false,
       supportedCapabilities: [
         "health",
-        "preview-runtime-status",
-        "workspace-root-resolution"
+        "workspace-root-resolution",
+        "coding.list_files",
+        "coding.read_file",
+        "coding.grep",
+        "coding.git_status",
+        "coding.git_diff",
+        "coding.write_file",
+        "coding.edit_file",
+        "coding.run_shell",
+        "coding.run_tests"
       ],
       safetyBoundary: {
-        readsUserFiles: false,
-        writesUserFiles: false,
-        executesShell: false,
+        readsUserFiles: true,
+        writesUserFiles: true,
+        executesShell: true,
         startsLongRunningServices: false,
         opensNetworkListeners: false
       },
       ipc: {
-        transport: "planned",
-        endpoint: null
+        transport: "api-mediated",
+        endpoint: "/api/coding"
       },
       webSocket: {
-        transport: "planned",
-        endpoint: null
+        transport: "api-mediated",
+        endpoint: "/api/coding"
       }
     });
   });
 
-  it("prints start output as a preview runtime status", () => {
+  it("prints start output as a local runtime status", () => {
     const workspace = path.join("fixtures", "daemon workspace");
     const result = runDaemonCli(["start", "--workspace", workspace]);
     const output = parseRuntimeStatus(result.output);
 
     expect(result.exitCode).toBe(0);
-    expect(output.status).toBe("preview-ready");
+    expect(output.status).toBe("ok");
     expect(output.workspaceRoot).toBe(path.resolve(workspace));
-    expect(output.previewOnly).toBe(true);
+    expect(output.previewOnly).toBe(false);
     expect(output.safetyBoundary).toMatchObject({
-      readsUserFiles: false,
-      writesUserFiles: false,
-      executesShell: false,
+      readsUserFiles: true,
+      writesUserFiles: true,
+      executesShell: true,
       startsLongRunningServices: false,
       opensNetworkListeners: false
     });
-    expect(output.ipc).toEqual({ transport: "planned", endpoint: null });
-    expect(output.webSocket).toEqual({ transport: "planned", endpoint: null });
+    expect(output.ipc).toEqual({ transport: "api-mediated", endpoint: "/api/coding" });
+    expect(output.webSocket).toEqual({ transport: "api-mediated", endpoint: "/api/coding" });
   });
 
   it("resolves workspace paths before the command", () => {

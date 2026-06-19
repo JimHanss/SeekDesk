@@ -137,7 +137,7 @@ export function DailyWorkDashboardShell({
                 SeekDesk
               </h1>
               <div className="truncate text-[11px] font-medium text-slate-400">
-                daily_work
+                coding_agent
               </div>
             </div>
           </div>

@@ -48,9 +48,11 @@ export const workflowExternalEffectSchema = z.enum([
   "write_document",
   "schedule_calendar_event",
   "create_task",
-  "microsoft.outlook.draft.create",
-  "microsoft.outlook.mail.send",
-  "microsoft.outlook.calendar.event.create"
+  "workspace.file.write",
+  "workspace.command.run",
+  "workspace.artifact.preview",
+  "workspace.command.run",
+  "workspace.file.write"
 ]);
 
 export const workflowLinkedConnectorSchema = z.object({

@@ -1,147 +1,51 @@
-# SeekDesk ?? API ??????
+# SeekDesk 后端 API 与数据库总结
 
-## 1. ????
+## 核心 API
+- `GET /health`：返回 API 状态、数据层状态、Postgres 是否配置和可用、JSON fallback 状态。
+- `POST /api/chat`：流式聊天入口；`mode: "coding_agent"` 时构建编程上下文、调用 DeepSeek、记录消息、工具计划和 token 用量。
+- `GET /api/chat/sessions/:sessionId/trace`：返回会话 trace，包括 messages、toolCalls、activityEvents、artifacts、modelUsage、permissionGrants、permissionBoundary。
 
-- `apps/api/src/server.ts`?Fastify ????? `/health`?`/api/chat`?chat trace?WebSocket?daily-work routes?Google/Microsoft connector routes?
-- `routes/daily-work-routes.ts`?daily-work ?? REST API??????????????????????????????permission grants?tool execution?
-- `routes/google-connector-routes.ts`?Google OAuth start/callback/status?
-- `routes/microsoft-connector-routes.ts`?Microsoft OAuth start/callback/status?
-- `repositories/daily-work-repository.ts`?repository ???seed repo?JSON repo ? fallback ???
-- `repositories/postgres-daily-work-repository.ts`?Postgres/Drizzle ???
-- `services/daily-work-service.ts`?daily-work DTO ??????preview response?activity event ???
-- `services/daily-work-agent-context.ts`?chat ??????? token ???
-- `services/daily-work-tools.ts`?tool orchestrator ? Microsoft ???????
-- `services/daily-work-tool-activity.ts`?tool call ? activity event ??????
-- `services/google-connector-service.ts`?Google OAuth?Gmail/GCal ??? preview ???
-- `services/microsoft-connector-service.ts`?Microsoft OAuth?Outlook/Calendar ???preview ? Graph ???
-- `services/daily-work-context-documents.ts`?PDF/DOCX/TXT/MD/CSV/JSON ?????
+## Coding API
+- `GET /api/coding/workspace`：返回 LocalCodingRuntime 状态、workspace root、支持能力和安全边界。
+- `POST /api/coding/files/tree`：列出 workspace 内文件树；过滤 ignore 目录并限制深度和条数。
+- `POST /api/coding/files/read`：读取文本文件；限制 workspace root、文件大小和二进制内容。
+- `POST /api/coding/search`：在 workspace 内搜索文本；支持路径、glob、最大结果限制。
+- `GET /api/coding/git/status`：读取 git status，只读操作。
+- `POST /api/coding/git/diff`：读取 git diff，只读操作，可按路径过滤。
+- `GET /api/coding/permission-grants`：查询会话内授权。
+- `POST /api/coding/permission-grants`：创建会话内授权，用于写文件、编辑文件、shell、测试等动作。
+- `POST /api/coding/permission-grants/:grantId/revoke`：撤销授权。
+- `POST /api/coding/tool-calls/:toolCallId/execute`：执行已保存的 pending tool call，执行前再次校验 session、grant、工具输入和 runtime 安全策略。
 
-## 2. Postgres ???
+## Daily 兼容 API
+- `/api/daily/templates`：模板 CRUD、复制、软删除；聊天页读取 active 模板。
+- `/api/daily/context/*`：上下文列表、使用预览、文件上传和解析后的文本上下文。
+- `/api/daily/artifacts*`：产物列表、详情和 AI 生成产物保存。
+- `/api/daily/events`：活动审计流。
+- `/api/daily/model-usage`：从真实 model usage records 聚合 token 用量。
+- `/api/daily/persistence`：持久化状态和数据层快照。
 
-- `workspaces`?workspace ??????? `id/name/created_at/updated_at`?
-- `daily_work_templates`?payload ?????? schema???????prompt??????
-- `daily_work_context_items`?payload ?????????????
-- `daily_work_context_documents`?payload ????????????hash??????????????
-- `daily_work_approvals`?payload ??????????????
-- `daily_work_artifacts`?payload ???? AI ??????????????????
-- `daily_work_sessions`?payload ???????????????????????
-- `daily_work_activity_events`?payload ?????????metadata?relatedRefs??????
-- `daily_work_connectors`?payload ??????? catalog/status ?????
-- `daily_work_workflows`?payload ???? workflow preview ???
-- `daily_work_messages`????????? `id/session_id/role/content/payload/created_at`?
-- `connector_accounts`?OAuth ?????? `provider/account_email/encrypted_tokens/scopes/connected_at/updated_at`?
-- `tool_calls`??????????? `session_id/name/status/input_json/output_json/preview_only/permission_required/error/completed_at`?
-- `daily_work_permission_grants`????????? `provider/session_id/action/decision/status/reason/payload/expires_at/revoked_at`?
-- `model_usage_records`????????? `session_id/provider/model/prompt_tokens/completion_tokens/total_tokens/created_at`?
+## Runtime 与服务层
+- `services/coding-runtime.ts`：本地 runtime；负责路径解析、root 限制、文件读写、搜索、git、shell/test 执行和安全错误。
+- `services/coding-tools.ts`：把 agent tool call 映射到 runtime；负责 pending、授权校验、执行结果和 activity 写回。
+- `services/daily-work-agent-context.ts`：构建模型上下文；当前输出 workspace、安全边界、最近工具轨迹和用量摘要。
+- `packages/agent/src/tools.ts`：注册工具定义；读操作可自动执行，写/shell/test 默认 permission_required。
+- `packages/agent/src/loop.ts`：模型循环；解析 DeepSeek tool calls，最多多轮，把工具结果回填给模型。
 
-## 3. API ??????
+## Postgres 表设计
+- `daily_work_sessions`：会话详情、标题、状态、模式、关联上下文和产物。
+- `daily_work_messages`：用户/助手消息、sessionId、role、content、时间戳。
+- `tool_calls`：工具计划、输入、输出、状态、错误、previewOnly、permissionRequired、关联 session。
+- `daily_work_permission_grants`：会话内授权，包含 provider、action、status、expiresAt、revokedAt。
+- `daily_work_activity_events`：活动审计事件，记录工具计划、授权、执行、失败和产物生成。
+- `daily_work_artifacts`：AI 生成产物、补丁摘要、执行结果和关联引用。
+- `model_usage_records`：provider、model、promptTokens、completionTokens、totalTokens 和 sessionId。
+- `daily_work_templates`：Agent 模板、system prompt、prompt template、工具白名单、上下文策略、状态和版本。
+- `daily_work_context_items` / `daily_work_context_documents`：上下文条目、上传文件解析文本、hash、大小、token 估算和摘要。
+- `daily_work_approvals`：兼容审批请求，当前新写入审批优先使用 permission grant。
 
-### Health
-
-- `GET /health`??? API ???data layer?Postgres configured/ready?JSON fallback ???provider ??????? repository health?????
-
-### Chat
-
-- `POST /api/chat`??? daily-work/coding-agent ???
-  - ?????`mode`?`sessionId`?`prompt`?`context.templateId/contextItemIds/artifactIds/connectorIds/workflowIds`?
-  - ???????/???????
-  - ????`daily_work_sessions`?`daily_work_messages`?`tool_calls`?`daily_work_artifacts`?`daily_work_activity_events`?`model_usage_records`?
-  - repository?upsert session/message/tool call/artifact/activity/model usage?
-
-- `GET /api/chat/sessions/:sessionId/trace`??????????
-  - ?????messages?toolCalls?toolActivityEvents?modelUsageRecords?modelUsageSummary?permissionGrants?permissionBoundary?
-  - ????`daily_work_messages`?`tool_calls`?`daily_work_activity_events`?`model_usage_records`?`daily_work_permission_grants`?
-
-- `GET /ws`?WebSocket ??????????????????????
-
-### Templates
-
-- `GET /api/daily/templates`???????? `mode`?`activeOnly`?? `daily_work_templates`?
-- `POST /api/daily/templates`??????? `daily_work_templates`?
-- `PATCH /api/daily/templates/:templateId`??????? `daily_work_templates`?
-- `POST /api/daily/templates/:templateId/duplicate`??????? `daily_work_templates`?
-- `DELETE /api/daily/templates/:templateId`????/?????? `daily_work_templates`?
-- `POST /api/daily/templates/:templateId/apply-preview`????????????? `daily_work_templates`?? `daily_work_activity_events`?
-
-### Context
-
-- `GET /api/daily/context`?????????? `daily_work_context_items`?
-- `POST /api/daily/context/uploads`???????????
-  - ???multipart `file`??? `title/tags`?
-  - ????? `daily_work_context_documents` ? `daily_work_context_items`?
-- `POST /api/daily/context/:contextItemId/use-preview`?????????? `daily_work_context_items`?? `daily_work_activity_events`?
-
-### Approvals
-
-- `GET /api/daily/approvals`??????? `daily_work_approvals`?
-- `POST /api/daily/approvals/:approvalRequestId/decision`??????? `daily_work_approvals` ? `daily_work_activity_events`?
-
-### Model Usage
-
-- `GET /api/daily/model-usage`?token-only ????????
-  - ????? `model_usage_records`?
-  - ???current session?24h?7d?total ???provider/model/streamUsageEnabled ???
-
-### Sessions
-
-- `GET /api/daily/sessions`????????????? createdAt ???? `daily_work_sessions`?
-- `GET /api/daily/sessions/:sessionId`??????? `daily_work_sessions` ??? payload?
-- `POST /api/daily/sessions/:sessionId/restore-preview`???????????/? `daily_work_sessions`?? `daily_work_activity_events`?
-
-### Artifacts
-
-- `GET /api/daily/artifacts`??????? `daily_work_artifacts`?
-- `GET /api/daily/artifacts/:artifactId`??????? `daily_work_artifacts`?
-
-### Activity Events
-
-- `GET /api/daily/events`????????? `daily_work_activity_events`?
-- `GET /api/daily/events/:eventId`??????? `daily_work_activity_events`?
-
-### Connectors
-
-- `GET /api/daily/connectors`???? catalog/status?? `daily_work_connectors`???? OAuth account ???
-- `GET /api/daily/connectors/:connectorId`???????? `daily_work_connectors`?
-- `POST /api/daily/connectors/:connectorId/preview`????????????????? `daily_work_activity_events`?
-
-### Workflows
-
-- `GET /api/daily/workflows`???????? `daily_work_workflows`?
-- `GET /api/daily/workflows/:workflowId`???????? `daily_work_workflows`?
-- `POST /api/daily/workflows/:workflowId/preview`???????? `daily_work_workflows`?? `daily_work_activity_events`?
-
-### Permission Grants
-
-- `GET /api/daily/permission-grants`?? session/status ?????? `daily_work_permission_grants`?
-- `POST /api/daily/permission-grants`?????? `allow_for_session` grant??? 24 ?????? `daily_work_permission_grants`?
-- `POST /api/daily/permission-grants/:grantId/revoke`??? grant?? `daily_work_permission_grants`?
-
-### Tool Execution
-
-- `POST /api/daily/tool-calls/:toolCallId/execute`????? preview/tool plan ???? Microsoft ???
-  - ???`sessionId`?`mode=daily_work`?
-  - ???tool call ?????????input schema?? session active grant?OAuth token ? scope?
-  - ?????? `tool_calls`?? `daily_work_activity_events`????? `daily_work_artifacts`?
-  - ???`permission_required`?`connector_not_connected`?`connector_missing_scopes`?`microsoft_oauth_not_configured` ??
-
-## 4. Google Connector APIs
-
-- `GET /api/connectors/google/oauth/start`??? Google OAuth ?? URL?? client ???? requires_setup?
-- `GET /api/connectors/google/oauth/callback`??? code????? token ? `connector_accounts`?
-- `GET /api/connectors/google/status`??? connected/requires_setup/missing_scopes ????? `connector_accounts`?
-
-Google ??????????????????? Gmail send ? Calendar insert?
-
-## 5. Microsoft Connector APIs
-
-- `GET /api/connectors/microsoft/oauth/start`??? Microsoft OAuth ?? URL?scope ?? Mail/Calendar ??? send?
-- `GET /api/connectors/microsoft/oauth/callback`??? code????? token ? `connector_accounts`?
-- `GET /api/connectors/microsoft/status`??? requires_setup?missing_scopes?connected_read_only?write_ready?
-
-Microsoft ????? tool execution route ????? OAuth callback ????
-
-## 6. ??
-
-- `apps/api/drizzle/0000_*.sql`?`0001_*.sql`?`0002_cute_inertia.sql`?Drizzle ?????
-- `0002_cute_inertia.sql` ?? `daily_work_permission_grants`?
-- `npm run db:migrate` ?? `DATABASE_URL` ?????????????? Docker Postgres?
+## 数据层策略
+- 生产优先 Postgres/Drizzle。
+- 未配置 Postgres 时保留 JSON/seed fallback，便于本地启动和测试。
+- schema 错误或非法 JSON 不静默覆盖，返回明确错误。
+- 历史 migration 不重写；新的结构变更通过新增 migration 维护链路。

@@ -111,7 +111,7 @@ describe("ToolOrchestrator", () => {
     const orchestrator = new ToolOrchestrator(
       new ToolRegistry([
         {
-          name: "coding.shell",
+          name: "coding.run_shell",
           mode: "coding_agent",
           description: "Reserved shell access."
         }
@@ -120,14 +120,14 @@ describe("ToolOrchestrator", () => {
 
     await expect(
       orchestrator.orchestrate({
-        name: "coding.shell",
+        name: "coding.run_shell",
         inputJson: {
           command: "npm test"
         }
       })
     ).resolves.toEqual(
       expect.objectContaining({
-        name: "coding.shell",
+        name: "coding.run_shell",
         status: "permission_required",
         mode: "coding_agent",
         previewOnly: false,
@@ -136,22 +136,21 @@ describe("ToolOrchestrator", () => {
     );
   });
 
-  it("exposes daily-work write tools to the model but keeps them permission-gated", async () => {
+  it("exposes coding tools to the model and keeps write tools permission-gated", async () => {
     const registry = createDefaultToolRegistry();
-    const toolNames = createModelToolDefinitions(registry, "daily_work").map(
+    const toolNames = createModelToolDefinitions(registry, "coding_agent").map(
       (tool) => tool.function.name
     );
 
-    expect(toolNames).toContain("outlook_send_mail");
-    expect(toolNames).toContain("outlook_calendar_create_event");
+    expect(toolNames).toContain("coding_read_file");
+    expect(toolNames).toContain("coding_run_shell");
+    expect(toolNames).toContain("coding_run_tests");
 
     await expect(
       new ToolOrchestrator(registry).orchestrate({
-        name: "outlook.send_mail",
+        name: "coding.run_shell",
         inputJson: {
-          to: ["customer@example.com"],
-          subject: "Status update",
-          bodyText: "Hello"
+          command: "npm test"
         }
       })
     ).resolves.toEqual(
@@ -183,9 +182,9 @@ describe("ToolOrchestrator", () => {
     const orchestrator = new ToolOrchestrator(
       new ToolRegistry([
         {
-          name: "gmail.search_threads",
-          mode: "daily_work",
-          description: "Search Gmail.",
+          name: "coding.grep",
+          mode: "coding_agent",
+          description: "Search workspace files.",
           parametersJsonSchema: {
             type: "object",
             properties: {}
@@ -196,13 +195,13 @@ describe("ToolOrchestrator", () => {
 
     await expect(
       orchestrator.orchestrate({
-        name: "gmail_search_threads"
+        name: "coding_grep"
       })
     ).resolves.toEqual(
       expect.objectContaining({
-        name: "gmail.search_threads",
-        status: "completed",
-        mode: "daily_work"
+        name: "coding.grep",
+        status: "permission_required",
+        mode: "coding_agent"
       })
     );
   });
@@ -210,18 +209,16 @@ describe("ToolOrchestrator", () => {
 
 describe("model tool names", () => {
   it("converts internal dotted names to DeepSeek-compatible names", () => {
-    expect(toModelToolName("gmail.search_threads")).toBe("gmail_search_threads");
-    expect(toModelToolName("calendar.propose_event_preview")).toBe(
-      "calendar_propose_event_preview"
-    );
+    expect(toModelToolName("coding.read_file")).toBe("coding_read_file");
+    expect(toModelToolName("coding.run_tests")).toBe("coding_run_tests");
   });
 
   it("emits model-safe tool definitions and resolves them", () => {
     const registry = new ToolRegistry([
       {
-        name: "daily.persist_artifact",
-        mode: "daily_work",
-        description: "Persist artifact.",
+        name: "coding.read_file",
+        mode: "coding_agent",
+        description: "Read a workspace file.",
         parametersJsonSchema: {
           type: "object",
           properties: {}
@@ -232,12 +229,12 @@ describe("model tool names", () => {
     expect(createModelToolDefinitions(registry)).toEqual([
       expect.objectContaining({
         function: expect.objectContaining({
-          name: "daily_persist_artifact"
+          name: "coding_read_file"
         })
       })
     ]);
-    expect(fromModelToolName(registry, "daily_persist_artifact")).toBe(
-      "daily.persist_artifact"
+    expect(fromModelToolName(registry, "coding_read_file")).toBe(
+      "coding.read_file"
     );
   });
 });

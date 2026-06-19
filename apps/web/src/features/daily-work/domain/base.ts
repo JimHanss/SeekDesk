@@ -1,3 +1,3 @@
 import type { AppMode } from "../types";
 
-export const activeMode: AppMode = "daily_work";
+export const activeMode: AppMode = "coding_agent";

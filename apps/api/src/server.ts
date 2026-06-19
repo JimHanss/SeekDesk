@@ -32,14 +32,13 @@ import {
   type DailyWorkRepository
 } from "./repositories/daily-work-repository.js";
 import { registerDailyWorkRoutes } from "./routes/daily-work-routes.js";
-import { registerGoogleConnectorRoutes } from "./routes/google-connector-routes.js";
-import { registerMicrosoftConnectorRoutes } from "./routes/microsoft-connector-routes.js";
+import { registerCodingRoutes } from "./routes/coding-routes.js";
 import {
   createDailyModelUsageSnapshot,
   filterDailyActivityEvents
 } from "./services/daily-work-service.js";
 import { createDailyWorkAgentContext } from "./services/daily-work-agent-context.js";
-import { createDailyWorkToolRuntime } from "./services/daily-work-tools.js";
+import { createCodingToolRuntime } from "./services/coding-tools.js";
 import { createToolActivityEvent } from "./services/daily-work-tool-activity.js";
 
 const allowedOrigins = new Set([
@@ -67,8 +66,7 @@ export async function buildServer(options?: {
   app.options("/api/chat", async (_request, reply) => reply.code(204).send());
 
   await registerDailyWorkRoutes(app, dailyWorkRepository);
-  await registerGoogleConnectorRoutes(app, dailyWorkRepository);
-  await registerMicrosoftConnectorRoutes(app, dailyWorkRepository);
+  await registerCodingRoutes(app, dailyWorkRepository);
 
   app.get("/health", async () => ({
     status: "ok",
@@ -105,16 +103,11 @@ export async function buildServer(options?: {
           })
         : undefined;
     const providerSelection = createModelProvider({
+      mode: chatRequest.mode,
       ...(agentContext?.modelRoute ? { modelRoute: agentContext.modelRoute } : {})
     });
     const toolRuntime =
-      chatRequest.mode === "daily_work"
-        ? createDailyWorkToolRuntime(dailyWorkRepository, {
-            ...(agentContext?.allowedToolNames
-              ? { allowedToolNames: agentContext.allowedToolNames }
-              : {})
-          })
-        : undefined;
+      chatRequest.mode === "coding_agent" ? createCodingToolRuntime() : undefined;
     await recordIncomingChatMessage({
       dailyWorkRepository,
       chatRequest,
@@ -183,7 +176,7 @@ export async function buildServer(options?: {
       ]);
 
       return {
-        mode: "daily_work",
+        mode: "coding_agent",
         sessionId,
         toolCalls,
         toolActivityEvents: filterSessionToolActivityEvents(
@@ -253,7 +246,7 @@ function createAgentLoopInput(
   options: {
     sessionId: string;
     agentContext?: Awaited<ReturnType<typeof createDailyWorkAgentContext>>;
-    toolRuntime?: ReturnType<typeof createDailyWorkToolRuntime>;
+    toolRuntime?: ReturnType<typeof createCodingToolRuntime>;
   }
 ) {
   return {
@@ -280,7 +273,10 @@ function createAgentLoopInput(
   };
 }
 
-function createModelProvider(options: { modelRoute?: ModelRoute } = {}): {
+function createModelProvider(options: {
+  mode?: ChatRequest["mode"];
+  modelRoute?: ModelRoute;
+} = {}): {
   provider: ModelProvider;
   providerName: ChatProvider;
   modelName: string;
@@ -291,12 +287,12 @@ function createModelProvider(options: { modelRoute?: ModelRoute } = {}): {
     return {
       provider: new MockModelProvider(),
       providerName: "mock",
-      modelName: "mock-daily-work"
+      modelName: options.mode === "daily_work" ? "mock-daily-work" : "mock-coding-agent"
     };
   }
 
   const modelConfig = createDailyModelUsageSnapshot(
-    "daily_work",
+    options.mode ?? "coding_agent",
     [],
     undefined,
     options.modelRoute ? { selectedRoute: options.modelRoute } : {}
@@ -329,6 +325,7 @@ async function recordIncomingChatMessage(input: {
   await input.dailyWorkRepository.recordChatMessage({
     id: `message-${randomUUID()}`,
     sessionId: input.sessionId,
+    appMode: input.chatRequest.mode,
     role: message.role,
     content: message.content,
     createdAt: new Date().toISOString(),
@@ -366,7 +363,7 @@ async function generateSessionTitle(input: {
 
   try {
     for await (const chunk of input.provider.streamChat({
-      mode: "daily_work",
+      mode: "coding_agent",
       maxTurns: 1,
       toolChoice: "none",
       messages: [
@@ -598,9 +595,9 @@ function summarizeModelUsageRecords(records: ToolModelUsageRecord[]) {
 function createAgentPermissionBoundary() {
   return {
     previewOnly: false,
-    externalEffects: ["none", "microsoft.outlook.write_after_session_grant"],
+    externalEffects: ["none", "workspace.file.write", "workspace.command.run"],
     statement:
-      "Daily-work tools can read authorized connector data and create local previews. Microsoft Outlook mail/calendar writes require a same-session allow_for_session grant and are recorded in tool calls, activity events, and artifacts. Coding-agent file, shell, and git tools remain disabled."
+      "Coding-agent tools are scoped to the configured workspace root. Reads and git inspection may run directly; file writes, shell commands, and test commands require same-session authorization and are recorded in tool calls and activity events."
   };
 }
 
@@ -611,7 +608,6 @@ function filterSessionToolActivityEvents(
   return events
     .filter(
       (event) =>
-        event.mode === "daily_work" &&
         event.relatedRefs.sessionIds.includes(sessionId) &&
         Boolean(event.metadata.toolName)
     )

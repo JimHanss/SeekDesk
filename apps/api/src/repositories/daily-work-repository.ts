@@ -65,6 +65,7 @@ export type DailyWorkDataLayerStatus = {
 export interface PersistedChatMessage {
   id: string;
   sessionId: string;
+  appMode?: DailyWorkSessionDetail["appMode"];
   role: DailyWorkSessionMessage["role"];
   content: string;
   createdAt: string;
@@ -749,12 +750,15 @@ function mergeChatMessageIntoSessions(
     sessions.unshift({
       id: message.sessionId,
       workspaceId: "workspace-seekdesk",
-      appMode: "daily_work",
+      appMode: message.appMode ?? "daily_work",
       title: createSessionTitle(parsedMessage.content),
       status: "active",
       createdAt: message.createdAt,
       updatedAt: message.createdAt,
-      summary: "AI daily-work chat session.",
+      summary:
+        (message.appMode ?? "daily_work") === "coding_agent"
+          ? "AI coding-agent chat session."
+          : "AI daily-work chat session.",
       lastAction: {
         at: message.createdAt,
         actor: message.role === "assistant" ? "daily-work-agent" : "user",
@@ -764,7 +768,10 @@ function mergeChatMessageIntoSessions(
       contextItemIds: parsedMessage.contextItemIds,
       approvalRequestIds: parsedMessage.approvalRequestIds,
       messageCount: 1,
-      tags: ["chat", "daily-work"],
+      tags:
+        (message.appMode ?? "daily_work") === "coding_agent"
+          ? ["chat", "coding-agent"]
+          : ["chat", "daily-work"],
       recentMessages: [parsedMessage]
     });
     return;

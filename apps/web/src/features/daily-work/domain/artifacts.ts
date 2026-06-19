@@ -142,7 +142,7 @@ export function createFallbackArtifactPanelState(): ArtifactPanelState {
 
 export function mapArtifactsResponse(payload: DailyWorkArtifactsResponseDto): ArtifactItem[] {
   if (payload.mode !== activeMode || !Array.isArray(payload.artifacts)) {
-    throw new Error("Artifacts response did not include daily_work artifacts.");
+    throw new Error("Artifacts response did not include coding_agent artifacts.");
   }
 
   return payload.artifacts.map(mapArtifactDtoToItem);

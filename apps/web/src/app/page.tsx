@@ -6,7 +6,6 @@ import {
   Bot,
   Database,
   FileText,
-  Globe,
   MessageSquare,
   PanelLeft,
   ShieldCheck,
@@ -25,9 +24,7 @@ import {
   useActivityFeed,
   useApprovalLedger,
   useArtifacts,
-  useConnectorPreview,
   useDailyContext,
-  useGoogleConnectorStatus,
   useModelUsagePanel,
   usePersistencePanel,
   useSessionHistory,
@@ -44,7 +41,6 @@ import { PersistenceStatusPanel } from "@/features/daily-work/components/DailyWo
 import { ActivityFeedPanel } from "@/features/daily-work/components/panels/ActivityFeedPanel";
 import { ApprovalLedgerPanel } from "@/features/daily-work/components/panels/ApprovalLedgerPanel";
 import { ArtifactPanel } from "@/features/daily-work/components/panels/ArtifactPanel";
-import { ConnectorDirectoryPanel } from "@/features/daily-work/components/panels/ConnectorDirectoryPanel";
 import { ContextPanel } from "@/features/daily-work/components/panels/ContextPanel";
 import { ModeSnapshotPanel } from "@/features/daily-work/components/panels/ModeSnapshotPanel";
 import { ModelUsagePanel } from "@/features/daily-work/components/panels/ModelUsagePanel";
@@ -82,21 +78,17 @@ export default function Page() {
   const selectionState = useDailyWorkSelectionState();
   const {
     artifactFilter,
-    connectorFilter,
     modelRouteMode,
     selectedArtifactId,
     selectedContextId,
-    selectedConnectorId,
     selectedSessionHistoryId,
     selectedTemplateId,
     selectedWorkflowActionId,
     sessionHistoryFilter,
     setArtifactFilter,
-    setConnectorFilter,
     setModelRouteMode,
     setSelectedActivityEventId,
     setSelectedArtifactId,
-    setSelectedConnectorId,
     setSelectedContextId,
     setSelectedSessionHistoryId,
     setSelectedTemplateId,
@@ -143,7 +135,6 @@ export default function Page() {
       templateId: selectedTemplateId,
       contextItemIds: selectedContextId ? [selectedContextId] : [],
       artifactIds: selectedArtifactId ? [selectedArtifactId] : [],
-      connectorIds: selectedConnectorId ? [selectedConnectorId] : [],
       workflowIds: selectedWorkflowActionId ? [selectedWorkflowActionId] : []
     },
     onActivityChanged: refreshActivityFeed,
@@ -178,23 +169,11 @@ export default function Page() {
     agentTrace.sessionId
   );
   const { persistencePanel } = usePersistencePanel(apiBaseUrl);
-  const {
-    googleConnectorStatus,
-    googleOAuthStartNotice,
-    googleOAuthStartStatus,
-    microsoftConnectorStatus,
-    microsoftOAuthStartNotice,
-    microsoftOAuthStartStatus,
-    refreshGoogleConnectorStatus,
-    refreshMicrosoftConnectorStatus,
-    startGoogleOAuth,
-    startMicrosoftOAuth
-  } = useGoogleConnectorStatus(apiBaseUrl);
   const activeModelSnapshot = modelUsagePanel.modelSnapshots[modelRouteMode];
   const modelInputPlaceholder =
     modelRouteMode === "fast"
-      ? "例如：帮我写一封客户更新邮件，整理当前结果、时间线、风险和下一步。"
-      : "例如：归纳这批资料，复核风险并列出还需要补充的上下文。";
+      ? "例如：阅读 src 目录，找出登录流程的入口文件并说明调用链。"
+      : "例如：生成一个修复计划，先展示 diff 方案，等我批准后再应用。";
   const templateItems = templatePanel.items;
   const selectedTemplate =
     templateItems.find((template) => template.id === selectedTemplateId) ?? null;
@@ -204,14 +183,10 @@ export default function Page() {
   const sessionHistoryPanelItems = sessionHistoryPanel.items;
   const {
     filteredArtifacts,
-    filteredConnectors,
     filteredSessionHistory,
     filteredWorkflowActions,
     selectedActivityEvent,
     selectedArtifact,
-    selectedConnector,
-    selectedConnectorApprovalRequests,
-    selectedConnectorPreviewStatus,
     selectedContextItem,
     selectedSessionHistory,
     selectedWorkflowAction
@@ -223,8 +198,8 @@ export default function Page() {
     contextPanelItems,
     sessionHistoryPanelItems
   });
-  const { connectorPreviewPanel, setConnectorPreviewPanel } =
-    useConnectorPreview(apiBaseUrl, selectedConnector, refreshActivityFeed);
+  const setConnectorPreviewPanel = useCallback(() => undefined, []);
+  const setSelectedConnectorId = useCallback(() => undefined, []);
   const { workflowPreviewPanel } = useWorkflowPreview(
     apiBaseUrl,
     selectedWorkflowAction,
@@ -232,14 +207,12 @@ export default function Page() {
   );
   const {
     applyActivityEventPrompt,
-    applyConnectorPrompt,
     applyTemplatePrompt,
     applyWorkflowActionPrompt,
     restoreSessionHistory,
     selectSessionHistory,
     switchModelRoute,
     updateApprovalStatus,
-    updateConnectorPreviewDecision,
     useContextItem
   } = useDailyWorkActions({
     apiBaseUrl,
@@ -254,8 +227,8 @@ export default function Page() {
     setContextPanel,
     setModelRouteMode,
     setSelectedActivityEventId,
-    setSelectedConnectorId,
     setSelectedContextId,
+    setSelectedConnectorId,
     setSelectedSessionHistoryId,
     setSelectedTemplateId,
     setSelectedWorkflowActionId,
@@ -273,7 +246,6 @@ export default function Page() {
 
   const applyTemplateAndOpenAssistant = openAssistantAfter(applyTemplatePrompt);
   const applyWorkflowAndOpenAssistant = openAssistantAfter(applyWorkflowActionPrompt);
-  const applyConnectorAndOpenAssistant = openAssistantAfter(applyConnectorPrompt);
   const applyEventAndOpenAssistant = openAssistantAfter(applyActivityEventPrompt);
   const restoreSessionAndOpenAssistant = openAssistantAfter(restoreSessionHistory);
   const useContextAndOpenAssistant = openAssistantAfter(useContextItem);
@@ -330,13 +302,6 @@ export default function Page() {
       description: "查看模型路由、token 用量和持久化状态。",
       icon: <Bot className="size-4" aria-hidden="true" />,
       badge: modelRouteMode === "fast" ? "快速" : "深度"
-    },
-    {
-      id: "connectors",
-      label: "连接器",
-      description: "集中查看外部系统授权、权限状态和调用预览。",
-      icon: <Globe className="size-4" aria-hidden="true" />,
-      badge: String(filteredConnectors.length)
     },
     {
       id: "approvals",
@@ -656,35 +621,6 @@ export default function Page() {
                 settingsViews={settingsViews}
                 onViewChange={setActiveView}
               >
-                  {activeView === "connectors" ? (
-                    <ConnectorDirectoryPanel
-                      connectorFilter={connectorFilter}
-                      connectorPreviewPanel={connectorPreviewPanel}
-                      filteredConnectors={filteredConnectors}
-                      googleConnectorStatus={googleConnectorStatus}
-                      googleOAuthStartNotice={googleOAuthStartNotice}
-                      googleOAuthStartStatus={googleOAuthStartStatus}
-                      microsoftConnectorStatus={microsoftConnectorStatus}
-                      microsoftOAuthStartNotice={microsoftOAuthStartNotice}
-                      microsoftOAuthStartStatus={microsoftOAuthStartStatus}
-                      selectedConnector={selectedConnector}
-                      selectedConnectorApprovalRequests={selectedConnectorApprovalRequests}
-                      selectedConnectorPreviewStatus={selectedConnectorPreviewStatus}
-                      onApplyConnectorPrompt={applyConnectorAndOpenAssistant}
-                      onFilterChange={setConnectorFilter}
-                      onRefreshGoogleStatus={() => {
-                        void refreshGoogleConnectorStatus();
-                      }}
-                      onRefreshMicrosoftStatus={() => {
-                        void refreshMicrosoftConnectorStatus();
-                      }}
-                      onSelectConnector={setSelectedConnectorId}
-                      onStartGoogleOAuth={startGoogleOAuth}
-                      onStartMicrosoftOAuth={startMicrosoftOAuth}
-                      onUpdateConnectorPreviewDecision={updateConnectorPreviewDecision}
-                    />
-                  ) : null}
-
                   {activeView === "approvals" ? (
                     <>
                       <ApprovalLedgerPanel
