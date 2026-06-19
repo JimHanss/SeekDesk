@@ -374,14 +374,15 @@ export default function Page() {
   const sidebarConversationItems = sessionHistoryPanelItems
     .filter((item) => item.id !== activeSessionId)
     .filter((item) => !hiddenConversationIds.includes(item.id))
-    .map((item) => ({
+    .map((item, sourceIndex) => ({
       id: item.id,
       title: conversationTitleOverrides[item.id] ?? item.title,
       summary: item.summary,
       status: item.status,
       updatedAt: item.updatedAt,
       messageCount: item.messageCount,
-      pinned: pinnedConversationIds.includes(item.id)
+      pinned: pinnedConversationIds.includes(item.id),
+      sourceIndex
     }))
     .sort((left, right) => {
       const leftPinned = left.pinned ? 1 : 0;
@@ -391,7 +392,11 @@ export default function Page() {
         return rightPinned - leftPinned;
       }
 
-      return right.updatedAt.localeCompare(left.updatedAt);
+      return left.sourceIndex - right.sourceIndex;
+    })
+    .map(({ sourceIndex, ...item }) => {
+      void sourceIndex;
+      return item;
     });
   const assistantConversationTitle =
     activeSessionHistoryTitle ?? currentConversation.title;
