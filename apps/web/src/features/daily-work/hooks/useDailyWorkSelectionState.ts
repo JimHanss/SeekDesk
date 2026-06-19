@@ -8,7 +8,6 @@ import {
   connectorItems,
   connectorMatchesFilter,
   connectorPreviewApprovalStatus,
-  sessionHistoryItems,
   workflowActions
 } from "../domain";
 import type {
@@ -29,7 +28,7 @@ export function useDailyWorkSelectionState() {
     useState<SessionHistoryFilter>("全部");
   const [selectedSessionHistoryId, setSelectedSessionHistoryId] = useState<
     string | null
-  >(sessionHistoryItems[0]?.id ?? null);
+  >(null);
   const [selectedTemplateId, setSelectedTemplateId] = useState<string | null>(
     null
   );

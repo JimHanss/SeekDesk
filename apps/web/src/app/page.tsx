@@ -115,6 +115,7 @@ export default function Page() {
     retryLastPrompt,
     setError,
     setInput,
+    startCurrentConversation,
     status
   } = useChatController({
     apiBaseUrl,
@@ -395,6 +396,12 @@ export default function Page() {
     selectedSessionMessageKey
   ]);
 
+  const selectCurrentConversation = () => {
+    setSelectedSessionHistoryId(null);
+    startCurrentConversation();
+    setActiveView("assistant");
+  };
+
   const selectSidebarConversation = (conversationId: string) => {
     const conversation = sessionHistoryPanelItems.find(
       (item) => item.id === conversationId
@@ -415,6 +422,7 @@ export default function Page() {
       primaryViews={primaryViews}
       settingsViews={settingsViews}
       onConversationSelect={selectSidebarConversation}
+      onCurrentConversationSelect={selectCurrentConversation}
       onViewChange={setActiveView}
     >
             {activeView === "assistant" ? (
