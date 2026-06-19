@@ -15,8 +15,11 @@ export const dailyWorkToolNames = [
   "outlook.search_messages",
   "outlook.read_message",
   "outlook.create_draft_preview",
+  "outlook.create_draft",
+  "outlook.send_mail",
   "outlook.calendar.list_events",
   "outlook.calendar.propose_event_preview",
+  "outlook.calendar.create_event",
   "daily.persist_artifact"
 ] as const;
 
@@ -97,6 +100,17 @@ export const outlookCreateDraftPreviewInputSchema = z.object({
   conversationId: z.string().trim().min(1).optional()
 });
 
+export const outlookCreateDraftInputSchema = outlookCreateDraftPreviewInputSchema;
+
+export const outlookSendMailInputSchema = z.object({
+  to: z.array(z.string().email()).min(1).max(20),
+  cc: z.array(z.string().email()).max(20).default([]),
+  bcc: z.array(z.string().email()).max(20).default([]),
+  subject: z.string().trim().min(1).max(300),
+  bodyText: z.string().trim().min(1).max(10000),
+  saveToSentItems: z.boolean().default(true)
+});
+
 export const outlookCalendarListEventsInputSchema = z.object({
   calendarId: z.string().trim().min(1).default("primary"),
   timeMin: z.string().datetime().optional(),
@@ -116,6 +130,8 @@ export const outlookCalendarProposeEventPreviewInputSchema = z.object({
   location: z.string().trim().max(300).optional()
 });
 
+export const outlookCalendarCreateEventInputSchema = outlookCalendarProposeEventPreviewInputSchema;
+
 export const dailyPersistArtifactInputSchema = z.object({
   title: z.string().trim().min(1).max(300),
   artifactType: z.string().trim().min(1).max(80).default("ai_generated_note"),
@@ -132,9 +148,12 @@ export const dailyWorkToolInputSchemas = {
   "outlook.search_messages": outlookSearchMessagesInputSchema,
   "outlook.read_message": outlookReadMessageInputSchema,
   "outlook.create_draft_preview": outlookCreateDraftPreviewInputSchema,
+  "outlook.create_draft": outlookCreateDraftInputSchema,
+  "outlook.send_mail": outlookSendMailInputSchema,
   "outlook.calendar.list_events": outlookCalendarListEventsInputSchema,
   "outlook.calendar.propose_event_preview":
     outlookCalendarProposeEventPreviewInputSchema,
+  "outlook.calendar.create_event": outlookCalendarCreateEventInputSchema,
   "daily.persist_artifact": dailyPersistArtifactInputSchema
 } as const;
 
@@ -185,11 +204,18 @@ export type OutlookReadMessageInput = z.infer<typeof outlookReadMessageInputSche
 export type OutlookCreateDraftPreviewInput = z.infer<
   typeof outlookCreateDraftPreviewInputSchema
 >;
+export type OutlookCreateDraftInput = z.infer<
+  typeof outlookCreateDraftInputSchema
+>;
+export type OutlookSendMailInput = z.infer<typeof outlookSendMailInputSchema>;
 export type OutlookCalendarListEventsInput = z.infer<
   typeof outlookCalendarListEventsInputSchema
 >;
 export type OutlookCalendarProposeEventPreviewInput = z.infer<
   typeof outlookCalendarProposeEventPreviewInputSchema
+>;
+export type OutlookCalendarCreateEventInput = z.infer<
+  typeof outlookCalendarCreateEventInputSchema
 >;
 export type DailyPersistArtifactInput = z.infer<
   typeof dailyPersistArtifactInputSchema

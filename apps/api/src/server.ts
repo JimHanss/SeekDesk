@@ -170,10 +170,16 @@ export async function buildServer(options?: {
     "/api/chat/sessions/:sessionId/trace",
     async (request) => {
       const sessionId = request.params.sessionId.trim();
-      const [toolCalls, modelUsageRecords, activityEvents] = await Promise.all([
+      const [
+        toolCalls,
+        modelUsageRecords,
+        activityEvents,
+        permissionGrants
+      ] = await Promise.all([
         dailyWorkRepository.listToolCalls({ sessionId, limit: 100 }),
         dailyWorkRepository.listModelUsageRecords({ sessionId, limit: 100 }),
-        dailyWorkRepository.listEvents()
+        dailyWorkRepository.listEvents(),
+        dailyWorkRepository.listPermissionGrants({ sessionId, limit: 100 })
       ]);
 
       return {
@@ -186,6 +192,7 @@ export async function buildServer(options?: {
         ),
         modelUsageRecords,
         modelUsageSummary: summarizeModelUsageRecords(modelUsageRecords),
+        permissionGrants,
         permissionBoundary: createAgentPermissionBoundary(),
         generatedAt: new Date().toISOString()
       };
@@ -590,10 +597,10 @@ function summarizeModelUsageRecords(records: ToolModelUsageRecord[]) {
 
 function createAgentPermissionBoundary() {
   return {
-    previewOnly: true,
-    externalEffects: ["none"],
+    previewOnly: false,
+    externalEffects: ["none", "microsoft.outlook.write_after_session_grant"],
     statement:
-      "Daily-work agent tools may read authorized connector data and create local previews only. SeekDesk does not send email, create calendar events, write external documents, or run coding-agent tools in this mode."
+      "Daily-work tools can read authorized connector data and create local previews. Microsoft Outlook mail/calendar writes require a same-session allow_for_session grant and are recorded in tool calls, activity events, and artifacts. Coding-agent file, shell, and git tools remain disabled."
   };
 }
 

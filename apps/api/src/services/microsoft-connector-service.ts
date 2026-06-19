@@ -1,9 +1,12 @@
 import type {
+  OutlookCalendarCreateEventInput,
   OutlookCalendarListEventsInput,
   OutlookCalendarProposeEventPreviewInput,
+  OutlookCreateDraftInput,
   OutlookCreateDraftPreviewInput,
   OutlookReadMessageInput,
-  OutlookSearchMessagesInput
+  OutlookSearchMessagesInput,
+  OutlookSendMailInput
 } from "@seekdesk/shared";
 
 import type { DailyWorkRepository } from "../repositories/daily-work-repository.js";
@@ -29,7 +32,10 @@ export const microsoftConnectorScopes = [
   "offline_access",
   "User.Read",
   "Mail.Read",
-  "Calendars.Read"
+  "Mail.ReadWrite",
+  "Mail.Send",
+  "Calendars.Read",
+  "Calendars.ReadWrite"
 ] as const;
 
 export interface MicrosoftOAuthConfig {
@@ -385,7 +391,60 @@ export function createOutlookDraftPreview(input: OutlookCreateDraftPreviewInput)
     subject: input.subject,
     ...(input.conversationId ? { conversationId: input.conversationId } : {}),
     safetyBoundary:
-      "This is a local Outlook draft payload preview. SeekDesk does not call Microsoft Graph /me/messages, /sendMail, or send in daily_work v1."
+      "This is a local Outlook draft payload preview. SeekDesk does not call Microsoft Graph for previews; real Microsoft writes require a same-session authorization grant before execution."
+  };
+}
+
+export async function createOutlookDraft(input: {
+  accessToken: string;
+  params: OutlookCreateDraftInput;
+}) {
+  const message = await fetchMicrosoftJson<MicrosoftGraphMessage>({
+    accessToken: input.accessToken,
+    method: "POST",
+    url: microsoftGraphUrl + "/me/messages",
+    body: createGraphMessagePayload(input.params)
+  });
+
+  return {
+    provider: "outlook",
+    previewOnly: false,
+    externalEffects: ["microsoft.outlook.draft.create"],
+    draft: mapGraphMessageSummary(message),
+    messageId: message.id ?? "",
+    subject: input.params.subject,
+    to: input.params.to,
+    cc: input.params.cc,
+    ...(input.params.conversationId
+      ? { conversationId: input.params.conversationId }
+      : {})
+  };
+}
+
+export async function sendOutlookMail(input: {
+  accessToken: string;
+  params: OutlookSendMailInput;
+}) {
+  await fetchMicrosoftJson<Record<string, never>>({
+    accessToken: input.accessToken,
+    method: "POST",
+    url: microsoftGraphUrl + "/me/sendMail",
+    body: {
+      message: createGraphMessagePayload(input.params),
+      saveToSentItems: input.params.saveToSentItems
+    }
+  });
+
+  return {
+    provider: "outlook",
+    previewOnly: false,
+    externalEffects: ["microsoft.outlook.mail.send"],
+    sent: true,
+    subject: input.params.subject,
+    to: input.params.to,
+    cc: input.params.cc,
+    bcc: input.params.bcc,
+    saveToSentItems: input.params.saveToSentItems
   };
 }
 
@@ -463,7 +522,35 @@ export function createOutlookCalendarEventPreview(
     },
     calendarId: input.calendarId,
     safetyBoundary:
-      "This is a local Outlook calendar event JSON preview. SeekDesk does not call Microsoft Graph events insert/create in daily_work v1."
+      "This is a local Outlook calendar event JSON preview. SeekDesk does not call Microsoft Graph for previews; real Microsoft writes require a same-session authorization grant before execution."
+  };
+}
+
+export async function createOutlookCalendarEvent(input: {
+  accessToken: string;
+  params: OutlookCalendarCreateEventInput;
+}) {
+  const calendarPath =
+    input.params.calendarId && input.params.calendarId !== "primary"
+      ? "/me/calendars/" + encodeURIComponent(input.params.calendarId) + "/events"
+      : "/me/events";
+  const event = await fetchMicrosoftJson<MicrosoftGraphEvent>({
+    accessToken: input.accessToken,
+    method: "POST",
+    url: microsoftGraphUrl + calendarPath,
+    headers: {
+      Prefer: 'outlook.timezone="' + input.params.timeZone + '"'
+    },
+    body: createGraphEventPayload(input.params)
+  });
+
+  return {
+    provider: "outlook_calendar",
+    previewOnly: false,
+    externalEffects: ["microsoft.outlook.calendar.event.create"],
+    calendarId: input.params.calendarId,
+    event: mapGraphEvent(event),
+    eventId: event.id ?? ""
   };
 }
 
@@ -547,25 +634,87 @@ function isTokenExpired(payload: MicrosoftTokenPayload) {
 async function fetchMicrosoftJson<T>(input: {
   accessToken: string;
   url: string;
+  method?: string;
   headers?: Record<string, string>;
+  body?: unknown;
 }): Promise<T> {
   const response = await fetch(input.url, {
+    method: input.method ?? "GET",
     headers: {
       Accept: "application/json",
-      Authorization: `Bearer ${input.accessToken}`,
+      ...(input.body === undefined ? {} : { "Content-Type": "application/json" }),
+      Authorization: "Bearer " + input.accessToken,
       ...(input.headers ?? {})
-    }
+    },
+    ...(input.body === undefined ? {} : { body: JSON.stringify(input.body) })
   });
   const text = await response.text();
-  const payload = text ? JSON.parse(text) as { error?: { message?: string } } : {};
+  const payload = parseMicrosoftJsonResponse(text);
 
   if (!response.ok) {
+    const errorPayload = payload as { error?: { message?: string } };
     throw new MicrosoftConnectorConfigurationError(
-      payload.error?.message ?? `Microsoft Graph request failed: ${response.status}`
+      errorPayload.error?.message ??
+        `Microsoft Graph request failed: ${response.status}`
     );
   }
 
   return payload as T;
+}
+
+function createGraphMessagePayload(input: OutlookCreateDraftInput | OutlookSendMailInput) {
+  return {
+    subject: input.subject,
+    body: {
+      contentType: "Text",
+      content: input.bodyText
+    },
+    toRecipients: input.to.map((email) => toGraphRecipient(email)),
+    ccRecipients: input.cc.map((email) => toGraphRecipient(email)),
+    ...("bcc" in input
+      ? { bccRecipients: input.bcc.map((email) => toGraphRecipient(email)) }
+      : {})
+  };
+}
+
+function createGraphEventPayload(input: OutlookCalendarCreateEventInput) {
+  return {
+    subject: input.summary,
+    ...(input.description
+      ? { body: { contentType: "Text", content: input.description } }
+      : {}),
+    start: {
+      dateTime: input.startDateTime,
+      timeZone: input.timeZone
+    },
+    end: {
+      dateTime: input.endDateTime,
+      timeZone: input.timeZone
+    },
+    ...(input.location ? { location: { displayName: input.location } } : {}),
+    attendees: input.attendeeEmails.map((email) => ({
+      emailAddress: {
+        address: email
+      },
+      type: "required"
+    }))
+  };
+}
+
+function parseMicrosoftJsonResponse(text: string) {
+  if (!text.trim()) {
+    return {};
+  }
+
+  try {
+    return JSON.parse(text) as unknown;
+  } catch (error) {
+    throw new MicrosoftConnectorConfigurationError(
+      error instanceof Error
+        ? `Microsoft Graph returned invalid JSON: ${error.message}`
+        : "Microsoft Graph returned invalid JSON."
+    );
+  }
 }
 
 function mapGraphMessageSummary(message: MicrosoftGraphMessage) {

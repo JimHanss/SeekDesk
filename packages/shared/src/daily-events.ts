@@ -18,6 +18,7 @@ export const dailyActivityEventTypeSchema = z.enum([
   "approval.changed",
   "workflow.preview.queued",
   "workflow.preview.completed",
+  "connector.action.completed",
   "artifact.updated",
   "artifact.ready"
 ]);

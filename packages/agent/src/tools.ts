@@ -110,16 +110,6 @@ export class ToolOrchestrator {
       });
     }
 
-    if (definition.permissionPolicy === "permission_required") {
-      return createToolResult(normalizedRequest, {
-        status: "permission_required",
-        mode: definition.mode,
-        previewOnly: false,
-        permissionRequired: true,
-        message: `Tool "${definition.name}" requires permission before it can run.`
-      });
-    }
-
     const parsedInput = parseToolInput(definition, normalizedRequest);
     if (!parsedInput.success) {
       return createToolResult(normalizedRequest, {
@@ -132,6 +122,16 @@ export class ToolOrchestrator {
         outputJson: {
           issues: parsedInput.issues
         }
+      });
+    }
+
+    if (definition.permissionPolicy === "permission_required") {
+      return createToolResult(normalizedRequest, {
+        status: "permission_required",
+        mode: definition.mode,
+        previewOnly: false,
+        permissionRequired: true,
+        message: `Tool "${definition.name}" requires same-session authorization before it can run.`
       });
     }
 
@@ -373,6 +373,47 @@ export function createDefaultToolRegistry(): ToolRegistry {
       }
     },
     {
+      name: "outlook.create_draft",
+      mode: "daily_work",
+      description:
+        "Create a real Outlook draft message through Microsoft Graph. Requires a same-session allow_for_session grant and Mail.ReadWrite scope.",
+      inputSchema: dailyWorkToolInputSchemas["outlook.create_draft"],
+      permissionPolicy: "permission_required",
+      parametersJsonSchema: {
+        type: "object",
+        properties: {
+          to: { type: "array", items: { type: "string", format: "email" } },
+          cc: { type: "array", items: { type: "string", format: "email" } },
+          subject: { type: "string" },
+          bodyText: { type: "string" },
+          conversationId: { type: "string" }
+        },
+        required: ["to", "subject", "bodyText"],
+        additionalProperties: false
+      }
+    },
+    {
+      name: "outlook.send_mail",
+      mode: "daily_work",
+      description:
+        "Send a real Outlook email through Microsoft Graph /me/sendMail. Requires a same-session allow_for_session grant and Mail.Send scope.",
+      inputSchema: dailyWorkToolInputSchemas["outlook.send_mail"],
+      permissionPolicy: "permission_required",
+      parametersJsonSchema: {
+        type: "object",
+        properties: {
+          to: { type: "array", items: { type: "string", format: "email" } },
+          cc: { type: "array", items: { type: "string", format: "email" } },
+          bcc: { type: "array", items: { type: "string", format: "email" } },
+          subject: { type: "string" },
+          bodyText: { type: "string" },
+          saveToSentItems: { type: "boolean", default: true }
+        },
+        required: ["to", "subject", "bodyText"],
+        additionalProperties: false
+      }
+    },
+    {
       name: "outlook.calendar.list_events",
       mode: "daily_work",
       description:
@@ -422,6 +463,32 @@ export function createDefaultToolRegistry(): ToolRegistry {
       }
     },
     {
+      name: "outlook.calendar.create_event",
+      mode: "daily_work",
+      description:
+        "Create a real Outlook Calendar event through Microsoft Graph. Requires a same-session allow_for_session grant and Calendars.ReadWrite scope.",
+      inputSchema: dailyWorkToolInputSchemas["outlook.calendar.create_event"],
+      permissionPolicy: "permission_required",
+      parametersJsonSchema: {
+        type: "object",
+        properties: {
+          calendarId: { type: "string", default: "primary" },
+          summary: { type: "string" },
+          description: { type: "string" },
+          startDateTime: { type: "string", format: "date-time" },
+          endDateTime: { type: "string", format: "date-time" },
+          attendeeEmails: {
+            type: "array",
+            items: { type: "string", format: "email" }
+          },
+          timeZone: { type: "string", default: "UTC" },
+          location: { type: "string" }
+        },
+        required: ["summary", "startDateTime", "endDateTime"],
+        additionalProperties: false
+      }
+    },
+    {
       name: "daily.persist_artifact",
       mode: "daily_work",
       description:
@@ -449,7 +516,11 @@ export function createModelToolDefinitions(
   return registry
     .list()
     .filter((definition) => definition.mode === mode)
-    .filter((definition) => definition.permissionPolicy !== "permission_required")
+    .filter(
+      (definition) =>
+        definition.permissionPolicy !== "permission_required" ||
+        definition.mode === "daily_work"
+    )
     .filter((definition) => Boolean(definition.parametersJsonSchema))
     .map((definition) => ({
       type: "function",

@@ -14,14 +14,19 @@ import {
   gmailCreateDraftPreviewInputSchema,
   gmailReadThreadInputSchema,
   gmailSearchThreadsInputSchema,
+  outlookCalendarCreateEventInputSchema,
   outlookCalendarListEventsInputSchema,
   outlookCalendarProposeEventPreviewInputSchema,
+  outlookCreateDraftInputSchema,
   outlookCreateDraftPreviewInputSchema,
   outlookReadMessageInputSchema,
   outlookSearchMessagesInputSchema,
+  outlookSendMailInputSchema,
   type DailyActivityEvent,
   type DailyWorkArtifact,
-  type DailyWorkToolName
+  type DailyWorkPermissionGrantAction,
+  type DailyWorkToolName,
+  type ToolCallRecord
 } from "@seekdesk/shared";
 
 import type { DailyWorkRepository } from "../repositories/daily-work-repository.js";
@@ -37,14 +42,32 @@ import {
 } from "./google-connector-service.js";
 import {
   createMicrosoftAccessToken,
+  createOutlookCalendarEvent,
   createOutlookCalendarEventPreview,
+  createOutlookDraft,
   createOutlookDraftPreview,
   getMicrosoftConnectionStatus,
   getMicrosoftOAuthConfigFromEnv,
   listOutlookCalendarEvents,
   readOutlookMessage,
-  searchOutlookMessages
+  searchOutlookMessages,
+  sendOutlookMail
 } from "./microsoft-connector-service.js";
+import { createToolActivityEvent } from "./daily-work-tool-activity.js";
+
+const microsoftWriteToolNames = [
+  "outlook.create_draft",
+  "outlook.send_mail",
+  "outlook.calendar.create_event"
+] as const satisfies DailyWorkPermissionGrantAction[];
+
+const microsoftWriteToolNameSet = new Set<string>(microsoftWriteToolNames);
+
+export function isMicrosoftWriteToolName(
+  name: string
+): name is DailyWorkPermissionGrantAction {
+  return microsoftWriteToolNameSet.has(name);
+}
 
 export function createDailyWorkToolRuntime(
   repository: DailyWorkRepository,
@@ -125,6 +148,264 @@ export function createDailyWorkToolRuntime(
     orchestrator: new ToolOrchestrator(registry),
     modelTools: createModelToolDefinitions(registry, "daily_work")
   };
+}
+
+export async function executeMicrosoftWriteToolCall(input: {
+  repository: DailyWorkRepository;
+  sessionId: string;
+  toolCallId: string;
+}) {
+  const toolCalls = await input.repository.listToolCalls({
+    sessionId: input.sessionId,
+    limit: 200
+  });
+  const toolCall = toolCalls.find((item) => item.id === input.toolCallId);
+
+  if (!toolCall) {
+    throw createToolError("tool_call_not_found", "Daily-work tool call was not found for this session.");
+  }
+
+  if (!isMicrosoftWriteToolName(toolCall.name)) {
+    throw createToolError("unsupported_tool", "Only Microsoft write tools can be executed through this endpoint.");
+  }
+
+  const grant = await findActiveSessionGrant(input.repository, {
+    sessionId: input.sessionId,
+    action: toolCall.name
+  });
+
+  if (!grant) {
+    await markToolCallPermissionRequired(input.repository, toolCall);
+    throw createToolError("permission_required", "This Microsoft write requires same-session authorization before execution.");
+  }
+
+  try {
+    const accessToken = await createMicrosoftAccessTokenOrThrow(input.repository);
+    const result = await executeAuthorizedMicrosoftWriteTool({
+      accessToken,
+      toolCall
+    });
+    const completedAt = new Date().toISOString();
+    const artifact = createMicrosoftWriteArtifact({
+      toolCall,
+      result,
+      timestamp: completedAt
+    });
+    const outputJson = {
+      ...asRecord(result),
+      artifactId: artifact.id
+    };
+    const updatedToolCall = await input.repository.recordToolCall({
+      ...toolCall,
+      status: "completed",
+      previewOnly: false,
+      permissionRequired: false,
+      outputJson,
+      completedAt
+    });
+
+    await input.repository.upsertArtifact(artifact);
+    await input.repository.upsertActivityEvent(
+      createToolActivityEvent({
+        sessionId: input.sessionId,
+        toolName: toolCall.name,
+        status: "completed",
+        timestamp: completedAt,
+        inputJson: toolCall.inputJson,
+        outputJson,
+        toolCallId: toolCall.id,
+        phase: "completed"
+      })
+    );
+
+    return {
+      mode: "daily_work" as const,
+      previewOnly: false,
+      grant,
+      toolCall: updatedToolCall,
+      artifact,
+      result: outputJson
+    };
+  } catch (error) {
+    await markToolCallFailed(input.repository, toolCall, error);
+    throw error;
+  }
+}
+
+async function executeAuthorizedMicrosoftWriteTool(input: {
+  accessToken: string;
+  toolCall: ToolCallRecord;
+}) {
+  switch (input.toolCall.name) {
+    case "outlook.create_draft":
+      return createOutlookDraft({
+        accessToken: input.accessToken,
+        params: outlookCreateDraftInputSchema.parse(input.toolCall.inputJson)
+      });
+    case "outlook.send_mail":
+      return sendOutlookMail({
+        accessToken: input.accessToken,
+        params: outlookSendMailInputSchema.parse(input.toolCall.inputJson)
+      });
+    case "outlook.calendar.create_event":
+      return createOutlookCalendarEvent({
+        accessToken: input.accessToken,
+        params: outlookCalendarCreateEventInputSchema.parse(input.toolCall.inputJson)
+      });
+    default:
+      throw createToolError("unsupported_tool", "Unsupported Microsoft write tool.");
+  }
+}
+
+async function findActiveSessionGrant(
+  repository: DailyWorkRepository,
+  query: { sessionId: string; action: DailyWorkPermissionGrantAction }
+) {
+  const grants = await repository.listPermissionGrants({
+    sessionId: query.sessionId,
+    provider: "microsoft",
+    action: query.action,
+    activeOnly: true,
+    limit: 20
+  });
+
+  return grants.at(-1) ?? null;
+}
+
+async function markToolCallPermissionRequired(
+  repository: DailyWorkRepository,
+  toolCall: ToolCallRecord
+) {
+  const completedAt = new Date().toISOString();
+  const outputJson = {
+    error: "permission_required",
+    permissionRequired: true
+  };
+  await repository.recordToolCall({
+    ...toolCall,
+    status: "permission_required",
+    previewOnly: false,
+    permissionRequired: true,
+    outputJson,
+    error: "permission_required",
+    completedAt
+  });
+  await repository.upsertActivityEvent(
+    createToolActivityEvent({
+      sessionId: toolCall.sessionId ?? "unknown-session",
+      toolName: toolCall.name,
+      status: "failed",
+      timestamp: completedAt,
+      inputJson: toolCall.inputJson,
+      outputJson,
+      error: "permission_required",
+      toolCallId: toolCall.id,
+      phase: "completed"
+    })
+  );
+}
+
+async function markToolCallFailed(
+  repository: DailyWorkRepository,
+  toolCall: ToolCallRecord,
+  error: unknown
+) {
+  const completedAt = new Date().toISOString();
+  const errorCode = formatToolErrorCode(error);
+  await repository.recordToolCall({
+    ...toolCall,
+    status: "failed",
+    previewOnly: false,
+    permissionRequired: false,
+    outputJson: { message: formatToolErrorMessage(error) },
+    error: errorCode,
+    completedAt
+  });
+  await repository.upsertActivityEvent(
+    createToolActivityEvent({
+      sessionId: toolCall.sessionId ?? "unknown-session",
+      toolName: toolCall.name,
+      status: "failed",
+      timestamp: completedAt,
+      inputJson: toolCall.inputJson,
+      outputJson: { message: formatToolErrorMessage(error) },
+      error: errorCode,
+      toolCallId: toolCall.id,
+      phase: "completed"
+    })
+  );
+}
+
+function createMicrosoftWriteArtifact(input: {
+  toolCall: ToolCallRecord;
+  result: unknown;
+  timestamp: string;
+}): DailyWorkArtifact {
+  const result = asRecord(input.result);
+  const subject = typeof result.subject === "string" ? result.subject : input.toolCall.name;
+  const content = JSON.stringify(input.result, null, 2);
+
+  return {
+    id: `microsoft-write-artifact-${crypto.randomUUID()}`,
+    mode: "daily_work",
+    artifactType: input.toolCall.name === "outlook.calendar.create_event" ? "status_update" : "email_draft",
+    title: `Microsoft write result: ${subject}`,
+    description: truncateText(content, 180),
+    summary: truncateText(content, 260),
+    status: "ready",
+    owner: {
+      id: "daily-work-agent",
+      displayName: "SeekDesk Daily Agent",
+      team: "daily-work"
+    },
+    updatedAt: input.timestamp,
+    sourceContextIds: [],
+    approvalRequestIds: [],
+    version: 1,
+    reusable: false,
+    nextAction: {
+      type: "archive",
+      label: "Archive write receipt",
+      description: "External Microsoft write completed and has been recorded for audit."
+    },
+    permissionState: "restricted",
+    trace: {
+      origin: "daily_chat",
+      createdAt: input.timestamp,
+      createdBy: "daily-work-agent",
+      events: [
+        {
+          at: input.timestamp,
+          actor: "daily-work-agent",
+          type: "created",
+          summary: `Recorded external Microsoft write for ${input.toolCall.name}.`
+        }
+      ]
+    },
+    lifecycle: [
+      {
+        at: input.timestamp,
+        actor: "daily-work-agent",
+        type: "created",
+        summary: `Recorded external Microsoft write for ${input.toolCall.name}.`
+      }
+    ],
+    tags: ["microsoft", "external-write", input.toolCall.name]
+  };
+}
+
+function asRecord(value: unknown): Record<string, unknown> {
+  return value && typeof value === "object" ? (value as Record<string, unknown>) : {};
+}
+
+function formatToolErrorCode(error: unknown) {
+  return error && typeof error === "object" && "code" in error
+    ? String((error as { code?: unknown }).code ?? "tool_failed")
+    : "tool_failed";
+}
+
+function formatToolErrorMessage(error: unknown) {
+  return error instanceof Error ? error.message : String(error);
 }
 
 function createDailyWorkToolRegistry(allowedToolNames?: DailyWorkToolName[]) {

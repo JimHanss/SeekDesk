@@ -15,6 +15,13 @@
       "when": 1781011374413,
       "tag": "0001_stiff_katie_power",
       "breakpoints": true
+    },
+    {
+      "idx": 2,
+      "version": "7",
+      "when": 1781852811506,
+      "tag": "0002_cute_inertia",
+      "breakpoints": true
     }
   ]
 }

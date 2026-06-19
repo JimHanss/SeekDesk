@@ -13,6 +13,7 @@ import {
   readAssistantResponse
 } from "../../domain";
 import type {
+  AgentToolCallTraceItem,
   AgentTraceResponseDto,
   AgentTraceState,
   ChatMessage,
@@ -293,6 +294,62 @@ export function useChatController({
     }
   }, [apiBaseUrl]);
 
+  const authorizeToolCallForSession = useCallback(async (
+    toolCall: AgentToolCallTraceItem
+  ) => {
+    if (!activeSessionId) {
+      return;
+    }
+
+    const response = await fetch(apiBaseUrl + "/api/daily/permission-grants", {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json"
+      },
+      body: JSON.stringify({
+        mode: activeMode,
+        provider: "microsoft",
+        sessionId: activeSessionId,
+        action: toolCall.name,
+        reason: "User allowed this Microsoft write for the current session."
+      })
+    });
+
+    if (!response.ok) {
+      throw new Error(await formatChatError(response));
+    }
+
+    await refreshAgentTrace(activeSessionId, agentTrace.provider);
+    await onActivityChanged?.();
+  }, [activeSessionId, agentTrace.provider, apiBaseUrl, onActivityChanged, refreshAgentTrace]);
+
+  const executeToolCall = useCallback(async (toolCall: AgentToolCallTraceItem) => {
+    if (!activeSessionId) {
+      return;
+    }
+
+    const response = await fetch(
+      apiBaseUrl + "/api/daily/tool-calls/" + encodeURIComponent(toolCall.id) + "/execute",
+      {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json"
+        },
+        body: JSON.stringify({
+          mode: activeMode,
+          sessionId: activeSessionId
+        })
+      }
+    );
+
+    if (!response.ok) {
+      throw new Error(await formatChatError(response));
+    }
+
+    await refreshAgentTrace(activeSessionId, agentTrace.provider);
+    await onActivityChanged?.();
+  }, [activeSessionId, agentTrace.provider, apiBaseUrl, onActivityChanged, refreshAgentTrace]);
+
   const startCurrentConversation = useCallback(() => {
     abortRef.current?.abort();
     setActiveSessionId(null);
@@ -328,6 +385,7 @@ export function useChatController({
     activeSessionId,
     agentTrace,
     applyPrompt,
+    authorizeToolCallForSession,
     cancelRequest,
     endpoint,
     error,
@@ -338,6 +396,7 @@ export function useChatController({
     lastSubmittedPrompt,
     loadSessionMessages,
     messages,
+    executeToolCall,
     messagesEndRef,
     refreshAgentTrace,
     retryLastPrompt,

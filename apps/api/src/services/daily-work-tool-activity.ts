@@ -1,4 +1,8 @@
-import type { DailyActivityEvent, ToolCallRecord } from "@seekdesk/shared";
+import type {
+  DailyActivityEvent,
+  ToolCallRecord,
+  WorkflowExternalEffect
+} from "@seekdesk/shared";
 
 export function createToolActivityEvent(input: {
   sessionId: string;
@@ -13,10 +17,12 @@ export function createToolActivityEvent(input: {
 }): DailyActivityEvent {
   const connectorIds = inferToolConnectorIds(input.toolName);
   const artifactIds = inferToolArtifactIds(input.outputJson);
+  const boundary = inferToolSafetyBoundary(input.outputJson, input.error);
   const isCompleted = input.phase === "completed";
-  const summary = isCompleted
+  const summary = (isCompleted
     ? summarizeToolResult(input.toolName, input.outputJson, input.error)
-    : summarizeToolRequest(input.toolName, input.inputJson);
+    : summarizeToolRequest(input.toolName, input.inputJson)) ??
+    "Agent tool activity recorded.";
   const metadata = createToolActivityMetadata({
     toolName: input.toolName,
     phase: input.phase,
@@ -30,10 +36,18 @@ export function createToolActivityEvent(input: {
     id:
       `daily-event-agent-tool-${input.sessionId}-${input.toolCallId ?? input.toolName}-${input.phase}`,
     mode: "daily_work",
-    eventType: isCompleted ? "workflow.preview.completed" : "workflow.preview.queued",
+    eventType: isCompleted
+      ? boundary.previewOnly
+        ? "workflow.preview.completed"
+        : "connector.action.completed"
+      : "workflow.preview.queued",
     status: input.status,
     timestamp: input.timestamp,
-    title: isCompleted ? "Agent tool completed" : "Agent tool planned",
+    title: isCompleted
+      ? boundary.previewOnly
+        ? "Agent tool completed"
+        : "External action completed"
+      : "Agent tool planned",
     summary,
     actor: "daily-work-agent",
     relatedRefs: {
@@ -47,25 +61,69 @@ export function createToolActivityEvent(input: {
       contextItemIds: []
     },
     safetyBoundary: {
-      previewOnly: true,
-      externalEffects: ["none"],
-      prohibitedExternalActions: [
-        "send_email",
-        "write_document",
-        "schedule_calendar_event",
-        "create_task"
-      ],
-      statement:
-        "Agent tool execution is recorded in SeekDesk. Daily-work tools may read authorized connector data and produce local previews only."
+      previewOnly: boundary.previewOnly,
+      externalEffects: boundary.externalEffects,
+      prohibitedExternalActions: boundary.previewOnly
+        ? [
+            "send_email",
+            "write_document",
+            "schedule_calendar_event",
+            "create_task"
+          ]
+        : ["write_document", "create_task"],
+      statement: boundary.previewOnly
+        ? "Agent tool execution is recorded in SeekDesk. Preview/read tools do not perform external writes."
+        : "A Microsoft external write was executed after same-session authorization and recorded for audit."
     },
     nextAction: null,
     metadata: {
       riskLevel: connectorIds.length > 0 ? "medium" : "low",
-      permissionState: connectorIds.length > 0 ? "requires_review" : "workspace_shared",
-      externalEffects: ["none"],
+      permissionState: boundary.previewOnly
+        ? connectorIds.length > 0
+          ? "requires_review"
+          : "workspace_shared"
+        : "authorized_external_write",
+      externalEffects: boundary.externalEffects,
       ...metadata
     }
   };
+}
+
+function inferToolSafetyBoundary(
+  outputJson: unknown,
+  error: string | undefined
+): { previewOnly: boolean; externalEffects: WorkflowExternalEffect[] } {
+  if (error || !outputJson || typeof outputJson !== "object") {
+    return {
+      previewOnly: true,
+      externalEffects: ["none"]
+    };
+  }
+
+  const output = outputJson as Record<string, unknown>;
+  const externalEffects = Array.isArray(output.externalEffects)
+    ? output.externalEffects.filter(isWorkflowExternalEffect)
+    : [];
+  const previewOnly = output.previewOnly !== false;
+
+  return {
+    previewOnly,
+    externalEffects:
+      !previewOnly && externalEffects.length > 0 ? externalEffects : ["none"]
+  };
+}
+
+function isWorkflowExternalEffect(value: unknown): value is WorkflowExternalEffect {
+  return (
+    value === "none" ||
+    value === "send_email" ||
+    value === "write_document" ||
+    value === "schedule_calendar_event" ||
+    value === "create_task" ||
+    value === "microsoft.outlook.draft.create" ||
+    value === "microsoft.outlook.mail.send" ||
+    value === "microsoft.outlook.calendar.event.create"
+  );
 }
 
 function inferToolConnectorIds(toolName: ToolCallRecord["name"]) {
@@ -115,10 +173,26 @@ function summarizeToolResult(
   }
 
   if (!outputJson || typeof outputJson !== "object") {
-    return `Agent tool ${toolName} completed in preview-only mode. No external write was performed.`;
+    return (
+      "Agent tool " +
+      toolName +
+      " completed in preview-only mode. No external write was performed."
+    );
   }
 
   const output = outputJson as Record<string, unknown>;
+  if (output.previewOnly === false) {
+    const effects = Array.isArray(output.externalEffects)
+      ? output.externalEffects.filter(isWorkflowExternalEffect)
+      : [];
+    return (
+      "Agent completed " +
+      toolName +
+      " after same-session authorization. External effects: " +
+      (effects.join(", ") || "microsoft_write") +
+      "."
+    );
+  }
 
   if (Array.isArray(output.threads)) {
     return `Agent read Gmail thread metadata: ${output.threads.length} thread result(s). No email was sent or modified.`;
@@ -217,6 +291,28 @@ function summarizeOutputForMetadata(outputJson: unknown, error: string | undefin
 
   const output = outputJson as Record<string, unknown>;
   const provider = typeof output.provider === "string" ? output.provider : undefined;
+
+  if (output.previewOnly === false) {
+    const effects = Array.isArray(output.externalEffects)
+      ? output.externalEffects.filter((item): item is string => typeof item === "string")
+      : [];
+    return {
+      provider,
+      externalDataSummary:
+        effects.length > 0
+          ? "Authorized Microsoft write completed: " + effects.join(", ") + "."
+          : "Authorized Microsoft write completed.",
+      resultCount: 1,
+      reference:
+        typeof output.messageId === "string" && output.messageId.trim()
+          ? "outlook-message:" + output.messageId
+          : typeof output.eventId === "string" && output.eventId.trim()
+            ? "outlook-calendar-event:" + output.eventId
+            : typeof output.artifactId === "string" && output.artifactId.trim()
+              ? "artifact:" + output.artifactId
+              : undefined
+    };
+  }
 
   if (Array.isArray(output.threads)) {
     return {

@@ -7,6 +7,8 @@ import {
   createDailyActivityEventsResponse,
   dailyApprovalDecisionRequestSchema,
   dailyContextUsePreviewRequestSchema,
+  dailyWorkPermissionGrantCreateRequestSchema,
+  dailyWorkPermissionGrantRevokeRequestSchema,
   dailyWorkSessionRestorePreviewRequestSchema,
   dailyWorkTemplateApplyPreviewRequestSchema,
   dailyWorkTemplateCreateRequestSchema,
@@ -78,112 +80,261 @@ import {
   createContextDocumentFromUpload,
   maxContextUploadBytes
 } from "../services/daily-work-context-documents.js";
+import { executeMicrosoftWriteToolCall } from "../services/daily-work-tools.js";
 
 export async function registerDailyWorkRoutes(
   app: FastifyInstance,
   dailyWorkRepository: DailyWorkRepository
 ) {
   app.options("/api/daily/context", async (_request, reply) =>
-      reply.code(204).send()
-    );
+    reply.code(204).send()
+  );
 
   app.options("/api/daily/context/uploads", async (_request, reply) =>
-      reply.code(204).send()
-    );
+    reply.code(204).send()
+  );
 
   app.options(
-      "/api/daily/context/:contextItemId/use-preview",
-      async (_request, reply) => reply.code(204).send()
-    );
+    "/api/daily/context/:contextItemId/use-preview",
+    async (_request, reply) => reply.code(204).send()
+  );
 
   app.options("/api/daily/approvals", async (_request, reply) =>
-      reply.code(204).send()
-    );
+    reply.code(204).send()
+  );
 
   app.options(
-      "/api/daily/approvals/:approvalRequestId/decision",
-      async (_request, reply) => reply.code(204).send()
-    );
+    "/api/daily/approvals/:approvalRequestId/decision",
+    async (_request, reply) => reply.code(204).send()
+  );
 
   app.options("/api/daily/templates", async (_request, reply) =>
-      reply.code(204).send()
-    );
+    reply.code(204).send()
+  );
 
   app.options("/api/daily/templates/:templateId", async (_request, reply) =>
-      reply.code(204).send()
-    );
+    reply.code(204).send()
+  );
 
   app.options(
-      "/api/daily/templates/:templateId/duplicate",
-      async (_request, reply) => reply.code(204).send()
-    );
+    "/api/daily/templates/:templateId/duplicate",
+    async (_request, reply) => reply.code(204).send()
+  );
 
   app.options(
-      "/api/daily/templates/:templateId/apply-preview",
-      async (_request, reply) => reply.code(204).send()
-    );
+    "/api/daily/templates/:templateId/apply-preview",
+    async (_request, reply) => reply.code(204).send()
+  );
 
   app.options("/api/daily/model-usage", async (_request, reply) =>
-      reply.code(204).send()
-    );
+    reply.code(204).send()
+  );
 
   app.options("/api/daily/sessions", async (_request, reply) =>
-      reply.code(204).send()
-    );
+    reply.code(204).send()
+  );
 
   app.options("/api/daily/sessions/:sessionId", async (_request, reply) =>
-      reply.code(204).send()
-    );
+    reply.code(204).send()
+  );
 
   app.options(
-      "/api/daily/sessions/:sessionId/restore-preview",
-      async (_request, reply) => reply.code(204).send()
-    );
+    "/api/daily/sessions/:sessionId/restore-preview",
+    async (_request, reply) => reply.code(204).send()
+  );
 
   app.options("/api/daily/artifacts", async (_request, reply) =>
-      reply.code(204).send()
-    );
+    reply.code(204).send()
+  );
 
   app.options("/api/daily/artifacts/:artifactId", async (_request, reply) =>
-      reply.code(204).send()
-    );
+    reply.code(204).send()
+  );
 
   app.options("/api/daily/events", async (_request, reply) =>
-      reply.code(204).send()
-    );
+    reply.code(204).send()
+  );
 
   app.options("/api/daily/events/:eventId", async (_request, reply) =>
-      reply.code(204).send()
-    );
+    reply.code(204).send()
+  );
 
   app.options("/api/daily/connectors", async (_request, reply) =>
-      reply.code(204).send()
-    );
+    reply.code(204).send()
+  );
 
   app.options("/api/daily/connectors/:connectorId", async (_request, reply) =>
-      reply.code(204).send()
-    );
+    reply.code(204).send()
+  );
 
   app.options(
-      "/api/daily/connectors/:connectorId/preview",
-      async (_request, reply) => reply.code(204).send()
-    );
+    "/api/daily/connectors/:connectorId/preview",
+    async (_request, reply) => reply.code(204).send()
+  );
 
   app.options("/api/daily/workflows", async (_request, reply) =>
-      reply.code(204).send()
-    );
+    reply.code(204).send()
+  );
 
   app.options("/api/daily/workflows/:workflowId", async (_request, reply) =>
-      reply.code(204).send()
-    );
+    reply.code(204).send()
+  );
 
   app.options(
-      "/api/daily/workflows/:workflowId/preview",
-      async (_request, reply) => reply.code(204).send()
-    );
+    "/api/daily/workflows/:workflowId/preview",
+    async (_request, reply) => reply.code(204).send()
+  );
+
+  app.options("/api/daily/permission-grants", async (_request, reply) =>
+    reply.code(204).send()
+  );
+
+  app.options(
+    "/api/daily/permission-grants/:grantId/revoke",
+    async (_request, reply) => reply.code(204).send()
+  );
+
+  app.options(
+    "/api/daily/tool-calls/:toolCallId/execute",
+    async (_request, reply) => reply.code(204).send()
+  );
+
+  app.get<{ Querystring: { sessionId?: string; activeOnly?: string } }>(
+    "/api/daily/permission-grants",
+    async (request) => ({
+      mode: "daily_work",
+      grants: await dailyWorkRepository.listPermissionGrants({
+        ...(request.query.sessionId ? { sessionId: request.query.sessionId } : {}),
+        activeOnly: request.query.activeOnly === "true",
+        limit: 100
+      })
+    })
+  );
+
+  app.post<{ Body: unknown }>(
+    "/api/daily/permission-grants",
+    async (request, reply) => {
+      const parsed = dailyWorkPermissionGrantCreateRequestSchema.safeParse(
+        request.body ?? {}
+      );
+      if (!parsed.success) {
+        reply
+          .code(400)
+          .send(
+            createValidationError(
+              "Invalid permission grant request.",
+              parsed.error.issues
+            )
+          );
+        return;
+      }
+
+      const now = new Date();
+      const grant = await dailyWorkRepository.upsertPermissionGrant({
+        id: `daily-work-grant-${randomUUID()}`,
+        mode: "daily_work",
+        provider: parsed.data.provider,
+        sessionId: parsed.data.sessionId,
+        action: parsed.data.action,
+        decision: "allow_for_session",
+        status: "active",
+        ...(parsed.data.reason ? { reason: parsed.data.reason } : {}),
+        createdAt: now.toISOString(),
+        expiresAt: new Date(now.getTime() + 24 * 60 * 60 * 1000).toISOString()
+      });
+
+      return {
+        mode: "daily_work",
+        grant
+      };
+    }
+  );
+
+  app.post<{ Params: { grantId: string }; Body: unknown }>(
+    "/api/daily/permission-grants/:grantId/revoke",
+    async (request, reply) => {
+      const parsed = dailyWorkPermissionGrantRevokeRequestSchema.safeParse(
+        request.body ?? {}
+      );
+      if (!parsed.success) {
+        reply
+          .code(400)
+          .send(
+            createValidationError(
+              "Invalid permission grant revoke request.",
+              parsed.error.issues
+            )
+          );
+        return;
+      }
+
+      const grant = (
+        await dailyWorkRepository.listPermissionGrants({ limit: 200 })
+      ).find((item) => item.id === request.params.grantId);
+      if (!grant) {
+        reply.code(404).send({
+          mode: "daily_work",
+          error: "Daily-work permission grant not found."
+        });
+        return;
+      }
+
+      const revoked = await dailyWorkRepository.upsertPermissionGrant({
+        ...grant,
+        status: "revoked",
+        ...(parsed.data.reason
+          ? { reason: parsed.data.reason }
+          : grant.reason
+            ? { reason: grant.reason }
+            : {}),
+        revokedAt: new Date().toISOString()
+      });
+
+      return {
+        mode: "daily_work",
+        grant: revoked
+      };
+    }
+  );
+
+  app.post<{ Params: { toolCallId: string }; Body: unknown }>(
+    "/api/daily/tool-calls/:toolCallId/execute",
+    async (request, reply) => {
+      const body = request.body && typeof request.body === "object"
+        ? (request.body as { sessionId?: unknown; mode?: unknown })
+        : {};
+      const sessionId = typeof body.sessionId === "string" ? body.sessionId.trim() : "";
+      const mode = normalizeAppMode(
+        typeof body.mode === "string" ? body.mode : undefined
+      );
+
+      if (mode !== "daily_work" || !sessionId) {
+        reply.code(400).send({
+          mode,
+          error: "Tool execution requires a daily_work mode and sessionId."
+        });
+        return;
+      }
+
+      try {
+        return await executeMicrosoftWriteToolCall({
+          repository: dailyWorkRepository,
+          sessionId,
+          toolCallId: request.params.toolCallId
+        });
+      } catch (error) {
+        reply.code(statusCodeForToolExecutionError(error)).send({
+          mode: "daily_work",
+          error: codeForToolExecutionError(error),
+          message: messageForToolExecutionError(error)
+        });
+        return;
+      }
+    }
+  );
 
   app.get<{ Querystring: { mode?: string } }>(
-      "/api/daily/context",
+    "/api/daily/context",
       async (request): Promise<DailyContextResponse> => {
         const mode = normalizeAppMode(request.query.mode);
 
@@ -1135,4 +1286,42 @@ function createTemplateId(title: string) {
     .slice(0, 48);
 
   return `agent-template-${slug || "template"}-${randomUUID().slice(0, 8)}`;
+}
+
+function statusCodeForToolExecutionError(error: unknown) {
+  const code = codeForToolExecutionError(error);
+
+  if (code === "tool_call_not_found") {
+    return 404;
+  }
+
+  if (code === "unsupported_tool" || code === "invalid_tool_input") {
+    return 400;
+  }
+
+  if (code === "permission_required") {
+    return 403;
+  }
+
+  if (code === "connector_not_connected" || code === "connector_missing_scopes") {
+    return 409;
+  }
+
+  if (code === "microsoft_oauth_not_configured") {
+    return 424;
+  }
+
+  return 500;
+}
+
+function codeForToolExecutionError(error: unknown) {
+  if (error && typeof error === "object" && "code" in error) {
+    return String((error as { code?: unknown }).code ?? "tool_execution_failed");
+  }
+
+  return "tool_execution_failed";
+}
+
+function messageForToolExecutionError(error: unknown) {
+  return error instanceof Error ? error.message : String(error);
 }

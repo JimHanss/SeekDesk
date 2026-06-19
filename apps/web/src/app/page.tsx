@@ -119,6 +119,7 @@ export default function Page() {
     activeSessionId,
     agentTrace,
     applyPrompt,
+    authorizeToolCallForSession,
     cancelRequest,
     endpoint,
     error,
@@ -129,6 +130,7 @@ export default function Page() {
     lastSubmittedPrompt,
     loadSessionMessages,
     messages,
+    executeToolCall,
     messagesEndRef,
     retryLastPrompt,
     setError,
@@ -573,8 +575,10 @@ export default function Page() {
                 selectedTemplateTitle={selectedTemplate?.title ?? null}
                 status={status}
                 onApplyPrompt={applyPrompt}
+                onAuthorizeToolCall={authorizeToolCallForSession}
                 onCancelRequest={cancelRequest}
                 onDismissError={() => setError(null)}
+                onExecuteToolCall={executeToolCall}
                 onInputChange={setInput}
                 onRetry={retryLastPrompt}
               />

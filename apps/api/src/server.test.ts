@@ -4002,9 +4002,13 @@ describe("api server", () => {
               totalTokens: 20,
               recordCount: 1
             }),
+            permissionGrants: [],
             permissionBoundary: expect.objectContaining({
-              previewOnly: true,
-              externalEffects: ["none"]
+              previewOnly: false,
+              externalEffects: expect.arrayContaining([
+                "none",
+                "microsoft.outlook.write_after_session_grant"
+              ])
             })
           })
         );
@@ -4337,9 +4341,13 @@ describe("api server", () => {
             totalTokens: 150,
             recordCount: 1
           }),
+          permissionGrants: [],
           permissionBoundary: expect.objectContaining({
-            previewOnly: true,
-            externalEffects: ["none"]
+            previewOnly: false,
+            externalEffects: expect.arrayContaining([
+              "none",
+              "microsoft.outlook.write_after_session_grant"
+            ])
           })
         })
       );

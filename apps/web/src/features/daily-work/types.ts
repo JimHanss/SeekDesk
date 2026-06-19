@@ -41,6 +41,19 @@ export interface AgentToolActivityTraceItem {
   externalEffects: string[];
 }
 
+export interface AgentPermissionGrantTraceItem {
+  id: string;
+  provider: string;
+  sessionId: string;
+  action: string;
+  decision: string;
+  status: string;
+  reason: string | null;
+  createdAt: string;
+  expiresAt: string;
+  revokedAt: string | null;
+}
+
 export interface AgentModelUsageTraceItem {
   id: string;
   provider: string;
@@ -74,6 +87,7 @@ export interface AgentTraceState {
   toolActivityEvents: AgentToolActivityTraceItem[];
   modelUsageRecords: AgentModelUsageTraceItem[];
   modelUsageSummary: AgentModelUsageSummary;
+  permissionGrants: AgentPermissionGrantTraceItem[];
   permissionBoundary: AgentPermissionBoundary;
   notice: string;
 }
@@ -85,6 +99,7 @@ export interface AgentTraceResponseDto {
   toolActivityEvents?: DailyActivityEventDto[];
   modelUsageRecords?: unknown[];
   modelUsageSummary?: Partial<AgentModelUsageSummary>;
+  permissionGrants?: unknown[];
   permissionBoundary?: Partial<AgentPermissionBoundary>;
   generatedAt?: string;
 }

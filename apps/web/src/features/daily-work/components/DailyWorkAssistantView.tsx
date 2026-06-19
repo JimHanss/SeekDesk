@@ -24,6 +24,7 @@ import {
 import { statusLabel } from "@/features/daily-work/domain";
 import { PromptCard } from "@/features/daily-work/components/DailyWorkPrimitives";
 import type {
+  AgentToolCallTraceItem,
   AgentTraceState,
   ChatMessage,
   ChatStatus
@@ -48,8 +49,10 @@ interface DailyWorkAssistantViewProps {
   selectedTemplateTitle?: string | null;
   status: ChatStatus;
   onApplyPrompt: (prompt: string) => void;
+  onAuthorizeToolCall: (toolCall: AgentToolCallTraceItem) => Promise<void> | void;
   onCancelRequest: () => void;
   onDismissError: () => void;
+  onExecuteToolCall: (toolCall: AgentToolCallTraceItem) => Promise<void> | void;
   onInputChange: (value: string) => void;
   onRetry: () => void;
 }
@@ -94,8 +97,10 @@ export function DailyWorkAssistantView({
   selectedTemplateTitle,
   status,
   onApplyPrompt,
+  onAuthorizeToolCall,
   onCancelRequest,
   onDismissError,
+  onExecuteToolCall,
   onInputChange,
   onRetry
 }: DailyWorkAssistantViewProps) {
@@ -268,7 +273,12 @@ export function DailyWorkAssistantView({
           ) : null}
 
           <div className={activePanel === "trace" ? "block" : "hidden"}>
-            <AgentTracePanel agentTrace={agentTrace} modelName={activeModelName} />
+            <AgentTracePanel
+              agentTrace={agentTrace}
+              modelName={activeModelName}
+              onAuthorizeToolCall={onAuthorizeToolCall}
+              onExecuteToolCall={onExecuteToolCall}
+            />
           </div>
         </div>
       </aside>

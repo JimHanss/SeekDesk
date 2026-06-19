@@ -14,6 +14,7 @@ import {
   dailyWorkSessionSummarySchema,
   dailyWorkTemplateSchema,
   dailyWorkWorkflowSchema,
+  dailyWorkPermissionGrantSchema,
   toolCallRecordSchema,
   toolModelUsageRecordSchema,
   defaultDailyActivityEvents,
@@ -30,6 +31,7 @@ import {
   type DailyContextDocument,
   type DailyContextItem,
   type DailyWorkArtifact,
+  type DailyWorkPermissionGrant,
   type DailyWorkSessionDetail,
   type DailyWorkTemplate,
   type DailyWorkSessionMessage,
@@ -41,6 +43,7 @@ import * as schema from "../db/schema.js";
 import type {
   DailyWorkConnectorAccount,
   DailyWorkDataLayerStatus,
+  DailyWorkPermissionGrantQuery,
   DailyWorkTraceQuery,
   DailyWorkRepository,
   PersistedChatMessage
@@ -343,6 +346,47 @@ export class PostgresDailyWorkRepository implements DailyWorkRepository {
     return rows.map(mapModelUsageRow);
   }
 
+  async upsertPermissionGrant(grant: DailyWorkPermissionGrant) {
+    const parsed = dailyWorkPermissionGrantSchema.parse(grant);
+
+    await this.db
+      .insert(schema.dailyWorkPermissionGrants)
+      .values({
+        id: parsed.id,
+        mode: parsed.mode,
+        provider: parsed.provider,
+        sessionId: parsed.sessionId,
+        action: parsed.action,
+        decision: parsed.decision,
+        status: parsed.status,
+        reason: parsed.reason ?? null,
+        payload: parsed,
+        createdAt: new Date(parsed.createdAt),
+        expiresAt: new Date(parsed.expiresAt),
+        revokedAt: parsed.revokedAt ? new Date(parsed.revokedAt) : null,
+        updatedAt: new Date()
+      })
+      .onConflictDoUpdate({
+        target: schema.dailyWorkPermissionGrants.id,
+        set: {
+          status: parsed.status,
+          reason: parsed.reason ?? null,
+          payload: parsed,
+          expiresAt: new Date(parsed.expiresAt),
+          revokedAt: parsed.revokedAt ? new Date(parsed.revokedAt) : null,
+          updatedAt: new Date()
+        }
+      });
+
+    return cloneJson(parsed);
+  }
+
+  async listPermissionGrants(query: DailyWorkPermissionGrantQuery = {}) {
+    const rows = await this.selectPermissionGrantRows(query);
+
+    return rows.map(mapPermissionGrantRow).filter((grant) => filterPermissionGrant(grant, query));
+  }
+
   async getConnectorAccount(provider: string) {
     const [row] = await this.db
       .select()
@@ -512,6 +556,25 @@ export class PostgresDailyWorkRepository implements DailyWorkRepository {
       .orderBy(asc(schema.modelUsageRecords.createdAt))
       .limit(limit);
   }
+
+  private async selectPermissionGrantRows(query: DailyWorkPermissionGrantQuery) {
+    const limit = normalizeTraceLimit(query.limit);
+
+    if (query.sessionId) {
+      return this.db
+        .select()
+        .from(schema.dailyWorkPermissionGrants)
+        .where(eq(schema.dailyWorkPermissionGrants.sessionId, query.sessionId))
+        .orderBy(asc(schema.dailyWorkPermissionGrants.createdAt))
+        .limit(limit);
+    }
+
+    return this.db
+      .select()
+      .from(schema.dailyWorkPermissionGrants)
+      .orderBy(asc(schema.dailyWorkPermissionGrants.createdAt))
+      .limit(limit);
+  }
 }
 
 function mapToolCallRow(row: typeof schema.toolCalls.$inferSelect): ToolCallRecord {
@@ -528,6 +591,43 @@ function mapToolCallRow(row: typeof schema.toolCalls.$inferSelect): ToolCallReco
     createdAt: row.createdAt.toISOString(),
     ...(row.completedAt ? { completedAt: row.completedAt.toISOString() } : {})
   });
+}
+
+function mapPermissionGrantRow(
+  row: typeof schema.dailyWorkPermissionGrants.$inferSelect
+): DailyWorkPermissionGrant {
+  return dailyWorkPermissionGrantSchema.parse({
+    id: row.id,
+    mode: row.mode,
+    provider: row.provider,
+    sessionId: row.sessionId,
+    action: row.action,
+    decision: row.decision,
+    status: row.status,
+    ...(row.reason ? { reason: row.reason } : {}),
+    createdAt: row.createdAt.toISOString(),
+    expiresAt: row.expiresAt.toISOString(),
+    ...(row.revokedAt ? { revokedAt: row.revokedAt.toISOString() } : {})
+  });
+}
+
+function filterPermissionGrant(
+  grant: DailyWorkPermissionGrant,
+  query: DailyWorkPermissionGrantQuery
+) {
+  if (query.provider && grant.provider !== query.provider) {
+    return false;
+  }
+
+  if (query.action && grant.action !== query.action) {
+    return false;
+  }
+
+  if (!query.activeOnly) {
+    return true;
+  }
+
+  return grant.status === "active" && new Date(grant.expiresAt).getTime() > Date.now();
 }
 
 function mapModelUsageRow(

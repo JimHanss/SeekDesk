@@ -27,6 +27,7 @@ import {
   type DailyContextItem,
   type DailyWorkArtifact,
   type DailyWorkConnector,
+  type DailyWorkPermissionGrant,
   type DailyWorkSessionDetail,
   type DailyWorkSessionMessage,
   type DailyWorkSessionSummary,
@@ -70,6 +71,12 @@ export interface PersistedChatMessage {
   artifactIds?: string[];
   contextItemIds?: string[];
   approvalRequestIds?: string[];
+}
+
+export interface DailyWorkPermissionGrantQuery extends DailyWorkTraceQuery {
+  provider?: string;
+  action?: string;
+  activeOnly?: boolean;
 }
 
 export interface DailyWorkConnectorAccount {
@@ -119,6 +126,12 @@ export interface DailyWorkRepository {
   listModelUsageRecords(
     query?: DailyWorkTraceQuery
   ): Promise<ToolModelUsageRecord[]>;
+  upsertPermissionGrant(
+    grant: DailyWorkPermissionGrant
+  ): Promise<DailyWorkPermissionGrant>;
+  listPermissionGrants(
+    query?: DailyWorkPermissionGrantQuery
+  ): Promise<DailyWorkPermissionGrant[]>;
   getConnectorAccount(provider: string): Promise<DailyWorkConnectorAccount | null>;
   upsertConnectorAccount(
     account: DailyWorkConnectorAccount
@@ -153,6 +166,7 @@ export class SeedDailyWorkRepository implements DailyWorkRepository {
   private readonly connectors = cloneJson(defaultDailyWorkConnectors);
   private readonly workflows = cloneJson(defaultDailyWorkflows);
   private readonly connectorAccounts = new Map<string, DailyWorkConnectorAccount>();
+  private readonly permissionGrants: DailyWorkPermissionGrant[] = [];
   private readonly toolCalls: ToolCallRecord[] = [];
   private readonly modelUsageRecords: ToolModelUsageRecord[] = [];
 
@@ -274,6 +288,16 @@ export class SeedDailyWorkRepository implements DailyWorkRepository {
     return cloneJson(filterTraceRecords(this.modelUsageRecords, query));
   }
 
+  async upsertPermissionGrant(grant: DailyWorkPermissionGrant) {
+    upsertFirstById(this.permissionGrants, grant);
+
+    return cloneJson(grant);
+  }
+
+  async listPermissionGrants(query: DailyWorkPermissionGrantQuery = {}) {
+    return cloneJson(filterPermissionGrants(this.permissionGrants, query));
+  }
+
   async getConnectorAccount(provider: string) {
     const account = this.connectorAccounts.get(provider);
 
@@ -299,6 +323,7 @@ export class SeedDailyWorkRepository implements DailyWorkRepository {
 }
 
 export class JsonDailyWorkRepository implements DailyWorkRepository {
+  private readonly permissionGrants: DailyWorkPermissionGrant[] = [];
   private readonly toolCalls: ToolCallRecord[] = [];
   private readonly modelUsageRecords: ToolModelUsageRecord[] = [];
 
@@ -499,6 +524,16 @@ export class JsonDailyWorkRepository implements DailyWorkRepository {
 
   async listModelUsageRecords(query: DailyWorkTraceQuery = {}) {
     return cloneJson(filterTraceRecords(this.modelUsageRecords, query));
+  }
+
+  async upsertPermissionGrant(grant: DailyWorkPermissionGrant) {
+    upsertFirstById(this.permissionGrants, grant);
+
+    return cloneJson(grant);
+  }
+
+  async listPermissionGrants(query: DailyWorkPermissionGrantQuery = {}) {
+    return cloneJson(filterPermissionGrants(this.permissionGrants, query));
   }
 
   async getConnectorAccount(_provider: string) {
@@ -771,6 +806,25 @@ function createSessionTitle(content: string) {
 
 function uniqueStrings(values: string[]) {
   return [...new Set(values)];
+}
+
+function filterPermissionGrants(
+  grants: DailyWorkPermissionGrant[],
+  query: DailyWorkPermissionGrantQuery
+) {
+  const now = Date.now();
+
+  return grants
+    .filter((grant) => !query.sessionId || grant.sessionId === query.sessionId)
+    .filter((grant) => !query.provider || grant.provider === query.provider)
+    .filter((grant) => !query.action || grant.action === query.action)
+    .filter(
+      (grant) =>
+        !query.activeOnly ||
+        (grant.status === "active" && new Date(grant.expiresAt).getTime() > now)
+    )
+    .sort((a, b) => a.createdAt.localeCompare(b.createdAt))
+    .slice(0, normalizeTraceLimit(query.limit));
 }
 
 function filterTraceRecords<T extends { createdAt: string }>(

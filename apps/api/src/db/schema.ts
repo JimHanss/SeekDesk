@@ -58,6 +58,22 @@ export const toolCalls = pgTable("tool_calls", {
   completedAt: timestamp("completed_at", { withTimezone: true })
 });
 
+export const dailyWorkPermissionGrants = pgTable("daily_work_permission_grants", {
+  id: text("id").primaryKey(),
+  mode: text("mode").notNull().default("daily_work"),
+  provider: text("provider").notNull(),
+  sessionId: text("session_id").notNull(),
+  action: text("action").notNull(),
+  decision: text("decision").notNull().default("allow_for_session"),
+  status: text("status").notNull(),
+  reason: text("reason"),
+  payload: jsonb("payload").notNull(),
+  createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+  expiresAt: timestamp("expires_at", { withTimezone: true }).notNull(),
+  revokedAt: timestamp("revoked_at", { withTimezone: true }),
+  updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow()
+});
+
 export const modelUsageRecords = pgTable("model_usage_records", {
   id: text("id").primaryKey(),
   sessionId: text("session_id"),

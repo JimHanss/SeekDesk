@@ -1,8 +1,9 @@
-import { describe, expect, it } from "vitest";
+﻿import { describe, expect, it } from "vitest";
 
 import {
   ToolOrchestrator,
   ToolRegistry,
+  createDefaultToolRegistry,
   createModelToolDefinitions,
   fromModelToolName,
   toModelToolName
@@ -129,6 +130,33 @@ describe("ToolOrchestrator", () => {
         name: "coding.shell",
         status: "permission_required",
         mode: "coding_agent",
+        previewOnly: false,
+        permissionRequired: true
+      })
+    );
+  });
+
+  it("exposes daily-work write tools to the model but keeps them permission-gated", async () => {
+    const registry = createDefaultToolRegistry();
+    const toolNames = createModelToolDefinitions(registry, "daily_work").map(
+      (tool) => tool.function.name
+    );
+
+    expect(toolNames).toContain("outlook_send_mail");
+    expect(toolNames).toContain("outlook_calendar_create_event");
+
+    await expect(
+      new ToolOrchestrator(registry).orchestrate({
+        name: "outlook.send_mail",
+        inputJson: {
+          to: ["customer@example.com"],
+          subject: "Status update",
+          bodyText: "Hello"
+        }
+      })
+    ).resolves.toEqual(
+      expect.objectContaining({
+        status: "permission_required",
         previewOnly: false,
         permissionRequired: true
       })

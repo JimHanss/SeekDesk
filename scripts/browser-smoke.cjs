@@ -1740,7 +1740,7 @@ async function runChatSendSmoke(client) {
       state.present &&
       state.status === "live" &&
       state.hasSession &&
-      state.boundary === "preview-only" &&
+      ["preview-only", "requires-approval"].includes(state.boundary) &&
       state.hasToolTraceSelectors &&
       state.usageRecords > 0 &&
       state.toolRows > 0 &&
