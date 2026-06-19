@@ -401,8 +401,8 @@ export default function Page() {
       }
 
       const createdAtOrder =
-        parseConversationCreatedAt(left.createdAt, left.sourceIndex) -
-        parseConversationCreatedAt(right.createdAt, right.sourceIndex);
+        parseConversationCreatedAt(right.createdAt, right.sourceIndex) -
+        parseConversationCreatedAt(left.createdAt, left.sourceIndex);
       if (createdAtOrder !== 0) {
         return createdAtOrder;
       }

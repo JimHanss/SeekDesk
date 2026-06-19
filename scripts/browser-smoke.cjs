@@ -1078,9 +1078,9 @@ async function runConversationSidebarSmoke(client) {
   await selectDailyView(client, "assistant");
 
   const expectedOrder = [
-    "meeting-recap-session",
+    "customer-follow-up-session",
     "planning-refresh-session",
-    "customer-follow-up-session"
+    "meeting-recap-session"
   ];
   const extractExpectedOrder = (state) =>
     state.order.filter((id) => expectedOrder.includes(id));
