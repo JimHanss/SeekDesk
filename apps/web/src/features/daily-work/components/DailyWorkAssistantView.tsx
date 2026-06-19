@@ -120,18 +120,21 @@ export function DailyWorkAssistantView({
           <div className="flex shrink-0 items-center gap-1">
             <ToolbarButton
               active={activePanel === "prompts"}
+              panel="prompts"
               icon={<Wand2 className="size-4" aria-hidden="true" />}
               label="提示"
               onClick={() => togglePanel("prompts")}
             />
             <ToolbarButton
               active={activePanel === "runtime"}
+              panel="runtime"
               icon={<Info className="size-4" aria-hidden="true" />}
               label="运行"
               onClick={() => togglePanel("runtime")}
             />
             <ToolbarButton
               active={activePanel === "trace"}
+              panel="trace"
               icon={<Activity className="size-4" aria-hidden="true" />}
               label="Trace"
               onClick={() => togglePanel("trace")}
@@ -165,18 +168,6 @@ export function DailyWorkAssistantView({
         </div>
 
         <form className="border-t border-slate-200 bg-white p-3 md:p-4" onSubmit={handleSubmit}>
-          <button
-            type="button"
-            onClick={() => onApplyPrompt(primaryPrompt.text)}
-            className="mb-2 flex w-full cursor-pointer items-center gap-2 rounded-[8px] border border-teal-100 bg-teal-50 px-3 py-2 text-left text-xs leading-5 text-teal-900 transition-colors duration-200 hover:border-teal-300 hover:bg-teal-100 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-teal-600"
-          >
-            <Mail className="size-4 shrink-0 text-teal-700" aria-hidden="true" />
-            <span className="min-w-0 break-words">
-              <span className="font-semibold">{primaryPrompt.title}：</span>
-              {primaryPrompt.text}
-            </span>
-          </button>
-
           <div className="flex min-h-16 items-end gap-3 rounded-[8px] border border-slate-200 bg-white px-3 py-2 shadow-inner focus-within:border-teal-500 focus-within:ring-2 focus-within:ring-teal-100">
             <textarea
               ref={inputRef}
@@ -282,20 +273,29 @@ function ToolbarButton({
   active,
   icon,
   label,
+  panel,
   onClick
 }: {
   active: boolean;
   icon: ReactNode;
   label: string;
+  panel: Exclude<AssistantPanel, null>;
   onClick: () => void;
 }) {
   return (
     <Button
       type="button"
-      variant={active ? "secondary" : "ghost"}
+      variant="ghost"
       size="sm"
+      aria-pressed={active}
+      data-assistant-panel-trigger={panel}
       onClick={onClick}
-      className={active ? "border-teal-200 bg-teal-50 text-teal-800" : undefined}
+      className={cn(
+        "border border-transparent text-slate-600",
+        active
+          ? "border-teal-200 bg-teal-50 text-teal-800 hover:bg-teal-50 hover:text-teal-800"
+          : "hover:border-slate-200"
+      )}
     >
       {icon}
       <span className="hidden sm:inline">{label}</span>

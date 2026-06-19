@@ -423,28 +423,51 @@ async function openPage(debugPort, url) {
   return client;
 }
 
+const settingsDailyViewIds = new Set(["models", "connectors", "approvals", "activity"]);
+
+function dailyViewNavId(viewId) {
+  return settingsDailyViewIds.has(viewId) ? "models" : viewId;
+}
+
 async function selectDailyView(client, viewId) {
+  const navId = dailyViewNavId(viewId);
   const initialState = await evaluate(client, dailyViewStateExpression(viewId));
-  if (initialState.activeView !== viewId || initialState.currentNav !== viewId) {
+  if (initialState.activeView !== viewId || initialState.currentNav !== navId) {
     const navRect = await waitForRect(
       client,
-      dailyViewButtonExpression(viewId),
-      `daily view nav ${viewId}`
+      dailyViewButtonExpression(navId),
+      `daily view nav ${navId}`
     );
     await clickAt(client, navRect);
     await waitForValue(
       client,
-      dailyViewClickExpression(viewId),
-      (state) => state.activeView === viewId && state.currentNav === viewId,
-      `daily view nav click ${viewId}`,
+      dailyViewClickExpression(navId),
+      (state) => state.activeView === navId && state.currentNav === navId,
+      `daily view nav click ${navId}`,
       Math.min(timeoutMs, 5000)
     );
+
+    if (viewId !== navId) {
+      const sectionRect = await waitForRect(
+        client,
+        dailySettingsSectionButtonExpression(viewId),
+        `daily settings section ${viewId}`
+      );
+      await clickAt(client, sectionRect);
+      await waitForValue(
+        client,
+        dailySettingsSectionClickExpression(viewId),
+        (state) => state.activeView === viewId && state.currentSettingsSection === viewId,
+        `daily settings section click ${viewId}`,
+        Math.min(timeoutMs, 5000)
+      );
+    }
   }
 
   await waitForValue(
     client,
     dailyViewStateExpression(viewId),
-    (state) => state.activeView === viewId && state.currentNav === viewId,
+    (state) => state.activeView === viewId && state.currentNav === navId,
     `daily view ${viewId}`,
     Math.min(timeoutMs, 5000)
   );
@@ -475,14 +498,47 @@ function dailyViewClickExpression(viewId) {
   })()`);
 }
 
+function dailySettingsSectionButtonExpression(viewId) {
+  const selector = `[data-daily-settings-section="${viewId}"]`;
+  return withSmokeHelpers(`(() => {
+    const section = document.querySelector(${JSON.stringify(selector)});
+    return smokeRect(section && isClickableSmokeButton(section) ? section : null);
+  })()`);
+}
+
+function dailySettingsSectionClickExpression(viewId) {
+  const selector = `[data-daily-settings-section="${viewId}"]`;
+  return withSmokeHelpers(`(() => {
+    const root = document.querySelector("[data-daily-active-view]");
+    const section = document.querySelector(${JSON.stringify(selector)});
+    if (section && root && root.getAttribute("data-daily-active-view") !== ${JSON.stringify(viewId)}) {
+      section.click();
+    }
+    const current = document.querySelector("[data-daily-view-nav][aria-current='page']");
+    const currentSettingsSection = document.querySelector("[data-daily-settings-section][aria-pressed='true']");
+    return {
+      clicked: Boolean(section),
+      activeView: root ? root.getAttribute("data-daily-active-view") || "" : "",
+      currentNav: current ? current.getAttribute("data-daily-view-nav") || "" : "",
+      currentSettingsSection: currentSettingsSection
+        ? currentSettingsSection.getAttribute("data-daily-settings-section") || ""
+        : ""
+    };
+  })()`);
+}
+
 function dailyViewStateExpression(viewId) {
   return withSmokeHelpers(`(() => {
     const root = document.querySelector("[data-daily-active-view]");
     const current = document.querySelector("[data-daily-view-nav][aria-current='page']");
+    const currentSettingsSection = document.querySelector("[data-daily-settings-section][aria-pressed='true']");
     return {
       expected: ${JSON.stringify(viewId)},
       activeView: root ? root.getAttribute("data-daily-active-view") || "" : "",
-      currentNav: current ? current.getAttribute("data-daily-view-nav") || "" : ""
+      currentNav: current ? current.getAttribute("data-daily-view-nav") || "" : "",
+      currentSettingsSection: currentSettingsSection
+        ? currentSettingsSection.getAttribute("data-daily-settings-section") || ""
+        : ""
     };
   })()`);
 }
@@ -2440,11 +2496,18 @@ function workflowPreviewPromptStateExpression() {
 
 function templateButtonExpression() {
   return withSmokeHelpers(`(() => {
-    const buttons = [...document.querySelectorAll("button")]
+    let root = document.querySelector("[data-assistant-prompt-panel]");
+    if (!root) {
+      const trigger = document.querySelector('[data-assistant-panel-trigger="prompts"]');
+      if (trigger && isClickableSmokeButton(trigger) && !trigger.disabled) {
+        trigger.click();
+      }
+      root = document.querySelector("[data-assistant-prompt-panel]");
+    }
+    if (!root) return null;
+    const buttons = [...root.querySelectorAll("button")]
       .filter((button) =>
         isClickableSmokeButton(button) &&
-        !button.hasAttribute("data-daily-view-nav") &&
-        !button.closest("header") &&
         !button.matches("[type='submit']") &&
         !button.hasAttribute("aria-label") &&
         (button.textContent || "").trim().length > 24
