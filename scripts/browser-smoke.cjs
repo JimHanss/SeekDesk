@@ -51,6 +51,7 @@ async function main() {
     await runTemplateApplyPreviewSmoke(client, apiServer.url);
     await runTemplateManagerSmoke(client, apiServer.url);
     await runSessionRestoreSmoke(client, apiServer.url);
+    await runConversationSidebarSmoke(client);
     await runArtifactsSmoke(client, apiServer.url);
     await runActivityStreamSmoke(client, apiServer.url);
     await runModelUsageSmoke(client, apiServer.url);
@@ -1070,6 +1071,56 @@ async function runSessionRestoreSmoke(client, apiUrl) {
     previewOnly: restorePreview.previewOnly,
     externalEffects: restorePreview.externalEffects,
     promptValueLength: promptState.valueLength
+  });
+}
+
+async function runConversationSidebarSmoke(client) {
+  await selectDailyView(client, "assistant");
+
+  const expectedOrder = [
+    "meeting-recap-session",
+    "planning-refresh-session",
+    "customer-follow-up-session"
+  ];
+  const extractExpectedOrder = (state) =>
+    state.order.filter((id) => expectedOrder.includes(id));
+  const hasExpectedOrder = (state) => {
+    const order = extractExpectedOrder(state);
+    return (
+      order.length === expectedOrder.length &&
+      order.every((id, index) => id === expectedOrder[index])
+    );
+  };
+
+  const initialState = await waitForValue(
+    client,
+    conversationSidebarStateExpression(""),
+    hasExpectedOrder,
+    "conversation sidebar created-at order"
+  );
+
+  const targetId = "customer-follow-up-session";
+  const targetRect = await waitForRect(
+    client,
+    conversationSidebarButtonExpression(targetId),
+    "customer follow-up sidebar conversation"
+  );
+  await clickAt(client, targetRect);
+  await evaluate(client, conversationSidebarButtonClickExpression(targetId));
+
+  const selectedState = await waitForValue(
+    client,
+    conversationSidebarStateExpression(targetId),
+    (state) => state.selected && hasExpectedOrder(state),
+    "selected conversation sidebar stable order"
+  );
+
+  checks.push({
+    name: "conversation sidebar stable selection order",
+    status: "passed",
+    order: extractExpectedOrder(selectedState),
+    selectedConversation: targetId,
+    initialOrder: extractExpectedOrder(initialState)
   });
 }
 
@@ -2124,6 +2175,42 @@ function templatePreviewPromptStateExpression() {
         activeView === "assistant",
       submitDisabled: submit ? submit.disabled : true
     };
+  })()`);
+}
+
+function conversationSidebarStateExpression(targetId) {
+  return withSmokeHelpers(`(() => {
+    const rows = [...document.querySelectorAll("[data-daily-conversation-item]")]
+      .map((node) => ({
+        id: node.getAttribute("data-daily-conversation-item") || "",
+        pressed: node.getAttribute("aria-pressed") === "true"
+      }))
+      .filter((row) => row.id && row.id !== "current-conversation");
+    return {
+      present: rows.length > 0,
+      order: rows.map((row) => row.id),
+      selected: rows.some(
+        (row) => row.id === ${JSON.stringify(targetId)} && row.pressed
+      )
+    };
+  })()`);
+}
+
+function conversationSidebarButtonExpression(conversationId) {
+  const selector = `[data-daily-conversation-item="${conversationId}"]`;
+  return withSmokeHelpers(`(() => {
+    const button = document.querySelector(${JSON.stringify(selector)});
+    return smokeRect(button && isClickableSmokeButton(button) ? button : null);
+  })()`);
+}
+
+function conversationSidebarButtonClickExpression(conversationId) {
+  const selector = `[data-daily-conversation-item="${conversationId}"]`;
+  return withSmokeHelpers(`(() => {
+    const button = document.querySelector(${JSON.stringify(selector)});
+    if (!button || button.disabled) return false;
+    button.click();
+    return true;
   })()`);
 }
 
