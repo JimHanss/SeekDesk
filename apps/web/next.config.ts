@@ -7,6 +7,7 @@ const apiProxyTarget = (
 ).replace(/\/$/, "");
 
 const nextConfig: NextConfig = {
+  allowedDevOrigins: ["127.0.0.1", "localhost"],
   transpilePackages: ["@seekdesk/shared", "@seekdesk/agent"],
   async rewrites() {
     return [

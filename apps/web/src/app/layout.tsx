@@ -4,7 +4,11 @@ import "./globals.css";
 
 export const metadata: Metadata = {
   title: "SeekDesk",
-  description: "AI ecosystem workspace for everyday productivity."
+  description: "AI ecosystem workspace for everyday productivity.",
+  icons: {
+    icon: "/favicon.ico",
+    shortcut: "/favicon.ico"
+  }
 };
 
 export default function RootLayout({
