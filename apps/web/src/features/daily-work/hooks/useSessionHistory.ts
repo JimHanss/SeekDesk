@@ -53,9 +53,7 @@ export function useSessionHistory(
           };
         });
         setSelectedSessionHistoryId((current) =>
-          current && items.some((item) => item.id === current)
-            ? current
-            : items[0]?.id ?? null
+          current && items.some((item) => item.id === current) ? current : null
         );
       } catch {
         if (signal?.aborted) {

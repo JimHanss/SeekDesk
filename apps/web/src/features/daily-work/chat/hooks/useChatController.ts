@@ -277,6 +277,16 @@ export function useChatController({
     }
   }, [apiBaseUrl]);
 
+  const startCurrentConversation = useCallback(() => {
+    abortRef.current?.abort();
+    setActiveSessionId(null);
+    setMessages(initialMessages);
+    setError(null);
+    setLastSubmittedPrompt(null);
+    setStatus("idle");
+    setAgentTrace(createEmptyAgentTraceState());
+  }, []);
+
   const loadSessionMessages = useCallback(
     (sessionId: string, sessionMessages: ChatMessage[]) => {
       abortRef.current?.abort();
@@ -316,6 +326,7 @@ export function useChatController({
     retryLastPrompt,
     setError,
     setInput,
+    startCurrentConversation,
     status
   };
 }

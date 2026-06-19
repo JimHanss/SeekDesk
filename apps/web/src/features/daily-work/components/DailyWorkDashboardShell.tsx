@@ -44,6 +44,7 @@ interface DailyWorkDashboardShellProps {
   primaryViews: DailyWorkViewConfig[];
   settingsViews: DailyWorkViewConfig[];
   onConversationSelect?: (conversationId: string) => void;
+  onCurrentConversationSelect?: () => void;
   onViewChange: (view: DailyWorkView) => void;
 }
 
@@ -55,6 +56,7 @@ export function DailyWorkDashboardShell({
   primaryViews,
   settingsViews,
   onConversationSelect,
+  onCurrentConversationSelect,
   onViewChange
 }: DailyWorkDashboardShellProps) {
   const views = [...primaryViews, ...settingsViews];
@@ -102,7 +104,6 @@ export function DailyWorkDashboardShell({
   };
 
   const currentConversationActive = activeView === "assistant" && !activeConversationId;
-  const currentConversationNavActive = activeView === "assistant";
 
   return (
     <main
@@ -135,8 +136,15 @@ export function DailyWorkDashboardShell({
               <button
                 type="button"
                 data-daily-view-nav="assistant"
-                aria-current={currentConversationNavActive ? "page" : undefined}
-                onClick={() => onViewChange("assistant")}
+                aria-current={currentConversationActive ? "page" : undefined}
+                onClick={() => {
+                  if (onCurrentConversationSelect) {
+                    onCurrentConversationSelect();
+                    return;
+                  }
+
+                  onViewChange("assistant");
+                }}
                 className={cn(
                   "min-h-[64px] w-full cursor-pointer rounded-[8px] border px-3 py-2 text-left transition-colors duration-200 focus-visible:outline focus-visible:outline-2 focus-visible:outline-teal-300",
                   currentConversationActive
@@ -148,7 +156,7 @@ export function DailyWorkDashboardShell({
                   <span
                     className={cn(
                       "size-2 shrink-0 rounded-full",
-                      currentConversationNavActive ? "bg-teal-400" : "bg-slate-500"
+                      currentConversationActive ? "bg-teal-400" : "bg-slate-500"
                     )}
                   />
                   <span className="min-w-0 flex-1 truncate text-sm font-semibold">
