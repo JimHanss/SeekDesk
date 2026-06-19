@@ -42,6 +42,7 @@ interface DailyWorkAssistantViewProps {
   lastSubmittedPrompt: string | null;
   messages: ChatMessage[];
   messagesEndRef: RefObject<HTMLDivElement | null>;
+  conversationTitle: string;
   modelInputPlaceholder: string;
   selectedContextTitle?: string | null;
   selectedTemplateTitle?: string | null;
@@ -87,6 +88,7 @@ export function DailyWorkAssistantView({
   lastSubmittedPrompt,
   messages,
   messagesEndRef,
+  conversationTitle,
   modelInputPlaceholder,
   selectedContextTitle,
   selectedTemplateTitle,
@@ -104,14 +106,19 @@ export function DailyWorkAssistantView({
   };
 
   return (
-    <div className="relative flex h-full min-h-0 flex-col gap-3 xl:grid xl:grid-cols-[minmax(0,1fr)_360px]">
+    <div
+      className={cn(
+        "relative flex h-full min-h-0 flex-col gap-3",
+        activePanel ? "xl:grid xl:grid-cols-[minmax(0,1fr)_360px]" : ""
+      )}
+    >
       <section className="flex min-h-0 flex-1 flex-col overflow-hidden rounded-[8px] border border-slate-200 bg-white shadow-sm">
         <div className="flex h-12 shrink-0 items-center justify-between gap-2 border-b border-slate-200 px-3 md:px-4">
           <div className="flex min-w-0 items-center gap-2 text-sm font-semibold text-slate-950">
             <span className="grid size-7 shrink-0 place-items-center rounded-[6px] bg-teal-50 text-teal-700">
               <MessageSquare className="size-4" aria-hidden="true" />
             </span>
-            <span className="min-w-0 truncate">日常工作助手</span>
+            <span className="min-w-0 truncate">{conversationTitle}</span>
             <span className="shrink-0 rounded-[999px] bg-slate-100 px-2 py-0.5 text-[11px] font-medium text-slate-500">
               {statusLabel(status)}
             </span>

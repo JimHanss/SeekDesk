@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useState } from "react";
 import {
   Activity,
   Bot,
@@ -62,6 +62,23 @@ import { DailyWorkSettingsSection } from "@/features/daily-work/components/Daily
 
 export default function Page() {
   const [activeView, setActiveView] = useState<DailyWorkView>("assistant");
+  const [currentConversationTitle, setCurrentConversationTitle] =
+    useState("\u65b0\u5bf9\u8bdd");
+  const [conversationTitleOverrides, setConversationTitleOverrides] = useState<
+    Record<string, string>
+  >({});
+  const [hiddenConversationIds, setHiddenConversationIds] = useState<string[]>([]);
+  const [pinnedConversationIds, setPinnedConversationIds] = useState<string[]>([]);
+  const handleSessionTitleChanged = useCallback(
+    (session: { sessionId: string; title: string }) => {
+      setCurrentConversationTitle(session.title);
+      setConversationTitleOverrides((current) => ({
+        ...current,
+        [session.sessionId]: session.title
+      }));
+    },
+    []
+  );
   const selectionState = useDailyWorkSelectionState();
   const {
     artifactFilter,
@@ -99,6 +116,7 @@ export default function Page() {
     refreshActivityFeed
   } = useActivityFeed(apiBaseUrl, setSelectedActivityEventId);
   const {
+    activeSessionId,
     agentTrace,
     applyPrompt,
     cancelRequest,
@@ -126,7 +144,8 @@ export default function Page() {
       connectorIds: selectedConnectorId ? [selectedConnectorId] : [],
       workflowIds: selectedWorkflowActionId ? [selectedWorkflowActionId] : []
     },
-    onActivityChanged: refreshActivityFeed
+    onActivityChanged: refreshActivityFeed,
+    onSessionTitleChanged: handleSessionTitleChanged
   });
   const { templatePanel, setTemplatePanel } = useTemplatePanel(apiBaseUrl);
   const {
@@ -260,8 +279,8 @@ export default function Page() {
   const primaryViews: DailyWorkViewConfig[] = [
     {
       id: "assistant",
-      label: "对话工作台",
-      description: "保留真正高频的写作、归纳和追问，其他能力移到独立模块。",
+      label: "AI \u5de5\u5177",
+      description: "\u901a\u7528 AI tools \u5165\u53e3\uff0c\u5f53\u524d\u4f18\u5148\u627f\u8f7d\u65e5\u5e38\u5de5\u4f5c\u76f8\u5173\u80fd\u529b\u3002",
       icon: <MessageSquare className="size-4" aria-hidden="true" />,
       badge: statusLabel(status)
     },
@@ -338,14 +357,44 @@ export default function Page() {
     ? selectedContextItem?.title ??
       selectedContextLabel(selectedContextId, contextPanelItems)
     : null;
-  const sidebarConversationItems = sessionHistoryPanelItems.map((item) => ({
-    id: item.id,
-    title: item.title,
-    summary: item.summary,
-    status: item.status,
-    updatedAt: item.updatedAt,
-    messageCount: item.messageCount
-  }));
+  const activeSessionHistoryTitle = selectedSessionHistory
+    ? conversationTitleOverrides[selectedSessionHistory.id] ??
+      selectedSessionHistory.title
+    : null;
+  const currentConversation = {
+    id: activeSessionId ?? "current-conversation",
+    title: currentConversationTitle,
+    summary: activeSessionId
+      ? "\u5f53\u524d\u4f1a\u8bdd"
+      : "\u53d1\u9001\u7b2c\u4e00\u6761\u6d88\u606f\u540e\u81ea\u52a8\u751f\u6210\u6807\u9898",
+    status: statusLabel(status),
+    updatedAt: "\u73b0\u5728",
+    messageCount: Math.max(messages.length, activeSessionId ? 1 : 0)
+  };
+  const sidebarConversationItems = sessionHistoryPanelItems
+    .filter((item) => item.id !== activeSessionId)
+    .filter((item) => !hiddenConversationIds.includes(item.id))
+    .map((item) => ({
+      id: item.id,
+      title: conversationTitleOverrides[item.id] ?? item.title,
+      summary: item.summary,
+      status: item.status,
+      updatedAt: item.updatedAt,
+      messageCount: item.messageCount,
+      pinned: pinnedConversationIds.includes(item.id)
+    }))
+    .sort((left, right) => {
+      const leftPinned = left.pinned ? 1 : 0;
+      const rightPinned = right.pinned ? 1 : 0;
+
+      if (leftPinned !== rightPinned) {
+        return rightPinned - leftPinned;
+      }
+
+      return right.updatedAt.localeCompare(left.updatedAt);
+    });
+  const assistantConversationTitle =
+    activeSessionHistoryTitle ?? currentConversation.title;
 
   const selectedSessionMessageKey = selectedSessionHistory
     ? selectedSessionHistory.recentMessages
@@ -398,6 +447,7 @@ export default function Page() {
 
   const selectCurrentConversation = () => {
     setSelectedSessionHistoryId(null);
+    setCurrentConversationTitle("\u65b0\u5bf9\u8bdd");
     startCurrentConversation();
     setActiveView("assistant");
   };
@@ -414,15 +464,73 @@ export default function Page() {
     setActiveView("assistant");
   };
 
+  const renameSidebarConversation = (conversationId: string) => {
+    const conversation = sessionHistoryPanelItems.find(
+      (item) => item.id === conversationId
+    );
+    const currentTitle =
+      conversationTitleOverrides[conversationId] ?? conversation?.title ?? "";
+    const nextTitle = window.prompt("\u91cd\u547d\u540d\u5bf9\u8bdd", currentTitle)?.trim();
+
+    if (!nextTitle) {
+      return;
+    }
+
+    setConversationTitleOverrides((current) => ({
+      ...current,
+      [conversationId]: nextTitle
+    }));
+    setSessionHistoryPanel((current) => ({
+      ...current,
+      items: current.items.map((item) =>
+        item.id === conversationId ? { ...item, title: nextTitle } : item
+      )
+    }));
+  };
+
+  const deleteSidebarConversation = (conversationId: string) => {
+    if (!window.confirm("\u5220\u9664\u8fd9\u4e2a\u5bf9\u8bdd\uff1f")) {
+      return;
+    }
+
+    setHiddenConversationIds((current) =>
+      current.includes(conversationId) ? current : [...current, conversationId]
+    );
+    setPinnedConversationIds((current) =>
+      current.filter((itemId) => itemId !== conversationId)
+    );
+    setSessionHistoryPanel((current) => ({
+      ...current,
+      items: current.items.filter((item) => item.id !== conversationId)
+    }));
+
+    if (selectedSessionHistoryId === conversationId) {
+      selectCurrentConversation();
+    }
+  };
+
+  const toggleSidebarConversationPin = (conversationId: string) => {
+    setPinnedConversationIds((current) =>
+      current.includes(conversationId)
+        ? current.filter((itemId) => itemId !== conversationId)
+        : [conversationId, ...current]
+    );
+  };
+
   return (
     <DailyWorkDashboardShell
       activeConversationId={activeView === "assistant" ? selectedSessionHistoryId : null}
       activeView={activeView}
+      currentConversation={currentConversation}
       conversationItems={sidebarConversationItems}
       primaryViews={primaryViews}
       settingsViews={settingsViews}
+      onConversationDelete={deleteSidebarConversation}
+      onConversationPinToggle={toggleSidebarConversationPin}
+      onConversationRename={renameSidebarConversation}
       onConversationSelect={selectSidebarConversation}
       onCurrentConversationSelect={selectCurrentConversation}
+      onNewConversationSelect={selectCurrentConversation}
       onViewChange={setActiveView}
     >
             {activeView === "assistant" ? (
@@ -438,6 +546,7 @@ export default function Page() {
                 lastSubmittedPrompt={lastSubmittedPrompt}
                 messages={messages}
                 messagesEndRef={messagesEndRef}
+                conversationTitle={assistantConversationTitle}
                 modelInputPlaceholder={modelInputPlaceholder}
                 selectedContextTitle={selectedContextTitle}
                 selectedTemplateTitle={selectedTemplate?.title ?? null}

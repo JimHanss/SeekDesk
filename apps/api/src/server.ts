@@ -91,6 +91,11 @@ export async function buildServer(options?: {
 
     const chatRequest = parsed.data;
     const sessionId = chatRequest.sessionId ?? `chat-${randomUUID()}`;
+    const incomingUserMessage = findIncomingUserMessage(chatRequest);
+    const shouldGenerateSessionTitle =
+      !chatRequest.sessionId &&
+      chatRequest.context?.["generateSessionTitle"] === true &&
+      Boolean(incomingUserMessage?.content.trim());
     const agentContext =
       chatRequest.mode === "daily_work"
         ? await createDailyWorkAgentContext({
@@ -115,6 +120,18 @@ export async function buildServer(options?: {
       chatRequest,
       sessionId
     });
+    const generatedSessionTitle = shouldGenerateSessionTitle && incomingUserMessage
+      ? await generateSessionTitle({
+          provider: providerSelection.provider,
+          providerName: providerSelection.providerName,
+          prompt: incomingUserMessage.content
+        })
+      : null;
+
+    if (generatedSessionTitle) {
+      await updateChatSessionTitle(dailyWorkRepository, sessionId, generatedSessionTitle);
+    }
+
     const stream = modelStreamToReadableStream(
       streamAgentLoop(
         createAgentLoopInput(chatRequest, providerSelection.provider, {
@@ -131,14 +148,22 @@ export async function buildServer(options?: {
       }
     );
 
-    return reply
+    const chatReply = reply
       .header("Content-Type", "text/plain; charset=utf-8")
       .header("Cache-Control", "no-cache, no-transform")
       .header("X-Accel-Buffering", "no")
       .header("X-SeekDesk-Chat-Mode", chatRequest.mode)
       .header("X-SeekDesk-Chat-Provider", providerSelection.providerName)
-      .header("X-SeekDesk-Chat-Session-Id", sessionId)
-      .send(stream);
+      .header("X-SeekDesk-Chat-Session-Id", sessionId);
+
+    if (generatedSessionTitle) {
+      chatReply.header(
+        "X-SeekDesk-Chat-Session-Title",
+        encodeURIComponent(generatedSessionTitle)
+      );
+    }
+
+    return chatReply.send(stream);
   });
 
   app.get<{ Params: { sessionId: string } }>(
@@ -211,7 +236,7 @@ function applyCorsHeaders(request: FastifyRequest, reply: FastifyReply) {
   reply.header("Access-Control-Allow-Headers", "Content-Type,Authorization");
   reply.header(
     "Access-Control-Expose-Headers",
-    "X-SeekDesk-Chat-Mode,X-SeekDesk-Chat-Provider,X-SeekDesk-Chat-Session-Id"
+    "X-SeekDesk-Chat-Mode,X-SeekDesk-Chat-Provider,X-SeekDesk-Chat-Session-Id,X-SeekDesk-Chat-Session-Title"
   );
 }
 
@@ -288,14 +313,7 @@ async function recordIncomingChatMessage(input: {
   chatRequest: ChatRequest;
   sessionId: string;
 }) {
-  const message = input.chatRequest.prompt
-    ? {
-        role: "user" as const,
-        content: input.chatRequest.prompt
-      }
-    : [...(input.chatRequest.messages ?? [])]
-        .reverse()
-        .find((candidate) => candidate.role === "user");
+  const message = findIncomingUserMessage(input.chatRequest);
 
   if (!message?.content.trim()) {
     return;
@@ -311,6 +329,98 @@ async function recordIncomingChatMessage(input: {
     contextItemIds: input.chatRequest.context?.contextItemIds ?? [],
     approvalRequestIds: input.chatRequest.context?.approvalRequestIds ?? []
   });
+}
+
+function findIncomingUserMessage(chatRequest: ChatRequest) {
+  if (chatRequest.prompt?.trim()) {
+    return {
+      role: "user" as const,
+      content: chatRequest.prompt
+    };
+  }
+
+  return [...(chatRequest.messages ?? [])]
+    .reverse()
+    .find((candidate) => candidate.role === "user");
+}
+
+async function generateSessionTitle(input: {
+  provider: ModelProvider;
+  providerName: ChatProvider;
+  prompt: string;
+}) {
+  const fallbackTitle = createFallbackSessionTitle(input.prompt);
+
+  if (input.providerName !== "deepseek") {
+    return fallbackTitle;
+  }
+
+  let content = "";
+
+  try {
+    for await (const chunk of input.provider.streamChat({
+      mode: "daily_work",
+      maxTurns: 1,
+      toolChoice: "none",
+      messages: [
+        {
+          role: "user",
+          content:
+            "Create a short Chinese conversation title from this first user message. Return only the title, no punctuation wrapper, no explanation. Limit to 16 Chinese characters or 6 English words. Message: " +
+            input.prompt
+        }
+      ]
+    })) {
+      if (chunk.type === "text-delta") {
+        content += chunk.delta;
+      }
+    }
+  } catch {
+    return fallbackTitle;
+  }
+
+  return normalizeSessionTitle(content) ?? fallbackTitle;
+}
+
+async function updateChatSessionTitle(
+  dailyWorkRepository: DailyWorkRepository,
+  sessionId: string,
+  title: string
+) {
+  try {
+    const sessions = await dailyWorkRepository.listSessionDetails();
+    const session = sessions.find((item) => item.id === sessionId);
+
+    if (!session) {
+      return;
+    }
+
+    await dailyWorkRepository.updateSessionDetail({
+      ...session,
+      title
+    });
+  } catch {
+    // Title generation is progressive enhancement. Chat streaming must continue.
+  }
+}
+
+function createFallbackSessionTitle(prompt: string) {
+  return normalizeSessionTitle(prompt) ?? "New chat";
+}
+
+function normalizeSessionTitle(value: string) {
+  const title = value
+    .replace(/[\r\n]+/g, " ")
+    .replace(/^title\s*[:?]\s*/i, "")
+    .replace(/^["'????]+|["'?????.?,]+$/g, "")
+    .replace(/\s+/g, " ")
+    .trim();
+
+  if (!title) {
+    return null;
+  }
+
+  return title.length > 32 ? `${title.slice(0, 31)}?` : title;
 }
 
 async function recordToolCallChunk(

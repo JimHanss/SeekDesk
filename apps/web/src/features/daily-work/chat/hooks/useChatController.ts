@@ -21,6 +21,7 @@ import type {
 
 interface ChatRequestContext {
   templateId?: string | null;
+  generateSessionTitle?: boolean;
   contextItemIds?: string[];
   artifactIds?: string[];
   approvalRequestIds?: string[];
@@ -32,12 +33,14 @@ interface UseChatControllerOptions {
   apiBaseUrl: string;
   requestContext?: ChatRequestContext;
   onActivityChanged?: () => Promise<void> | void;
+  onSessionTitleChanged?: (session: { sessionId: string; title: string }) => void;
 }
 
 export function useChatController({
   apiBaseUrl,
   requestContext,
-  onActivityChanged
+  onActivityChanged,
+  onSessionTitleChanged
 }: UseChatControllerOptions) {
   const [messages, setMessages] = useState<ChatMessage[]>(initialMessages);
   const [input, setInput] = useState("");
@@ -106,7 +109,10 @@ export function useChatController({
     setMessages((current) => [...current, userMessage, assistantMessage]);
 
     try {
-      const requestContextPayload = createRequestContextPayload(requestContext);
+      const requestContextPayload = createRequestContextPayload({
+        ...requestContext,
+        generateSessionTitle: !activeSessionId
+      });
       const response = await fetch(endpoint, {
         method: "POST",
         headers: {
@@ -134,6 +140,16 @@ export function useChatController({
         activeSessionId;
       const responseProvider =
         response.headers.get("x-seekdesk-chat-provider")?.trim() ?? null;
+      const responseSessionTitle = readEncodedHeader(
+        response.headers.get("x-seekdesk-chat-session-title")
+      );
+
+      if (responseSessionId && responseSessionTitle) {
+        onSessionTitleChanged?.({
+          sessionId: responseSessionId,
+          title: responseSessionTitle
+        });
+      }
 
       if (responseSessionId) {
         setActiveSessionId(responseSessionId);
@@ -281,6 +297,7 @@ export function useChatController({
     abortRef.current?.abort();
     setActiveSessionId(null);
     setMessages(initialMessages);
+    setInput("");
     setError(null);
     setLastSubmittedPrompt(null);
     setStatus("idle");
@@ -332,6 +349,18 @@ export function useChatController({
 }
 
 
+function readEncodedHeader(value: string | null) {
+  if (!value?.trim()) {
+    return null;
+  }
+
+  try {
+    return decodeURIComponent(value.trim());
+  } catch {
+    return value.trim();
+  }
+}
+
 function createRequestContextPayload(context: ChatRequestContext | undefined) {
   const locale = typeof navigator !== "undefined" ? navigator.language : undefined;
   const timezone =
@@ -345,6 +374,10 @@ function createRequestContextPayload(context: ChatRequestContext | undefined) {
   assignIds(payload, "approvalRequestIds", context?.approvalRequestIds);
   assignIds(payload, "connectorIds", context?.connectorIds);
   assignIds(payload, "workflowIds", context?.workflowIds);
+
+  if (context?.generateSessionTitle) {
+    payload["generateSessionTitle"] = true;
+  }
 
   if (locale) {
     payload["locale"] = locale;
