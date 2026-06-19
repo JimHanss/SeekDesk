@@ -2,7 +2,7 @@
 
 import Link from "next/link";
 import type { ReactNode } from "react";
-import { Play, Search, Settings2, Sparkles, Wand2 } from "lucide-react";
+import { Settings2, Sparkles, Wand2 } from "lucide-react";
 
 import { Button } from "@/components/ui/button";
 import { cn } from "@/lib/utils";
@@ -27,23 +27,40 @@ export interface DailyWorkViewConfig {
   badge?: string;
 }
 
+export interface DailyWorkConversationItem {
+  id: string;
+  title: string;
+  summary: string;
+  status: string;
+  updatedAt: string;
+  messageCount: number;
+}
+
 interface DailyWorkDashboardShellProps {
+  activeConversationId?: string | null;
   activeView: DailyWorkView;
   children: ReactNode;
+  conversationItems?: DailyWorkConversationItem[];
   primaryViews: DailyWorkViewConfig[];
   settingsViews: DailyWorkViewConfig[];
+  onConversationSelect?: (conversationId: string) => void;
   onViewChange: (view: DailyWorkView) => void;
 }
 
 export function DailyWorkDashboardShell({
+  activeConversationId,
   activeView,
   children,
+  conversationItems = [],
   primaryViews,
   settingsViews,
+  onConversationSelect,
   onViewChange
 }: DailyWorkDashboardShellProps) {
   const views = [...primaryViews, ...settingsViews];
   const currentView = views.find((view) => view.id === activeView) ?? views[0]!;
+  const assistantView = primaryViews.find((view) => view.id === "assistant");
+  const headerViews = primaryViews.filter((view) => view.id !== "assistant");
   const isSettingsActive = settingsViews.some((view) => view.id === activeView);
   const settingsEntry: DailyWorkViewConfig = {
     id: "models",
@@ -52,9 +69,8 @@ export function DailyWorkDashboardShell({
     icon: <Settings2 className="size-4" aria-hidden="true" />
   };
 
-  const renderNavButton = (
+  const renderHeaderViewButton = (
     view: DailyWorkViewConfig,
-    density: "primary" | "compact" = "primary",
     options?: {
       active?: boolean;
       onClick?: () => void;
@@ -63,51 +79,37 @@ export function DailyWorkDashboardShell({
     const isActive = options?.active ?? activeView === view.id;
 
     return (
-      <button
+      <Button
         key={view.id}
         type="button"
+        variant="ghost"
+        size="sm"
         data-daily-view-nav={view.id}
         aria-current={isActive ? "page" : undefined}
-        aria-label={`${view.label}，${view.description}`}
+        aria-label={view.label + "\uFF0C" + view.description}
         onClick={options?.onClick ?? (() => onViewChange(view.id))}
         className={cn(
-          "flex w-full cursor-pointer items-center gap-2 rounded-[8px] text-left text-sm transition-colors duration-200 focus-visible:outline focus-visible:outline-2 focus-visible:outline-teal-300",
-          density === "compact" ? "px-2.5 py-2" : "px-3 py-2.5",
+          "shrink-0 border border-transparent text-slate-600",
           isActive
-            ? "bg-white text-slate-950 shadow-sm"
-            : "text-slate-300 hover:bg-white/10 hover:text-white"
+            ? "border-teal-200 bg-teal-50 text-teal-800 hover:bg-teal-50 hover:text-teal-800"
+            : "hover:border-slate-200"
         )}
       >
-        <span
-          className={cn(
-            "grid shrink-0 place-items-center rounded-[8px]",
-            density === "compact" ? "size-7" : "size-8",
-            isActive ? "bg-teal-50 text-teal-700" : "bg-white/10"
-          )}
-        >
-          {view.icon}
-        </span>
-        <span className="min-w-0 flex-1 truncate font-medium">{view.label}</span>
-        {view.badge ? (
-          <span
-            className={cn(
-              "shrink-0 rounded-[999px] px-2 py-0.5 text-[11px] font-medium",
-              isActive ? "bg-slate-100 text-slate-600" : "bg-white/10 text-slate-300"
-            )}
-          >
-            {view.badge}
-          </span>
-        ) : null}
-      </button>
+        {view.icon}
+        <span className="hidden lg:inline">{view.label}</span>
+      </Button>
     );
   };
+
+  const currentConversationActive = activeView === "assistant" && !activeConversationId;
+  const currentConversationNavActive = activeView === "assistant";
 
   return (
     <main
       className="h-dvh overflow-hidden bg-slate-100 text-slate-950"
       data-daily-active-view={activeView}
     >
-      <div className="flex h-full w-full overflow-hidden bg-white lg:grid lg:grid-cols-[224px_minmax(0,1fr)]">
+      <div className="flex h-full w-full overflow-hidden bg-white lg:grid lg:grid-cols-[280px_minmax(0,1fr)]">
         <aside className="flex shrink-0 flex-col border-b border-slate-200 bg-slate-950 text-white lg:min-h-0 lg:border-b-0 lg:border-r">
           <div className="flex h-14 items-center gap-3 px-4">
             <div className="grid size-9 shrink-0 place-items-center rounded-[8px] bg-teal-500 text-white shadow-sm">
@@ -123,18 +125,101 @@ export function DailyWorkDashboardShell({
             </div>
           </div>
 
-          <nav className="flex gap-2 overflow-x-auto border-t border-white/10 px-3 py-3 lg:flex-1 lg:flex-col lg:overflow-y-auto lg:border-t-0">
-            <div className="flex shrink-0 gap-2 lg:flex-col lg:gap-1">
-              {primaryViews.map((view) => renderNavButton(view))}
+          <div className="flex min-h-0 flex-1 flex-col border-t border-white/10 px-3 py-3">
+            <div className="mb-2 flex items-center justify-between px-1 text-[11px] font-semibold uppercase tracking-[0.14em] text-slate-500">
+              <span>{"\u5bf9\u8bdd\u7a97\u53e3"}</span>
+              <span>{conversationItems.length + 1}</span>
             </div>
 
-            <div className="flex shrink-0 gap-2 border-l border-white/10 pl-3 lg:mt-auto lg:flex-col lg:border-l-0 lg:border-t lg:pl-0 lg:pt-3">
-              {renderNavButton(settingsEntry, "compact", {
-                active: isSettingsActive,
-                onClick: () => onViewChange("models")
+            <div className="flex min-h-0 flex-1 flex-col gap-1 overflow-y-auto" aria-label="\u5bf9\u8bdd\u7a97\u53e3\u5217\u8868">
+              <button
+                type="button"
+                data-daily-view-nav="assistant"
+                aria-current={currentConversationNavActive ? "page" : undefined}
+                onClick={() => onViewChange("assistant")}
+                className={cn(
+                  "min-h-[64px] w-full cursor-pointer rounded-[8px] border px-3 py-2 text-left transition-colors duration-200 focus-visible:outline focus-visible:outline-2 focus-visible:outline-teal-300",
+                  currentConversationActive
+                    ? "border-white bg-white text-slate-950 shadow-sm"
+                    : "border-transparent text-slate-300 hover:border-white/10 hover:bg-white/10 hover:text-white"
+                )}
+              >
+                <div className="flex items-center gap-2">
+                  <span
+                    className={cn(
+                      "size-2 shrink-0 rounded-full",
+                      currentConversationNavActive ? "bg-teal-400" : "bg-slate-500"
+                    )}
+                  />
+                  <span className="min-w-0 flex-1 truncate text-sm font-semibold">
+                    {"\u5f53\u524d\u5bf9\u8bdd"}
+                  </span>
+                  {assistantView?.badge ? (
+                    <span
+                      className={cn(
+                        "shrink-0 rounded-[999px] px-2 py-0.5 text-[11px] font-medium",
+                        currentConversationActive
+                          ? "bg-slate-100 text-slate-600"
+                          : "bg-white/10 text-slate-300"
+                      )}
+                    >
+                      {assistantView.badge}
+                    </span>
+                  ) : null}
+                </div>
+                <div
+                  className={cn(
+                    "mt-1 line-clamp-1 text-xs",
+                    currentConversationActive ? "text-slate-500" : "text-slate-500"
+                  )}
+                >
+                  {"\u8fde\u63a5\u5230\u53f3\u4fa7\u5de5\u4f5c\u53f0"}
+                </div>
+              </button>
+
+              {conversationItems.map((conversation) => {
+                const isActive = activeView === "assistant" && activeConversationId === conversation.id;
+
+                return (
+                  <button
+                    key={conversation.id}
+                    type="button"
+                    data-daily-conversation-item={conversation.id}
+                    aria-pressed={isActive}
+                    onClick={() => onConversationSelect?.(conversation.id)}
+                    className={cn(
+                      "min-h-[76px] w-full cursor-pointer rounded-[8px] border px-3 py-2 text-left transition-colors duration-200 focus-visible:outline focus-visible:outline-2 focus-visible:outline-teal-300",
+                      isActive
+                        ? "border-white bg-white text-slate-950 shadow-sm"
+                        : "border-transparent text-slate-300 hover:border-white/10 hover:bg-white/10 hover:text-white"
+                    )}
+                  >
+                    <div className="flex items-center gap-2">
+                      <span className={cn("size-2 shrink-0 rounded-full", isActive ? "bg-teal-500" : "bg-slate-500")} />
+                      <span className="min-w-0 flex-1 truncate text-sm font-semibold">
+                        {conversation.title}
+                      </span>
+                      <span
+                        className={cn(
+                          "shrink-0 rounded-[999px] px-2 py-0.5 text-[11px] font-medium",
+                          isActive ? "bg-slate-100 text-slate-600" : "bg-white/10 text-slate-300"
+                        )}
+                      >
+                        {conversation.messageCount}
+                      </span>
+                    </div>
+                    <div className={cn("mt-1 line-clamp-1 text-xs", isActive ? "text-slate-500" : "text-slate-500")}>
+                      {conversation.summary}
+                    </div>
+                    <div className={cn("mt-1 flex items-center justify-between text-[11px]", isActive ? "text-slate-500" : "text-slate-500")}>
+                      <span>{conversation.status}</span>
+                      <span>{formatConversationTime(conversation.updatedAt)}</span>
+                    </div>
+                  </button>
+                );
               })}
             </div>
-          </nav>
+          </div>
         </aside>
 
         <section className="flex min-h-0 flex-1 flex-col bg-slate-50">
@@ -147,49 +232,18 @@ export function DailyWorkDashboardShell({
             </div>
 
             <div className="flex shrink-0 items-center gap-2 overflow-x-auto">
-              <Button
-                type="button"
-                variant="secondary"
-                size="sm"
-                onClick={() => onViewChange("knowledge")}
-              >
-                <Search className="size-4" aria-hidden="true" />
-                上下文
-              </Button>
-              <Button
-                type="button"
-                variant="secondary"
-                size="sm"
-                onClick={() => onViewChange("templates")}
-              >
-                <Wand2 className="size-4" aria-hidden="true" />
-                模板
-              </Button>
+              {headerViews.map((view) => renderHeaderViewButton(view))}
               <Link
                 href="/templates"
-                className="inline-flex h-9 items-center justify-center gap-2 rounded-[6px] border border-slate-200 bg-white px-3 text-sm font-medium text-slate-700 transition-colors duration-200 hover:border-blue-200 hover:bg-blue-50 hover:text-blue-700 focus-visible:outline focus-visible:outline-2 focus-visible:outline-blue-600"
+                className="inline-flex h-9 shrink-0 items-center justify-center gap-2 rounded-[6px] border border-slate-200 bg-white px-3 text-sm font-medium text-slate-700 transition-colors duration-200 hover:border-blue-200 hover:bg-blue-50 hover:text-blue-700 focus-visible:outline focus-visible:outline-2 focus-visible:outline-blue-600"
               >
                 <Wand2 className="size-4" aria-hidden="true" />
-                模板管理
+                <span className="hidden lg:inline">{"\u6a21\u677f\u7ba1\u7406"}</span>
               </Link>
-              <Button
-                type="button"
-                variant="secondary"
-                size="sm"
-                onClick={() => onViewChange("models")}
-              >
-                <Settings2 className="size-4" aria-hidden="true" />
-                设置
-              </Button>
-              <Button
-                type="button"
-                size="sm"
-                className="bg-orange-500 hover:bg-orange-600"
-                onClick={() => onViewChange("workflows")}
-              >
-                <Play className="size-4" aria-hidden="true" />
-                新建流程
-              </Button>
+              {renderHeaderViewButton(settingsEntry, {
+                active: isSettingsActive,
+                onClick: () => onViewChange("models")
+              })}
             </div>
           </header>
 
@@ -200,4 +254,17 @@ export function DailyWorkDashboardShell({
       </div>
     </main>
   );
+}
+
+function formatConversationTime(value: string) {
+  const date = new Date(value);
+
+  if (Number.isNaN(date.getTime())) {
+    return value;
+  }
+
+  return new Intl.DateTimeFormat("zh-CN", {
+    month: "2-digit",
+    day: "2-digit"
+  }).format(date);
 }
