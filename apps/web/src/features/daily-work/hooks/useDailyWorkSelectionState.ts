@@ -190,11 +190,15 @@ export function useDailyWorkDerivedSelections({
     [sessionHistoryFilter, sessionHistoryPanelItems]
   );
   const selectedSessionHistory = useMemo(() => {
-    const selectedInFilter = filteredSessionHistory.find(
-      (item) => item.id === selectedSessionHistoryId
-    );
+    if (!selectedSessionHistoryId) {
+      return null;
+    }
 
-    return selectedInFilter ?? filteredSessionHistory[0] ?? sessionHistoryPanelItems[0] ?? null;
+    return (
+      filteredSessionHistory.find((item) => item.id === selectedSessionHistoryId) ??
+      sessionHistoryPanelItems.find((item) => item.id === selectedSessionHistoryId) ??
+      null
+    );
   }, [filteredSessionHistory, selectedSessionHistoryId, sessionHistoryPanelItems]);
 
   return {

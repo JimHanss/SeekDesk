@@ -381,7 +381,6 @@ export default function Page() {
       : Math.max(messages.length, activeSessionId ? 1 : 0)
   };
   const sidebarConversationItems = sessionHistoryPanelItems
-    .filter((item) => isViewingHistorySession || item.id !== activeSessionId)
     .filter((item) => !hiddenConversationIds.includes(item.id))
     .map((item, sourceIndex) => ({
       id: item.id,
