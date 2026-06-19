@@ -1,7 +1,7 @@
 "use client";
 
 import type { FormEvent } from "react";
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 
 import {
   activeMode,
@@ -239,10 +239,10 @@ export function useChatController({
     void submitPrompt(lastSubmittedPrompt);
   }
 
-  async function refreshAgentTrace(
-    sessionId = activeSessionId,
-    provider = agentTrace.provider
-  ) {
+  const refreshAgentTrace = useCallback(async (
+    sessionId: string | null = null,
+    provider: string | null = null
+  ) => {
     if (!sessionId) {
       return;
     }
@@ -275,7 +275,27 @@ export function useChatController({
         })
       );
     }
-  }
+  }, [apiBaseUrl]);
+
+  const loadSessionMessages = useCallback(
+    (sessionId: string, sessionMessages: ChatMessage[]) => {
+      abortRef.current?.abort();
+      setActiveSessionId(sessionId);
+      setMessages(sessionMessages);
+      setError(null);
+      setLastSubmittedPrompt(null);
+      setStatus("idle");
+      setAgentTrace(
+        createEmptyAgentTraceState({
+          sessionId,
+          syncStatus: "syncing",
+          notice: "Loaded session history; syncing agent trace for the selected conversation."
+        })
+      );
+      void refreshAgentTrace(sessionId);
+    },
+    [refreshAgentTrace]
+  );
 
   return {
     activeSessionId,
@@ -289,6 +309,7 @@ export function useChatController({
     inputRef,
     isBusy,
     lastSubmittedPrompt,
+    loadSessionMessages,
     messages,
     messagesEndRef,
     refreshAgentTrace,
