@@ -3773,21 +3773,172 @@ describe("api server", () => {
     }
   });
 
-  it("accepts the reserved coding-agent mode without enabling tools", async () => {
-    const app = await buildServer();
-    const response = await app.inject({
-      method: "POST",
-      url: "/api/chat",
-      payload: {
-        mode: "coding_agent",
-        prompt: "inspect a repository"
-      }
-    });
+  it("runs coding-agent read tools and records trace", async () => {
+    const repository = new SeedDailyWorkRepository();
+    const app = await buildServer({ dailyWorkRepository: repository });
 
-    expect(response.statusCode).toBe(200);
-    expect(response.body).toContain("coding-agent compatibility");
+    try {
+      const response = await app.inject({
+        method: "POST",
+        url: "/api/chat",
+        payload: {
+          mode: "coding_agent",
+          sessionId: "coding-read-session",
+          prompt: "Inspect package.json and explain the npm scripts."
+        }
+      });
 
-    await app.close();
+      expect(response.statusCode).toBe(200);
+      expect(response.headers["x-seekdesk-chat-mode"]).toBe("coding_agent");
+      expect(response.body).toContain("I read package.json");
+
+      const traceResponse = await app.inject({
+        method: "GET",
+        url: "/api/chat/sessions/coding-read-session/trace"
+      });
+
+      expect(traceResponse.statusCode).toBe(200);
+      expect(traceResponse.json()).toEqual(
+        expect.objectContaining({
+          mode: "coding_agent",
+          sessionId: "coding-read-session",
+          toolCalls: expect.arrayContaining([
+            expect.objectContaining({
+              name: "coding.read_file",
+              status: "completed",
+              previewOnly: false,
+              permissionRequired: false,
+              inputJson: expect.objectContaining({
+                path: "package.json"
+              }),
+              outputJson: expect.objectContaining({
+                path: "package.json",
+                content: expect.stringContaining("seekdesk")
+              })
+            })
+          ]),
+          toolActivityEvents: expect.arrayContaining([
+            expect.objectContaining({
+              metadata: expect.objectContaining({
+                toolName: "coding.read_file",
+                toolPhase: "completed"
+              })
+            })
+          ]),
+          modelUsageSummary: expect.objectContaining({
+            provider: "mock",
+            totalTokens: 50
+          })
+        })
+      );
+    } finally {
+      await app.close();
+    }
+  });
+
+  it("records permission-required coding command plans before execution", async () => {
+    const repository = new SeedDailyWorkRepository();
+    const app = await buildServer({ dailyWorkRepository: repository });
+
+    try {
+      const response = await app.inject({
+        method: "POST",
+        url: "/api/chat",
+        payload: {
+          mode: "coding_agent",
+          sessionId: "coding-shell-session",
+          prompt: "Run shell command: node -e \"console.log('seekdesk')\""
+        }
+      });
+
+      expect(response.statusCode).toBe(200);
+      expect(response.body).toContain("waiting for same-session authorization");
+
+      const traceResponse = await app.inject({
+        method: "GET",
+        url: "/api/chat/sessions/coding-shell-session/trace"
+      });
+      const trace = traceResponse.json();
+      const pendingTool = trace.toolCalls.find(
+        (toolCall: { name: string }) => toolCall.name === "coding.run_shell"
+      );
+
+      expect(pendingTool).toEqual(
+        expect.objectContaining({
+          status: "permission_required",
+          previewOnly: false,
+          permissionRequired: true,
+          inputJson: expect.objectContaining({
+            command: "node -e \"console.log('seekdesk')\""
+          })
+        })
+      );
+
+      const blocked = await app.inject({
+        method: "POST",
+        url: `/api/coding/tool-calls/${pendingTool.id}/execute`,
+        payload: {
+          sessionId: "coding-shell-session"
+        }
+      });
+      expect(blocked.statusCode).toBe(403);
+      expect(blocked.json()).toEqual(
+        expect.objectContaining({
+          error: "permission_required"
+        })
+      );
+
+      const grant = await app.inject({
+        method: "POST",
+        url: "/api/coding/permission-grants",
+        payload: {
+          sessionId: "coding-shell-session",
+          action: "coding.run_shell",
+          reason: "test approval"
+        }
+      });
+      expect(grant.statusCode).toBe(200);
+
+      const executed = await app.inject({
+        method: "POST",
+        url: `/api/coding/tool-calls/${pendingTool.id}/execute`,
+        payload: {
+          sessionId: "coding-shell-session"
+        }
+      });
+
+      expect(executed.statusCode).toBe(200);
+      expect(executed.json()).toEqual(
+        expect.objectContaining({
+          mode: "coding_agent",
+          toolCall: expect.objectContaining({
+            id: pendingTool.id,
+            status: "completed"
+          }),
+          result: expect.objectContaining({
+            stdout: expect.stringContaining("seekdesk")
+          })
+        })
+      );
+
+      const completedTrace = await app.inject({
+        method: "GET",
+        url: "/api/chat/sessions/coding-shell-session/trace"
+      });
+      expect(completedTrace.json().toolCalls).toEqual(
+        expect.arrayContaining([
+          expect.objectContaining({
+            id: pendingTool.id,
+            status: "completed",
+            outputJson: expect.objectContaining({
+              stdout: expect.stringContaining("seekdesk")
+            })
+          })
+        ])
+      );
+    } finally {
+      await app.close();
+    }
   });
 
   it("returns coding workspace status", async () => {

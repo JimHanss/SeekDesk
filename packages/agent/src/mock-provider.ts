@@ -50,6 +50,30 @@ export class MockModelProvider implements ModelProvider {
       return;
     }
 
+    if (mode === "coding_agent" && request.tools?.length) {
+      if (lastMessage?.role === "tool") {
+        yield* streamText(createCodingToolResultResponse(lastMessage.content));
+        yield {
+          type: "usage",
+          usage: {
+            promptTokens: 36,
+            completionTokens: 14,
+            totalTokens: 50
+          }
+        };
+        yield { type: "done" };
+        return;
+      }
+
+      const toolCall = createCodingToolCall(lastUserPrompt, request);
+      if (toolCall) {
+        yield* streamText(toolCall.planText);
+        yield toolCall.chunk;
+        yield { type: "done" };
+        return;
+      }
+    }
+
     const text =
       mode === "coding_agent"
         ? `Mock coding-agent compatibility response for: ${lastMessageContent}`
@@ -100,6 +124,101 @@ const signal: DailyWorkSignal = {
 You can adapt the shape to your workflow.`;
 }
 
+function createCodingToolCall(prompt: string, request: ModelChatRequest) {
+  if (hasModelTool(request, "coding_read_file") && shouldReadPackageJson(prompt)) {
+    const inputJson = {
+      path: extractWorkspacePath(prompt) ?? "package.json",
+      maxBytes: 12000
+    };
+
+    return createMockToolCall({
+      name: "coding_read_file",
+      inputJson,
+      prompt,
+      planText: "Reading the requested workspace file. "
+    });
+  }
+
+  if (hasModelTool(request, "coding_grep") && shouldSearchWorkspace(prompt)) {
+    const inputJson = {
+      query: extractSearchQuery(prompt),
+      path: ".",
+      maxResults: 20
+    };
+
+    return createMockToolCall({
+      name: "coding_grep",
+      inputJson,
+      prompt,
+      planText: "Searching the workspace for matching code. "
+    });
+  }
+
+  if (hasModelTool(request, "coding_git_status") && /\bgit status\b|status|changes/i.test(prompt)) {
+    return createMockToolCall({
+      name: "coding_git_status",
+      inputJson: {},
+      prompt,
+      planText: "Checking git status. "
+    });
+  }
+
+  if (hasModelTool(request, "coding_git_diff") && /\bgit diff\b|diff/i.test(prompt)) {
+    return createMockToolCall({
+      name: "coding_git_diff",
+      inputJson: {
+        staged: false
+      },
+      prompt,
+      planText: "Checking git diff. "
+    });
+  }
+
+  if (hasModelTool(request, "coding_run_tests") && /\b(run|execute)\b.*\btest|\btest\b/i.test(prompt)) {
+    return createMockToolCall({
+      name: "coding_run_tests",
+      inputJson: {
+        command: extractCommand(prompt) ?? "npm test",
+        timeoutMs: 120000
+      },
+      prompt,
+      planText: "Planning a test command that requires approval. "
+    });
+  }
+
+  if (hasModelTool(request, "coding_run_shell") && /\b(run|execute)\b.*\b(shell|command)|\bshell command\b/i.test(prompt)) {
+    return createMockToolCall({
+      name: "coding_run_shell",
+      inputJson: {
+        command: extractCommand(prompt) ?? "node -e \"console.log('seekdesk')\"",
+        timeoutMs: 30000
+      },
+      prompt,
+      planText: "Planning a shell command that requires approval. "
+    });
+  }
+
+  return null;
+}
+
+function createMockToolCall(input: {
+  name: string;
+  inputJson: unknown;
+  prompt: string;
+  planText: string;
+}) {
+  return {
+    planText: input.planText,
+    chunk: {
+      type: "tool-call" as const,
+      id: `mock-call-${input.name.replace(/_/g, "-")}-${createToolCallSuffix(input.prompt)}`,
+      name: input.name,
+      inputJson: input.inputJson,
+      rawArguments: JSON.stringify(input.inputJson)
+    }
+  };
+}
+
 async function* streamText(text: string): AsyncIterable<ModelStreamChunk> {
   for (const token of text.split(" ")) {
     await new Promise((resolve) => setTimeout(resolve, 1));
@@ -121,6 +240,49 @@ function isToolTraceSmokePrompt(prompt: string) {
   return /\bagent tool trace\b/i.test(prompt);
 }
 
+function hasModelTool(request: ModelChatRequest, name: string) {
+  return request.tools?.some((tool) => tool.function.name === name) ?? false;
+}
+
+function shouldReadPackageJson(prompt: string) {
+  return /package\.json|npm scripts?|inspect|read file/i.test(prompt);
+}
+
+function shouldSearchWorkspace(prompt: string) {
+  return /\b(search|grep|find)\b/i.test(prompt);
+}
+
+function extractWorkspacePath(prompt: string) {
+  const match = prompt.match(/[\w./-]*package\.json/i);
+  return match?.[0] ?? null;
+}
+
+function extractSearchQuery(prompt: string) {
+  const quoted = prompt.match(/["']([^"']{2,120})["']/);
+  if (quoted?.[1]) {
+    return quoted[1];
+  }
+
+  const afterKeyword = prompt.match(/(?:search|grep|find)\s*:?\s*([^.,\n]{2,120})/i);
+  return afterKeyword?.[1]?.trim() || "coding_agent";
+}
+
+function extractCommand(prompt: string) {
+  const match = prompt.match(/(?:shell command|command|shell)\s*:\s*([\s\S]{1,500})/i);
+  return match?.[1]?.trim().replace(/^`+|`+$/g, "") || null;
+}
+
+function createCodingToolResultResponse(toolMessageContent: string) {
+  if (/"status"\s*:\s*"permission_required"/.test(toolMessageContent)) {
+    return "The tool plan is waiting for same-session authorization. Open Trace to approve and execute it.";
+  }
+
+  if (/package\.json/i.test(toolMessageContent)) {
+    return "I read package.json. The available scripts and file details are recorded in the run trace.";
+  }
+
+  return "The coding tool completed. The result is available in Trace and the linked workbench panel.";
+}
 function createToolCallSuffix(prompt: string) {
   const suffix = prompt
     .toLowerCase()
