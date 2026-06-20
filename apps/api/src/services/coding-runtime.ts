@@ -1,4 +1,5 @@
 import { execFile } from "node:child_process";
+import { homedir } from "node:os";
 import { existsSync } from "node:fs";
 import { mkdir, readFile, readdir, stat, writeFile } from "node:fs/promises";
 import path from "node:path";
@@ -10,6 +11,8 @@ import type {
   CodingGrepInput,
   CodingListFilesInput,
   CodingReadFileInput,
+  CodingWorkspaceBrowseInput,
+  CodingWorkspaceSelectInput,
   CodingRunShellInput,
   CodingRunTestsInput,
   CodingToolName,
@@ -60,6 +63,7 @@ export interface CodingRuntimeStatus {
   status: "ok";
   service: "seekdesk-coding-runtime";
   workspaceRoot: string;
+  workspaceSelectable: true;
   runtimeMode: "local_runtime";
   supportedCapabilities: CodingToolName[];
   safetyBoundary: {
@@ -72,7 +76,7 @@ export interface CodingRuntimeStatus {
 }
 
 export class LocalCodingRuntime {
-  readonly workspaceRoot: string;
+  workspaceRoot: string;
 
   constructor(workspaceRoot = process.env.SEEKDESK_WORKSPACE_ROOT ?? resolveDefaultWorkspaceRoot()) {
     this.workspaceRoot = path.resolve(workspaceRoot);
@@ -83,6 +87,7 @@ export class LocalCodingRuntime {
       status: "ok",
       service: "seekdesk-coding-runtime",
       workspaceRoot: this.workspaceRoot,
+      workspaceSelectable: true,
       runtimeMode: "local_runtime",
       supportedCapabilities: [
         "coding.read_file",
@@ -102,6 +107,64 @@ export class LocalCodingRuntime {
         workspaceRootLocked: true,
         requiresApprovalForWritesAndCommands: true
       }
+    };
+  }
+
+  async browseWorkspaceDirectories(input: CodingWorkspaceBrowseInput) {
+    const currentPath = await this.resolveLocalDirectory(input.path ?? this.workspaceRoot);
+    const parentPath = path.dirname(currentPath) === currentPath ? null : path.dirname(currentPath);
+    const dirents = await readdir(currentPath, { withFileTypes: true });
+    const entries: Array<{ name: string; path: string; selectable: true }> = [];
+
+    for (const dirent of dirents.sort((a, b) => a.name.localeCompare(b.name))) {
+      if (!dirent.isDirectory() || ignoredDirectoryNames.has(dirent.name)) {
+        continue;
+      }
+
+      const absolutePath = path.join(currentPath, dirent.name);
+      try {
+        const entryStat = await stat(absolutePath);
+        if (entryStat.isDirectory()) {
+          entries.push({
+            name: dirent.name,
+            path: absolutePath,
+            selectable: true
+          });
+        }
+      } catch {
+        // Skip directories that disappear or cannot be inspected.
+      }
+    }
+
+    return {
+      mode: "coding_agent",
+      workspaceRoot: this.workspaceRoot,
+      currentPath,
+      parentPath,
+      homePath: homedir(),
+      suggestedRoots: uniquePaths([
+        this.workspaceRoot,
+        process.cwd(),
+        homedir(),
+        path.join(homedir(), "project"),
+        path.join(homedir(), "Projects")
+      ]),
+      entries,
+      previewOnly: false,
+      externalEffects: ["none"]
+    };
+  }
+
+  async selectWorkspace(input: CodingWorkspaceSelectInput) {
+    const nextWorkspaceRoot = await this.resolveLocalDirectory(input.path);
+    this.workspaceRoot = nextWorkspaceRoot;
+
+    return {
+      mode: "coding_agent",
+      selected: true,
+      workspace: this.status(),
+      previewOnly: false,
+      externalEffects: ["workspace.runtime.select_root"]
     };
   }
 
@@ -329,6 +392,22 @@ export class LocalCodingRuntime {
     };
   }
 
+  private async resolveLocalDirectory(inputPath: string) {
+    const expandedPath = expandHomePath(inputPath);
+    const absolutePath = path.resolve(
+      path.isAbsolute(expandedPath) ? expandedPath : path.join(this.workspaceRoot, expandedPath)
+    );
+    const directoryStat = await stat(absolutePath);
+
+    if (!directoryStat.isDirectory()) {
+      throw new CodingRuntimeError("Path is not a directory.", "not_a_directory", {
+        path: inputPath
+      });
+    }
+
+    return absolutePath;
+  }
+
   private resolveWorkspacePath(inputPath: string) {
     const absolutePath = path.resolve(this.workspaceRoot, inputPath);
     const relativePath = toRelativePath(this.workspaceRoot, absolutePath);
@@ -435,6 +514,22 @@ export class LocalCodingRuntime {
       throw error;
     }
   }
+}
+
+function expandHomePath(inputPath: string) {
+  if (inputPath === "~") {
+    return homedir();
+  }
+
+  if (inputPath.startsWith("~/")) {
+    return path.join(homedir(), inputPath.slice(2));
+  }
+
+  return inputPath;
+}
+
+function uniquePaths(paths: string[]) {
+  return [...new Set(paths.map((item) => path.resolve(expandHomePath(item))))];
 }
 
 function toRelativePath(root: string, absolutePath: string) {

@@ -3512,6 +3512,55 @@ describe("api server", () => {
     await app.close();
   });
 
+  it("browses and selects a coding workspace folder", async () => {
+    const workspaceDir = await mkdtemp(join(tmpdir(), "seekdesk-workspace-select-"));
+    await writeFile(join(workspaceDir, "selected.txt"), "workspace selected", "utf8");
+
+    try {
+      const app = await buildServer();
+      const browse = await app.inject({
+        method: "POST",
+        url: "/api/coding/workspace/browse",
+        payload: { path: workspaceDir }
+      });
+
+      expect(browse.statusCode).toBe(200);
+      expect(browse.json()).toEqual(
+        expect.objectContaining({
+          mode: "coding_agent",
+          currentPath: workspaceDir
+        })
+      );
+
+      const selected = await app.inject({
+        method: "POST",
+        url: "/api/coding/workspace/select",
+        payload: { path: workspaceDir }
+      });
+
+      expect(selected.statusCode).toBe(200);
+      expect(selected.json().workspace.workspaceRoot).toBe(workspaceDir);
+
+      const workspace = await app.inject({
+        method: "GET",
+        url: "/api/coding/workspace"
+      });
+      expect(workspace.json().workspaceRoot).toBe(workspaceDir);
+
+      const file = await app.inject({
+        method: "POST",
+        url: "/api/coding/files/read",
+        payload: { path: "selected.txt", maxBytes: 1000 }
+      });
+
+      expect(file.statusCode).toBe(200);
+      expect(file.json().content).toBe("workspace selected");
+      await app.close();
+    } finally {
+      await rm(workspaceDir, { force: true, recursive: true });
+    }
+  });
+
   it("runs read-only coding file tools through the API", async () => {
     const app = await buildServer();
     const response = await app.inject({

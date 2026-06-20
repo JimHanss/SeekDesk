@@ -90,6 +90,14 @@ export const codingGitDiffInputSchema = z.object({
 
 export const codingGitStatusInputSchema = z.object({});
 
+export const codingWorkspaceBrowseInputSchema = z.object({
+  path: z.string().trim().min(1).max(4000).optional()
+});
+
+export const codingWorkspaceSelectInputSchema = z.object({
+  path: z.string().trim().min(1).max(4000)
+});
+
 export const codingRunTestsInputSchema = z.object({
   command: z.string().trim().min(1).max(500).default("npm test"),
   timeoutMs: z.number().int().min(1000).max(300_000).default(120_000)
@@ -157,6 +165,12 @@ export type CodingGrepInput = z.infer<typeof codingGrepInputSchema>;
 export type CodingRunShellInput = z.infer<typeof codingRunShellInputSchema>;
 export type CodingGitDiffInput = z.infer<typeof codingGitDiffInputSchema>;
 export type CodingGitStatusInput = z.infer<typeof codingGitStatusInputSchema>;
+export type CodingWorkspaceBrowseInput = z.infer<
+  typeof codingWorkspaceBrowseInputSchema
+>;
+export type CodingWorkspaceSelectInput = z.infer<
+  typeof codingWorkspaceSelectInputSchema
+>;
 export type CodingRunTestsInput = z.infer<typeof codingRunTestsInputSchema>;
 export type DailyPersistArtifactInput = z.infer<
   typeof dailyPersistArtifactInputSchema

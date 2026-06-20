@@ -1,7 +1,7 @@
 "use client";
 
 import type { ReactNode } from "react";
-import { FileCode2, Folder, GitCompare, RefreshCw, Search, Terminal } from "lucide-react";
+import { ArrowUp, CheckCircle2, FileCode2, Folder, FolderOpen, GitCompare, HardDrive, Home, RefreshCw, Search, Terminal } from "lucide-react";
 
 import { Button } from "@/components/ui/button";
 import { cn } from "@/lib/utils";
@@ -24,6 +24,150 @@ interface CodingSearchPanelProps extends CodingPanelProps {
 
 interface CodingDiffPanelProps extends CodingPanelProps {
   onRefreshGit: () => void;
+}
+
+interface CodingWorkspacePanelProps extends CodingPanelProps {
+  onBrowseWorkspace: (path?: string) => void;
+  onSelectWorkspace: (path: string) => void;
+  onUpdateWorkspacePath: (path: string) => void;
+}
+
+export function CodingWorkspacePanel({
+  state,
+  onBrowseWorkspace,
+  onSelectWorkspace,
+  onUpdateWorkspacePath
+}: CodingWorkspacePanelProps) {
+  const browser = state.workspaceBrowser;
+  const isBusy = browser.status === "loading" || browser.status === "selecting";
+
+  return (
+    <CodingPanelFrame
+      title="工作区"
+      description="选择本机文件夹作为当前编程 Agent 的 workspace root。所有文件、搜索、Diff 和命令都会锁定在这个目录内。"
+      icon={<FolderOpen className="size-4" aria-hidden="true" />}
+      status={state.syncStatus}
+      notice={state.notice}
+      action={
+        <PanelButton
+          onClick={() => onBrowseWorkspace(browser.currentPath || state.workspace?.workspaceRoot)}
+          label="浏览"
+          icon={<RefreshCw className="size-4" aria-hidden="true" />}
+        />
+      }
+      dataAttr="workspace"
+    >
+      <div className="grid gap-3" data-coding-workspace-panel>
+        <div className="rounded-[8px] border border-slate-200 bg-white p-3">
+          <div className="flex items-center gap-2 text-sm font-semibold text-slate-950">
+            <HardDrive className="size-4 text-teal-700" aria-hidden="true" />
+            当前工作区
+          </div>
+          <div className="mt-2 break-all rounded-[8px] border border-slate-200 bg-slate-50 px-3 py-2 font-mono text-xs text-slate-700" data-coding-workspace-root>
+            {state.workspace?.workspaceRoot ?? "尚未连接 runtime"}
+          </div>
+          <div className="mt-3 grid gap-2 md:grid-cols-[minmax(0,1fr)_auto_auto]">
+            <input
+              value={browser.manualPath}
+              onChange={(event) => onUpdateWorkspacePath(event.target.value)}
+              className="h-9 min-w-0 rounded-[6px] border border-slate-200 px-3 font-mono text-xs outline-none focus:border-teal-500 focus:ring-2 focus:ring-teal-100"
+              placeholder="输入本机路径，例如 /Users/name/project/app"
+              data-coding-workspace-path-input
+            />
+            <Button
+              type="button"
+              size="sm"
+              variant="secondary"
+              disabled={isBusy || !browser.manualPath.trim()}
+              onClick={() => onBrowseWorkspace(browser.manualPath.trim())}
+            >
+              <FolderOpen className="size-4" aria-hidden="true" />
+              打开
+            </Button>
+            <Button
+              type="button"
+              size="sm"
+              disabled={isBusy || !browser.manualPath.trim()}
+              onClick={() => onSelectWorkspace(browser.manualPath.trim())}
+              data-coding-workspace-select-current
+            >
+              <CheckCircle2 className="size-4" aria-hidden="true" />
+              选择
+            </Button>
+          </div>
+          <div className={cn(
+            "mt-3 rounded-[8px] border px-3 py-2 text-xs leading-5",
+            browser.status === "error"
+              ? "border-red-200 bg-red-50 text-red-800"
+              : "border-teal-100 bg-teal-50 text-teal-800"
+          )}>
+            {browser.notice}
+          </div>
+        </div>
+
+        {browser.suggestedRoots.length > 0 ? (
+          <div className="rounded-[8px] border border-slate-200 bg-white p-3">
+            <div className="mb-2 text-xs font-semibold text-slate-700">建议位置</div>
+            <div className="flex flex-wrap gap-2">
+              {browser.suggestedRoots.map((rootPath) => (
+                <button
+                  key={rootPath}
+                  type="button"
+                  className="inline-flex max-w-full items-center gap-2 rounded-[999px] border border-slate-200 px-3 py-1.5 text-xs text-slate-700 transition-colors duration-200 hover:border-teal-300 hover:bg-teal-50 hover:text-teal-800"
+                  onClick={() => onBrowseWorkspace(rootPath)}
+                >
+                  <Home className="size-3.5 shrink-0" aria-hidden="true" />
+                  <span className="truncate font-mono">{rootPath}</span>
+                </button>
+              ))}
+            </div>
+          </div>
+        ) : null}
+
+        <div className="overflow-hidden rounded-[8px] border border-slate-200 bg-white" data-coding-workspace-browser={browser.entries.length}>
+          <div className="flex flex-wrap items-center justify-between gap-2 border-b border-slate-200 px-3 py-2 text-xs text-slate-600">
+            <span className="min-w-0 break-all font-mono">{browser.currentPath || "点击浏览读取目录"}</span>
+            {browser.parentPath ? (
+              <Button type="button" size="sm" variant="secondary" onClick={() => onBrowseWorkspace(browser.parentPath ?? undefined)}>
+                <ArrowUp className="size-4" aria-hidden="true" />
+                上级
+              </Button>
+            ) : null}
+          </div>
+          <div className="max-h-[52vh] overflow-y-auto p-2">
+            {browser.entries.map((entry) => (
+              <div
+                key={entry.path}
+                className="mb-1 flex min-h-10 items-center gap-2 rounded-[8px] border border-transparent px-2 py-1.5 text-xs hover:border-teal-200 hover:bg-teal-50"
+                data-coding-workspace-directory={entry.path}
+              >
+                <Folder className="size-4 shrink-0 text-teal-700" aria-hidden="true" />
+                <button
+                  type="button"
+                  className="min-w-0 flex-1 cursor-pointer truncate text-left font-medium text-slate-800"
+                  onClick={() => onBrowseWorkspace(entry.path)}
+                >
+                  {entry.name}
+                </button>
+                <Button
+                  type="button"
+                  size="sm"
+                  variant="secondary"
+                  disabled={isBusy}
+                  onClick={() => onSelectWorkspace(entry.path)}
+                >
+                  选择
+                </Button>
+              </div>
+            ))}
+            {browser.entries.length === 0 ? (
+              <EmptyState text="当前目录没有可浏览的子文件夹，或还没有读取目录。" />
+            ) : null}
+          </div>
+        </div>
+      </div>
+    </CodingPanelFrame>
+  );
 }
 
 export function CodingFilesPanel({ state, onOpenFile, onRefreshTree }: CodingFilesPanelProps) {

@@ -185,6 +185,22 @@ async function main() {
     fail("workspace runtime did not expose coding.read_file.");
   }
 
+  const { json: workspaceBrowse } = await fetchJson(`${apiUrl}/api/coding/workspace/browse`, {
+    method: "POST",
+    body: JSON.stringify({ path: workspace.workspaceRoot })
+  });
+  if (workspaceBrowse.currentPath !== workspace.workspaceRoot || !Array.isArray(workspaceBrowse.entries)) {
+    fail("workspace browse endpoint did not return the current root.");
+  }
+
+  const { json: workspaceSelect } = await fetchJson(`${apiUrl}/api/coding/workspace/select`, {
+    method: "POST",
+    body: JSON.stringify({ path: workspace.workspaceRoot })
+  });
+  if (workspaceSelect.workspace?.workspaceRoot !== workspace.workspaceRoot) {
+    fail("workspace select endpoint did not keep the selected root.");
+  }
+
   const { json: tree } = await fetchJson(`${apiUrl}/api/coding/files/tree`, {
     method: "POST",
     body: JSON.stringify({ path: ".", maxDepth: 1 })

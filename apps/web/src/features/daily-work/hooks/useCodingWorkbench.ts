@@ -5,10 +5,12 @@ import { useCallback, useEffect, useMemo, useState } from "react";
 import type { AgentToolCallTraceItem, AgentTraceState } from "../types";
 
 export type CodingWorkbenchSyncStatus = "idle" | "syncing" | "live" | "degraded";
+export type CodingWorkspacePickerStatus = "idle" | "loading" | "ready" | "selecting" | "error";
 
 export interface CodingWorkspaceStatus {
   service: string;
   workspaceRoot: string;
+  workspaceSelectable?: boolean;
   runtimeMode: string;
   supportedCapabilities: string[];
   safetyBoundary: {
@@ -18,6 +20,23 @@ export interface CodingWorkspaceStatus {
     workspaceRootLocked: boolean;
     requiresApprovalForWritesAndCommands: boolean;
   };
+}
+
+export interface CodingWorkspaceDirectoryEntry {
+  name: string;
+  path: string;
+  selectable: boolean;
+}
+
+export interface CodingWorkspaceBrowserState {
+  status: CodingWorkspacePickerStatus;
+  notice: string;
+  currentPath: string;
+  parentPath: string | null;
+  homePath: string;
+  manualPath: string;
+  suggestedRoots: string[];
+  entries: CodingWorkspaceDirectoryEntry[];
 }
 
 export interface CodingFileTreeEntry {
@@ -60,6 +79,7 @@ export interface CodingWorkbenchState {
   syncStatus: CodingWorkbenchSyncStatus;
   notice: string;
   workspace: CodingWorkspaceStatus | null;
+  workspaceBrowser: CodingWorkspaceBrowserState;
   treeEntries: CodingFileTreeEntry[];
   treeTruncated: boolean;
   selectedFile: CodingReadFileState | null;
@@ -86,10 +106,22 @@ const initialGit: CodingGitState = {
   diffExitCode: null
 };
 
+const initialWorkspaceBrowser: CodingWorkspaceBrowserState = {
+  status: "idle",
+  notice: "点击浏览来选择本机工作区。",
+  currentPath: "",
+  parentPath: null,
+  homePath: "",
+  manualPath: "",
+  suggestedRoots: [],
+  entries: []
+};
+
 export function useCodingWorkbench(apiBaseUrl: string, agentTrace: AgentTraceState) {
   const [syncStatus, setSyncStatus] = useState<CodingWorkbenchSyncStatus>("idle");
   const [notice, setNotice] = useState("Coding runtime is ready to sync.");
   const [workspace, setWorkspace] = useState<CodingWorkspaceStatus | null>(null);
+  const [workspaceBrowser, setWorkspaceBrowser] = useState<CodingWorkspaceBrowserState>(initialWorkspaceBrowser);
   const [treeEntries, setTreeEntries] = useState<CodingFileTreeEntry[]>([]);
   const [treeTruncated, setTreeTruncated] = useState(false);
   const [selectedFile, setSelectedFile] = useState<CodingReadFileState | null>(null);
@@ -124,6 +156,10 @@ export function useCodingWorkbench(apiBaseUrl: string, agentTrace: AgentTraceSta
     try {
       const payload = await fetchJson<CodingWorkspaceStatus>("/api/coding/workspace");
       setWorkspace(payload);
+      setWorkspaceBrowser((current) => ({
+        ...current,
+        manualPath: current.manualPath || payload.workspaceRoot
+      }));
       setSyncStatus("live");
       setNotice("Coding runtime connected.");
     } catch (error) {
@@ -232,6 +268,80 @@ export function useCodingWorkbench(apiBaseUrl: string, agentTrace: AgentTraceSta
     }
   }, [fetchJson]);
 
+  const browseWorkspace = useCallback(async (path?: string) => {
+    setWorkspaceBrowser((current) => ({
+      ...current,
+      status: "loading",
+      notice: "正在读取本机文件夹...",
+      ...(path ? { manualPath: path } : {})
+    }));
+    try {
+      const payload = await fetchJson<{
+        currentPath: string;
+        parentPath: string | null;
+        homePath: string;
+        suggestedRoots?: string[];
+        entries?: CodingWorkspaceDirectoryEntry[];
+      }>("/api/coding/workspace/browse", {
+        method: "POST",
+        body: JSON.stringify(path ? { path } : {})
+      });
+      setWorkspaceBrowser({
+        status: "ready",
+        notice: "选择一个文件夹作为当前工作区。",
+        currentPath: payload.currentPath,
+        parentPath: payload.parentPath,
+        homePath: payload.homePath,
+        manualPath: payload.currentPath,
+        suggestedRoots: Array.isArray(payload.suggestedRoots) ? payload.suggestedRoots : [],
+        entries: Array.isArray(payload.entries) ? payload.entries : []
+      });
+    } catch (error) {
+      setWorkspaceBrowser((current) => ({
+        ...current,
+        status: "error",
+        notice: "读取文件夹失败：" + formatUnknownError(error)
+      }));
+    }
+  }, [fetchJson]);
+
+  const updateWorkspacePathDraft = useCallback((path: string) => {
+    setWorkspaceBrowser((current) => ({ ...current, manualPath: path }));
+  }, []);
+
+  const selectWorkspace = useCallback(async (path: string) => {
+    setWorkspaceBrowser((current) => ({
+      ...current,
+      status: "selecting",
+      notice: "正在切换工作区...",
+      manualPath: path
+    }));
+    try {
+      const payload = await fetchJson<{ workspace: CodingWorkspaceStatus }>("/api/coding/workspace/select", {
+        method: "POST",
+        body: JSON.stringify({ path })
+      });
+      setWorkspace(payload.workspace);
+      setSelectedFile(null);
+      setSearch(initialSearch);
+      setWorkspaceBrowser((current) => ({
+        ...current,
+        status: "ready",
+        notice: "已切换到 " + payload.workspace.workspaceRoot,
+        currentPath: payload.workspace.workspaceRoot,
+        manualPath: payload.workspace.workspaceRoot
+      }));
+      setNotice("Workspace switched to " + payload.workspace.workspaceRoot + ".");
+      await Promise.all([refreshFileTree(), refreshGit()]);
+    } catch (error) {
+      setWorkspaceBrowser((current) => ({
+        ...current,
+        status: "error",
+        notice: "切换工作区失败：" + formatUnknownError(error)
+      }));
+    }
+  }, [fetchJson, refreshFileTree, refreshGit]);
+
   useEffect(() => {
     void refreshWorkspace();
     void refreshFileTree();
@@ -257,6 +367,7 @@ export function useCodingWorkbench(apiBaseUrl: string, agentTrace: AgentTraceSta
       syncStatus,
       notice,
       workspace,
+      workspaceBrowser,
       treeEntries,
       treeTruncated,
       selectedFile,
@@ -271,7 +382,10 @@ export function useCodingWorkbench(apiBaseUrl: string, agentTrace: AgentTraceSta
       readFile,
       updateSearchDraft,
       runSearch,
-      refreshGit
+      refreshGit,
+      browseWorkspace,
+      updateWorkspacePathDraft,
+      selectWorkspace
     }
   };
 }

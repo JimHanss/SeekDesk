@@ -4,7 +4,9 @@ import {
   codingListFilesInputSchema,
   codingPermissionGrantCreateRequestSchema,
   codingPermissionGrantRevokeRequestSchema,
-  codingReadFileInputSchema
+  codingReadFileInputSchema,
+  codingWorkspaceBrowseInputSchema,
+  codingWorkspaceSelectInputSchema
 } from "@seekdesk/shared";
 import type { FastifyInstance } from "fastify";
 
@@ -23,6 +25,8 @@ export async function registerCodingRoutes(
 
   for (const route of [
     "/api/coding/workspace",
+    "/api/coding/workspace/browse",
+    "/api/coding/workspace/select",
     "/api/coding/files/tree",
     "/api/coding/files/read",
     "/api/coding/search",
@@ -36,6 +40,24 @@ export async function registerCodingRoutes(
   }
 
   app.get("/api/coding/workspace", async () => runtime.status());
+
+  app.post<{ Body: unknown }>("/api/coding/workspace/browse", async (request, reply) => {
+    const parsed = codingWorkspaceBrowseInputSchema.safeParse(request.body ?? {});
+    if (!parsed.success) {
+      return reply.code(400).send(createValidationError(parsed.error.issues));
+    }
+
+    return safeRuntimeReply(reply, () => runtime.browseWorkspaceDirectories(parsed.data));
+  });
+
+  app.post<{ Body: unknown }>("/api/coding/workspace/select", async (request, reply) => {
+    const parsed = codingWorkspaceSelectInputSchema.safeParse(request.body ?? {});
+    if (!parsed.success) {
+      return reply.code(400).send(createValidationError(parsed.error.issues));
+    }
+
+    return safeRuntimeReply(reply, () => runtime.selectWorkspace(parsed.data));
+  });
 
   app.post<{ Body: unknown }>("/api/coding/files/tree", async (request, reply) => {
     const parsed = codingListFilesInputSchema.safeParse(request.body ?? {});

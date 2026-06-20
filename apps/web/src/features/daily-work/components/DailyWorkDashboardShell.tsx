@@ -14,6 +14,7 @@ export type DailyWorkView =
   | "diff"
   | "terminal"
   | "trace"
+  | "workspace"
   | "templates"
   | "knowledge"
   | "workflows"

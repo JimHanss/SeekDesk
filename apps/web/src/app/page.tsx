@@ -6,6 +6,7 @@ import {
   Bot,
   FileCode2,
   FileText,
+  FolderOpen,
   GitCompare,
   MessageSquare,
   PanelLeft,
@@ -53,6 +54,7 @@ import { WorkflowPreviewPanel } from "@/features/daily-work/components/panels/Wo
 import {
   CodingDiffPanel,
   CodingFilesPanel,
+  CodingWorkspacePanel,
   CodingSearchPanel,
   CodingTerminalPanel
 } from "@/features/daily-work/components/panels/CodingWorkbenchPanels";
@@ -328,6 +330,13 @@ export default function Page() {
   ];
 
   const settingsViews: DailyWorkViewConfig[] = [
+    {
+      id: "workspace",
+      label: "工作区",
+      description: "选择本机文件夹并锁定编程 Agent 的执行范围。",
+      icon: <FolderOpen className="size-4" aria-hidden="true" />,
+      badge: codingWorkbench.state.workspace ? "已连接" : "未连接"
+    },
     {
       id: "models",
       label: "模型与用量",
@@ -700,6 +709,21 @@ export default function Page() {
                 settingsViews={settingsViews}
                 onViewChange={setActiveView}
               >
+                  {activeView === "workspace" ? (
+                    <CodingWorkspacePanel
+                      state={codingWorkbench.state}
+                      onBrowseWorkspace={(path) =>
+                        void codingWorkbench.actions.browseWorkspace(path)
+                      }
+                      onSelectWorkspace={(path) =>
+                        void codingWorkbench.actions.selectWorkspace(path)
+                      }
+                      onUpdateWorkspacePath={
+                        codingWorkbench.actions.updateWorkspacePathDraft
+                      }
+                    />
+                  ) : null}
+
                   {activeView === "approvals" ? (
                     <>
                       <ApprovalLedgerPanel
