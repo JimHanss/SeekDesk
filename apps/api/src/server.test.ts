@@ -3087,6 +3087,63 @@ describe("api server", () => {
     }
   });
 
+  it("normalizes Windows daemon workspace names", async () => {
+    const app = await buildServer();
+    let socket: WebSocket | null = null;
+
+    try {
+      await app.listen({ port: 0, host: "127.0.0.1" });
+      const address = app.server.address() as AddressInfo;
+      socket = new WebSocket(`ws://127.0.0.1:${address.port}/ws/daemon`);
+
+      const registered = await new Promise<Record<string, unknown>>((resolve, reject) => {
+        const timeout = setTimeout(() => {
+          reject(new Error("Timed out waiting for daemon registration."));
+        }, 2000);
+
+        socket?.addEventListener("open", () => {
+          socket?.send(JSON.stringify({
+            type: "daemon.register",
+            token: "seekdesk-local-dev",
+            status: {
+              daemonId: "daemon-test-windows-path",
+              machineName: "windows-workstation",
+              platform: "win32",
+              workspaceRoot: "E:\\Project\\SeekDesk\\.worktrees\\coding-agent-workbench",
+              supportedCapabilities: ["coding.read_file"],
+              pid: process.pid
+            }
+          }));
+        });
+
+        socket?.addEventListener("message", (event) => {
+          const message = parseWebSocketMessage(event.data) as Record<string, unknown>;
+          if (message.type === "daemon.registered") {
+            clearTimeout(timeout);
+            resolve(message);
+          }
+        });
+
+        socket?.addEventListener("error", () => {
+          clearTimeout(timeout);
+          reject(new Error("Daemon WebSocket connection failed."));
+        });
+      });
+
+      expect(registered.workspace).toEqual(
+        expect.objectContaining({
+          daemonId: "daemon-test-windows-path",
+          name: "coding-agent-workbench",
+          workspaceId: expect.stringMatching(/^local-coding-agent-workbench-/),
+          rootPath: "E:\\Project\\SeekDesk\\.worktrees\\coding-agent-workbench"
+        })
+      );
+    } finally {
+      socket?.close();
+      await app.close();
+    }
+  });
+
   it("rejects daemon registration with an invalid pairing token", async () => {
     const app = await buildServer();
     let socket: WebSocket | null = null;
@@ -3784,7 +3841,10 @@ describe("api server", () => {
         payload: {
           mode: "coding_agent",
           sessionId: "coding-read-session",
-          prompt: "Inspect package.json and explain the npm scripts."
+          prompt: "Inspect package.json and explain the npm scripts.",
+          context: {
+            workspaceId: "server-local-runtime"
+          }
         }
       });
 
@@ -3830,6 +3890,23 @@ describe("api server", () => {
             totalTokens: 50
           })
         })
+      );
+
+      const sessionsResponse = await app.inject({
+        method: "GET",
+        url: "/api/daily/sessions?mode=coding_agent"
+      });
+
+      expect(sessionsResponse.statusCode).toBe(200);
+      expect(sessionsResponse.json().sessions).toEqual(
+        expect.arrayContaining([
+          expect.objectContaining({
+            id: "coding-read-session",
+            appMode: "coding_agent",
+            workspaceId: "server-local-runtime",
+            summary: "AI coding-agent chat session."
+          })
+        ])
       );
     } finally {
       await app.close();

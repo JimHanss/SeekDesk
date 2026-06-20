@@ -185,17 +185,28 @@ async function main() {
   if (!workspaceList.workspaces.some((item) => item.workspaceId === "server-local-runtime")) {
     fail("workspace list did not include server-local fallback.");
   }
+  const smokeWorkspace =
+    workspaceList.workspaces.find(
+      (item) => item.runtimeMode === "local_daemon" && item.connected
+    ) ??
+    workspaceList.workspaces.find((item) => item.workspaceId === "server-local-runtime") ??
+    workspaceList.workspaces[0];
+  const smokeWorkspaceId = smokeWorkspace.workspaceId;
+  log(`using workspace ${smokeWorkspaceId} (${smokeWorkspace.runtimeMode})`);
 
-  const { json: workspace } = await fetchJson(`${apiUrl}/api/coding/workspace`);
+  const workspaceQuery = `workspaceId=${encodeURIComponent(smokeWorkspaceId)}`;
+  const { json: workspace } = await fetchJson(`${apiUrl}/api/coding/workspace?${workspaceQuery}`);
   if (workspace.mode && workspace.mode !== "coding_agent") fail("workspace endpoint returned wrong mode.");
-  if (workspace.service !== "seekdesk-coding-runtime") fail("workspace runtime service mismatch.");
+  if (!["seekdesk-coding-runtime", "seekdesk-daemon"].includes(workspace.service)) {
+    fail("workspace runtime service mismatch.");
+  }
   if (!workspace.supportedCapabilities?.includes("coding.read_file")) {
     fail("workspace runtime did not expose coding.read_file.");
   }
 
   const { json: workspaceBrowse } = await fetchJson(`${apiUrl}/api/coding/workspace/browse`, {
     method: "POST",
-    body: JSON.stringify({ path: workspace.workspaceRoot })
+    body: JSON.stringify({ workspaceId: smokeWorkspaceId, path: workspace.workspaceRoot })
   });
   if (workspaceBrowse.currentPath !== workspace.workspaceRoot || !Array.isArray(workspaceBrowse.entries)) {
     fail("workspace browse endpoint did not return the current root.");
@@ -203,15 +214,17 @@ async function main() {
 
   const { json: workspaceSelect } = await fetchJson(`${apiUrl}/api/coding/workspace/select`, {
     method: "POST",
-    body: JSON.stringify({ path: workspace.workspaceRoot })
+    body: JSON.stringify({ workspaceId: smokeWorkspaceId, path: workspace.workspaceRoot })
   });
-  if (workspaceSelect.workspace?.workspaceRoot !== workspace.workspaceRoot) {
+  const selectedWorkspaceRoot =
+    workspaceSelect.workspace?.workspaceRoot ?? workspaceSelect.workspace?.rootPath;
+  if (selectedWorkspaceRoot !== workspace.workspaceRoot) {
     fail("workspace select endpoint did not keep the selected root.");
   }
 
   const { json: tree } = await fetchJson(`${apiUrl}/api/coding/files/tree`, {
     method: "POST",
-    body: JSON.stringify({ path: ".", maxDepth: 1 })
+    body: JSON.stringify({ workspaceId: smokeWorkspaceId, path: ".", maxDepth: 1 })
   });
   if (!Array.isArray(tree.entries) || !tree.entries.length) {
     fail("file tree did not return entries.");
@@ -219,7 +232,7 @@ async function main() {
 
   const { json: packageFile } = await fetchJson(`${apiUrl}/api/coding/files/read`, {
     method: "POST",
-    body: JSON.stringify({ path: "package.json", maxBytes: 12000 })
+    body: JSON.stringify({ workspaceId: smokeWorkspaceId, path: "package.json", maxBytes: 12000 })
   });
   if (!packageFile.content?.includes('"seekdesk"')) {
     fail("read_file did not return package.json content.");
@@ -227,20 +240,20 @@ async function main() {
 
   const { json: search } = await fetchJson(`${apiUrl}/api/coding/search`, {
     method: "POST",
-    body: JSON.stringify({ query: "coding_agent", path: ".", maxResults: 20 })
+    body: JSON.stringify({ workspaceId: smokeWorkspaceId, query: "coding_agent", path: ".", maxResults: 20 })
   });
   if (!Array.isArray(search.matches)) {
     fail("grep did not return a matches array.");
   }
 
-  const { json: gitStatus } = await fetchJson(`${apiUrl}/api/coding/git/status`);
+  const { json: gitStatus } = await fetchJson(`${apiUrl}/api/coding/git/status?${workspaceQuery}`);
   if (typeof gitStatus.stdout !== "string" || !gitStatus.command?.includes("git status")) {
     fail("git status endpoint did not return command output.");
   }
 
   const { json: gitDiff } = await fetchJson(`${apiUrl}/api/coding/git/diff`, {
     method: "POST",
-    body: JSON.stringify({ staged: false })
+    body: JSON.stringify({ workspaceId: smokeWorkspaceId, staged: false })
   });
   if (typeof gitDiff.stdout !== "string" || !gitDiff.command?.includes("git diff")) {
     fail("git diff endpoint did not return command output.");
@@ -254,7 +267,7 @@ async function main() {
       mode: "coding_agent",
       sessionId,
       prompt: "Inspect package.json and explain which npm scripts are available.",
-      context: { workspaceId: "workspace-seekdesk" }
+      context: { workspaceId: smokeWorkspaceId }
     }),
     signal: AbortSignal.timeout(45_000)
   });
@@ -276,6 +289,63 @@ async function main() {
   const { json: grants } = await fetchJson(`${apiUrl}/api/coding/permission-grants?sessionId=${encodeURIComponent(sessionId)}&activeOnly=true`);
   if (grants.mode !== "coding_agent" || !Array.isArray(grants.grants)) {
     fail("permission grants endpoint did not return coding grants shape.");
+  }
+
+  const approvalSessionId = `browser-smoke-approval-${Date.now()}`;
+  const approvalChat = await fetch(`${apiUrl}/api/chat`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({
+      mode: "coding_agent",
+      sessionId: approvalSessionId,
+      prompt:
+        "Use the coding.run_shell tool to execute exactly this safe command: node -p 21+21. Emit the tool call so it is recorded as permission_required; do not claim it ran before approval.",
+      context: { workspaceId: smokeWorkspaceId }
+    }),
+    signal: AbortSignal.timeout(45_000)
+  });
+  const approvalBody = await approvalChat.text();
+  if (!approvalChat.ok) {
+    fail(`/api/chat approval returned HTTP ${approvalChat.status}: ${approvalBody.slice(0, 240)}`);
+  }
+  const { json: approvalTrace } = await fetchJson(
+    `${apiUrl}/api/chat/sessions/${approvalSessionId}/trace`
+  );
+  const pendingShellCall = approvalTrace.toolCalls?.find(
+    (toolCall) =>
+      toolCall.name === "coding.run_shell" &&
+      toolCall.status === "permission_required"
+  );
+  if (!pendingShellCall) {
+    fail(
+      `approval chat did not record a pending shell tool call: ${approvalBody.slice(0, 240)}`
+    );
+  }
+  await fetchJson(`${apiUrl}/api/coding/permission-grants`, {
+    method: "POST",
+    body: JSON.stringify({
+      mode: "coding_agent",
+      sessionId: approvalSessionId,
+      action: "coding.run_shell",
+      reason: "browser smoke safe command"
+    })
+  });
+  const { json: executedShell } = await fetchJson(
+    `${apiUrl}/api/coding/tool-calls/${encodeURIComponent(pendingShellCall.id)}/execute`,
+    {
+      method: "POST",
+      body: JSON.stringify({
+        sessionId: approvalSessionId,
+        workspaceId: smokeWorkspaceId
+      })
+    }
+  );
+  if (
+    executedShell.toolCall?.status !== "completed" ||
+    executedShell.result?.exitCode !== 0 ||
+    !String(executedShell.result?.stdout ?? "").includes("42")
+  ) {
+    fail("approved shell tool did not execute and return stdout 42.");
   }
 
   log("coding-agent smoke passed");

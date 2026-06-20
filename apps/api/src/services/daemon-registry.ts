@@ -1,6 +1,4 @@
 import { createHash, randomUUID } from "node:crypto";
-import path from "node:path";
-
 import {
   daemonClientMessageSchema,
   type CodingGitDiffInput,
@@ -299,7 +297,7 @@ function createWorkspace(status: DaemonStatus): DaemonWorkspace {
   return {
     workspaceId: createWorkspaceId(status.daemonId, rootPath),
     daemonId: status.daemonId,
-    name: path.basename(rootPath) || rootPath,
+    name: getWorkspaceLeafName(rootPath),
     rootPath,
     runtimeMode: "local_daemon",
     connected: true,
@@ -309,9 +307,16 @@ function createWorkspace(status: DaemonStatus): DaemonWorkspace {
   };
 }
 
+function getWorkspaceLeafName(rootPath: string) {
+  const normalized = rootPath.replace(/[\\/]+$/g, "");
+  const parts = normalized.split(/[\\/]+/).filter(Boolean);
+
+  return parts.at(-1) ?? rootPath;
+}
+
 function createWorkspaceId(daemonId: string, rootPath: string) {
   const hash = createHash("sha256").update(`${daemonId}:${rootPath}`).digest("hex").slice(0, 12);
-  const name = path.basename(rootPath).replace(/[^a-z0-9_-]+/gi, "-").replace(/^-+|-+$/g, "").toLowerCase() || "workspace";
+  const name = getWorkspaceLeafName(rootPath).replace(/[^a-z0-9_-]+/gi, "-").replace(/^-+|-+$/g, "").toLowerCase() || "workspace";
   return `local-${name}-${hash}`;
 }
 

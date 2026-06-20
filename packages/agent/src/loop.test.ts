@@ -69,6 +69,24 @@ describe("runAgentLoop", () => {
     );
   });
 
+  it("tells the model to emit permission-gated coding tool calls as pending plans", async () => {
+    const provider = new CapturingProvider();
+
+    await runAgentLoop({
+      provider,
+      mode: "coding_agent",
+      prompt: "write a temporary validation file",
+      orchestrator: new ToolOrchestrator(new ToolRegistry([]))
+    });
+
+    expect(provider.request?.messages[0]?.content).toContain(
+      "should still be emitted as tool calls when requested"
+    );
+    expect(provider.request?.messages[0]?.content).toContain(
+      "permission_required pending plans"
+    );
+  });
+
   it("carries tool plans without executing tools in the provider stream", async () => {
     const provider = new CapturingProvider();
     const toolPlan = [

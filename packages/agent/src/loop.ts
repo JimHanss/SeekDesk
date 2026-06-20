@@ -170,7 +170,11 @@ function createOrchestrationMessage(input: AgentLoopInput): ModelMessage | null 
       ? [
           "Coding-agent orchestration context is scoped to the configured workspace root.",
           input.orchestrator
-            ? "Use coding tools when they materially improve the answer. Read-only tools may run directly. File writes, exact edits, shell commands, and test commands require same-session authorization before execution."
+            ? [
+                "Use coding tools when they materially improve the answer.",
+                "Read-only tools may run directly.",
+                "File writes, exact edits, shell commands, and test commands should still be emitted as tool calls when requested; the orchestrator records them as permission_required pending plans and does not execute them until the user grants same-session authorization."
+              ].join(" ")
             : "Do not claim filesystem, shell, git, or test commands ran unless a tool result is present.",
           "Never access paths outside the workspace root. Never claim email, calendar, or external connector actions are available."
         ]

@@ -385,21 +385,29 @@ export class DaemonLocalRuntime {
   }
 
   private async runShellCommand(command: string, timeoutMs: number) {
-    if (process.platform === "win32") {
-      return this.runBinary("cmd.exe", ["/d", "/s", "/c", command], timeoutMs);
-    }
-
-    return this.runBinary(process.env.SHELL ?? "/bin/sh", ["-lc", command], timeoutMs);
+    const invocation = createShellCommandInvocation(command);
+    return this.runBinary(
+      invocation.file,
+      invocation.args,
+      timeoutMs,
+      invocation.windowsVerbatimArguments
+    );
   }
 
-  private async runBinary(file: string, args: string[], timeoutMs: number) {
+  private async runBinary(
+    file: string,
+    args: string[],
+    timeoutMs: number,
+    windowsVerbatimArguments = false
+  ) {
     try {
       const result = await execFileAsync(file, args, {
         cwd: this.workspaceRoot,
         env: sanitizeEnv(process.env),
         maxBuffer: maxCommandOutputBytes,
         timeout: timeoutMs,
-        windowsHide: true
+        windowsHide: true,
+        windowsVerbatimArguments
       });
       return { exitCode: 0, stdout: truncateOutput(result.stdout), stderr: truncateOutput(result.stderr) };
     } catch (error) {
@@ -413,6 +421,24 @@ export class DaemonLocalRuntime {
       throw error;
     }
   }
+}
+
+export function createShellCommandInvocation(
+  command: string,
+  platformName: NodeJS.Platform = process.platform
+) {
+  if (platformName === "win32") {
+    return {
+      file: "cmd.exe",
+      args: ["/d", "/c", command],
+      windowsVerbatimArguments: true
+    };
+  }
+
+  return {
+    file: process.env.SHELL ?? "/bin/sh",
+    args: ["-lc", command]
+  };
 }
 
 async function pickDirectoryWithSystemDialog() {
