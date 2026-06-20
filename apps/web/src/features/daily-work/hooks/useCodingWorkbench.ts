@@ -1,4 +1,4 @@
-﻿"use client";
+"use client";
 
 import { useCallback, useEffect, useMemo, useState } from "react";
 
@@ -8,10 +8,13 @@ export type CodingWorkbenchSyncStatus = "idle" | "syncing" | "live" | "degraded"
 export type CodingWorkspacePickerStatus = "idle" | "loading" | "ready" | "selecting" | "error";
 
 export interface CodingWorkspaceStatus {
+  status: "ok";
   service: string;
+  workspaceId?: string;
+  workspaceName?: string;
   workspaceRoot: string;
   workspaceSelectable?: boolean;
-  runtimeMode: string;
+  runtimeMode: "local_runtime" | "local_daemon" | "server_local";
   supportedCapabilities: string[];
   safetyBoundary: {
     readsUserFiles: boolean;
@@ -20,6 +23,18 @@ export interface CodingWorkspaceStatus {
     workspaceRootLocked: boolean;
     requiresApprovalForWritesAndCommands: boolean;
   };
+}
+
+export interface CodingWorkspaceSummary {
+  workspaceId: string;
+  daemonId: string;
+  name: string;
+  rootPath: string;
+  runtimeMode: "local_daemon" | "server_local";
+  connected: boolean;
+  platform?: string;
+  machineName?: string;
+  updatedAt: string;
 }
 
 export interface CodingWorkspaceDirectoryEntry {
@@ -78,6 +93,8 @@ export interface CodingGitState {
 export interface CodingWorkbenchState {
   syncStatus: CodingWorkbenchSyncStatus;
   notice: string;
+  activeWorkspaceId: string;
+  workspaces: CodingWorkspaceSummary[];
   workspace: CodingWorkspaceStatus | null;
   workspaceBrowser: CodingWorkspaceBrowserState;
   treeEntries: CodingFileTreeEntry[];
@@ -108,7 +125,7 @@ const initialGit: CodingGitState = {
 
 const initialWorkspaceBrowser: CodingWorkspaceBrowserState = {
   status: "idle",
-  notice: "点击浏览来选择本机工作区。",
+  notice: "新建对话时选择本机工作区。",
   currentPath: "",
   parentPath: null,
   homePath: "",
@@ -117,9 +134,15 @@ const initialWorkspaceBrowser: CodingWorkspaceBrowserState = {
   entries: []
 };
 
-export function useCodingWorkbench(apiBaseUrl: string, agentTrace: AgentTraceState) {
+export function useCodingWorkbench(
+  apiBaseUrl: string,
+  agentTrace: AgentTraceState,
+  activeWorkspaceId: string,
+  onActiveWorkspaceChange: (workspaceId: string) => void
+) {
   const [syncStatus, setSyncStatus] = useState<CodingWorkbenchSyncStatus>("idle");
   const [notice, setNotice] = useState("Coding runtime is ready to sync.");
+  const [workspaces, setWorkspaces] = useState<CodingWorkspaceSummary[]>([]);
   const [workspace, setWorkspace] = useState<CodingWorkspaceStatus | null>(null);
   const [workspaceBrowser, setWorkspaceBrowser] = useState<CodingWorkspaceBrowserState>(initialWorkspaceBrowser);
   const [treeEntries, setTreeEntries] = useState<CodingFileTreeEntry[]>([]);
@@ -151,11 +174,38 @@ export function useCodingWorkbench(apiBaseUrl: string, agentTrace: AgentTraceSta
     return response.json() as Promise<T>;
   }, [apiBaseUrl]);
 
+  const withWorkspace = useCallback(
+    (body: Record<string, unknown> = {}) => ({
+      ...body,
+      ...(activeWorkspaceId ? { workspaceId: activeWorkspaceId } : {})
+    }),
+    [activeWorkspaceId]
+  );
+
+  const refreshWorkspaces = useCallback(async () => {
+    try {
+      const payload = await fetchJson<{ workspaces?: CodingWorkspaceSummary[] }>("/api/coding/workspaces");
+      const nextWorkspaces = Array.isArray(payload.workspaces) ? payload.workspaces : [];
+      setWorkspaces(nextWorkspaces);
+      if (!activeWorkspaceId && nextWorkspaces[0]) {
+        onActiveWorkspaceChange(nextWorkspaces[0].workspaceId);
+      }
+      return nextWorkspaces;
+    } catch (error) {
+      setNotice("Workspace list failed: " + formatUnknownError(error));
+      return [];
+    }
+  }, [activeWorkspaceId, fetchJson, onActiveWorkspaceChange]);
+
   const refreshWorkspace = useCallback(async () => {
     setSyncStatus("syncing");
     try {
-      const payload = await fetchJson<CodingWorkspaceStatus>("/api/coding/workspace");
+      const suffix = activeWorkspaceId ? "?workspaceId=" + encodeURIComponent(activeWorkspaceId) : "";
+      const payload = await fetchJson<CodingWorkspaceStatus>("/api/coding/workspace" + suffix);
       setWorkspace(payload);
+      if (payload.workspaceId && payload.workspaceId !== activeWorkspaceId) {
+        onActiveWorkspaceChange(payload.workspaceId);
+      }
       setWorkspaceBrowser((current) => ({
         ...current,
         manualPath: current.manualPath || payload.workspaceRoot
@@ -166,17 +216,14 @@ export function useCodingWorkbench(apiBaseUrl: string, agentTrace: AgentTraceSta
       setSyncStatus("degraded");
       setNotice("Coding runtime unavailable: " + formatUnknownError(error));
     }
-  }, [fetchJson]);
+  }, [activeWorkspaceId, fetchJson, onActiveWorkspaceChange]);
 
   const refreshFileTree = useCallback(async (path = ".") => {
     setSyncStatus("syncing");
     try {
-      const payload = await fetchJson<{
-        entries?: CodingFileTreeEntry[];
-        truncated?: boolean;
-      }>("/api/coding/files/tree", {
+      const payload = await fetchJson<{ entries?: CodingFileTreeEntry[]; truncated?: boolean }>("/api/coding/files/tree", {
         method: "POST",
-        body: JSON.stringify({ path, maxDepth: 3, maxEntries: 240 })
+        body: JSON.stringify(withWorkspace({ path, maxDepth: 3, maxEntries: 240 }))
       });
       setTreeEntries(Array.isArray(payload.entries) ? payload.entries : []);
       setTreeTruncated(Boolean(payload.truncated));
@@ -186,14 +233,14 @@ export function useCodingWorkbench(apiBaseUrl: string, agentTrace: AgentTraceSta
       setSyncStatus("degraded");
       setNotice("File tree failed: " + formatUnknownError(error));
     }
-  }, [fetchJson]);
+  }, [fetchJson, withWorkspace]);
 
   const readFile = useCallback(async (path: string) => {
     setSyncStatus("syncing");
     try {
       const payload = await fetchJson<CodingReadFileState>("/api/coding/files/read", {
         method: "POST",
-        body: JSON.stringify({ path, maxBytes: 240000 })
+        body: JSON.stringify(withWorkspace({ path, maxBytes: 240000 }))
       });
       setSelectedFile(payload);
       setSyncStatus("live");
@@ -202,7 +249,7 @@ export function useCodingWorkbench(apiBaseUrl: string, agentTrace: AgentTraceSta
       setSyncStatus("degraded");
       setNotice("Read failed: " + formatUnknownError(error));
     }
-  }, [fetchJson]);
+  }, [fetchJson, withWorkspace]);
 
   const updateSearchDraft = useCallback((patch: Partial<Pick<CodingSearchState, "query" | "path" | "includeGlob">>) => {
     setSearch((current) => ({ ...current, ...patch }));
@@ -217,17 +264,14 @@ export function useCodingWorkbench(apiBaseUrl: string, agentTrace: AgentTraceSta
 
     setSyncStatus("syncing");
     try {
-      const payload = await fetchJson<{
-        matches?: CodingSearchMatch[];
-        truncated?: boolean;
-      }>("/api/coding/search", {
+      const payload = await fetchJson<{ matches?: CodingSearchMatch[]; truncated?: boolean }>("/api/coding/search", {
         method: "POST",
-        body: JSON.stringify({
+        body: JSON.stringify(withWorkspace({
           query,
           path: search.path.trim() || ".",
           ...(search.includeGlob.trim() ? { includeGlob: search.includeGlob.trim() } : {}),
           maxResults: 80
-        })
+        }))
       });
       setSearch((current) => ({
         ...current,
@@ -240,16 +284,17 @@ export function useCodingWorkbench(apiBaseUrl: string, agentTrace: AgentTraceSta
       setSyncStatus("degraded");
       setNotice("Search failed: " + formatUnknownError(error));
     }
-  }, [fetchJson, search.includeGlob, search.path, search.query]);
+  }, [fetchJson, search.includeGlob, search.path, search.query, withWorkspace]);
 
   const refreshGit = useCallback(async () => {
     setSyncStatus("syncing");
     try {
+      const query = activeWorkspaceId ? "?workspaceId=" + encodeURIComponent(activeWorkspaceId) : "";
       const [statusPayload, diffPayload] = await Promise.all([
-        fetchJson<{ command?: string; stdout?: string; stderr?: string; exitCode?: number }>("/api/coding/git/status"),
+        fetchJson<{ command?: string; stdout?: string; stderr?: string; exitCode?: number }>("/api/coding/git/status" + query),
         fetchJson<{ command?: string; stdout?: string; stderr?: string; exitCode?: number }>("/api/coding/git/diff", {
           method: "POST",
-          body: JSON.stringify({ staged: false })
+          body: JSON.stringify(withWorkspace({ staged: false }))
         })
       ]);
       setGit({
@@ -266,7 +311,7 @@ export function useCodingWorkbench(apiBaseUrl: string, agentTrace: AgentTraceSta
       setSyncStatus("degraded");
       setNotice("Git refresh failed: " + formatUnknownError(error));
     }
-  }, [fetchJson]);
+  }, [activeWorkspaceId, fetchJson, withWorkspace]);
 
   const browseWorkspace = useCallback(async (path?: string) => {
     setWorkspaceBrowser((current) => ({
@@ -284,7 +329,7 @@ export function useCodingWorkbench(apiBaseUrl: string, agentTrace: AgentTraceSta
         entries?: CodingWorkspaceDirectoryEntry[];
       }>("/api/coding/workspace/browse", {
         method: "POST",
-        body: JSON.stringify(path ? { path } : {})
+        body: JSON.stringify(withWorkspace(path ? { path } : {}))
       });
       setWorkspaceBrowser({
         status: "ready",
@@ -297,50 +342,90 @@ export function useCodingWorkbench(apiBaseUrl: string, agentTrace: AgentTraceSta
         entries: Array.isArray(payload.entries) ? payload.entries : []
       });
     } catch (error) {
-      setWorkspaceBrowser((current) => ({
-        ...current,
-        status: "error",
-        notice: "读取文件夹失败：" + formatUnknownError(error)
-      }));
+      setWorkspaceBrowser((current) => ({ ...current, status: "error", notice: "读取文件夹失败：" + formatUnknownError(error) }));
     }
-  }, [fetchJson]);
+  }, [fetchJson, withWorkspace]);
 
   const updateWorkspacePathDraft = useCallback((path: string) => {
     setWorkspaceBrowser((current) => ({ ...current, manualPath: path }));
   }, []);
 
-  const selectWorkspace = useCallback(async (path: string) => {
-    setWorkspaceBrowser((current) => ({
-      ...current,
-      status: "selecting",
-      notice: "正在切换工作区...",
-      manualPath: path
-    }));
-    try {
-      const payload = await fetchJson<{ workspace: CodingWorkspaceStatus }>("/api/coding/workspace/select", {
-        method: "POST",
-        body: JSON.stringify({ path })
+  const applyWorkspaceSelection = useCallback(async (payload: { workspace?: CodingWorkspaceSummary; status?: { workspaceRoot?: string } }) => {
+    const selectedWorkspace = payload.workspace;
+    if (selectedWorkspace) {
+      onActiveWorkspaceChange(selectedWorkspace.workspaceId);
+      setWorkspaces((current) => [selectedWorkspace, ...current.filter((item) => item.workspaceId !== selectedWorkspace.workspaceId)]);
+      setWorkspace({
+        status: "ok",
+        service: selectedWorkspace.runtimeMode === "local_daemon" ? "seekdesk-daemon" : "seekdesk-coding-runtime",
+        workspaceId: selectedWorkspace.workspaceId,
+        workspaceName: selectedWorkspace.name,
+        workspaceRoot: selectedWorkspace.rootPath,
+        workspaceSelectable: true,
+        runtimeMode: selectedWorkspace.runtimeMode,
+        supportedCapabilities: [],
+        safetyBoundary: {
+          readsUserFiles: true,
+          writesUserFiles: true,
+          executesShell: true,
+          workspaceRootLocked: true,
+          requiresApprovalForWritesAndCommands: true
+        }
       });
-      setWorkspace(payload.workspace);
-      setSelectedFile(null);
-      setSearch(initialSearch);
       setWorkspaceBrowser((current) => ({
         ...current,
         status: "ready",
-        notice: "已切换到 " + payload.workspace.workspaceRoot,
-        currentPath: payload.workspace.workspaceRoot,
-        manualPath: payload.workspace.workspaceRoot
+        notice: "已切换到 " + selectedWorkspace.rootPath,
+        currentPath: selectedWorkspace.rootPath,
+        manualPath: selectedWorkspace.rootPath
       }));
-      setNotice("Workspace switched to " + payload.workspace.workspaceRoot + ".");
-      await Promise.all([refreshFileTree(), refreshGit()]);
-    } catch (error) {
-      setWorkspaceBrowser((current) => ({
-        ...current,
-        status: "error",
-        notice: "切换工作区失败：" + formatUnknownError(error)
-      }));
+      return selectedWorkspace;
     }
-  }, [fetchJson, refreshFileTree, refreshGit]);
+
+    await refreshWorkspace();
+    return null;
+  }, [onActiveWorkspaceChange, refreshWorkspace]);
+
+  const selectWorkspace = useCallback(async (path: string, workspaceId = activeWorkspaceId) => {
+    setWorkspaceBrowser((current) => ({ ...current, status: "selecting", notice: "正在切换工作区...", manualPath: path }));
+    try {
+      const payload = await fetchJson<{ workspace?: CodingWorkspaceSummary; status?: { workspaceRoot?: string } }>("/api/coding/workspace/select", {
+        method: "POST",
+        body: JSON.stringify({ path, ...(workspaceId ? { workspaceId } : {}) })
+      });
+      await applyWorkspaceSelection(payload);
+      setSelectedFile(null);
+      setSearch(initialSearch);
+      setNotice("Workspace switched.");
+      await Promise.all([refreshWorkspaces(), refreshFileTree(), refreshGit()]);
+    } catch (error) {
+      setWorkspaceBrowser((current) => ({ ...current, status: "error", notice: "切换工作区失败：" + formatUnknownError(error) }));
+    }
+  }, [activeWorkspaceId, applyWorkspaceSelection, fetchJson, refreshFileTree, refreshGit, refreshWorkspaces]);
+
+  const pickWorkspace = useCallback(async (workspaceId = activeWorkspaceId) => {
+    setWorkspaceBrowser((current) => ({ ...current, status: "selecting", notice: "正在打开本机文件夹选择器..." }));
+    try {
+      const payload = await fetchJson<{ workspace?: CodingWorkspaceSummary; status?: { workspaceRoot?: string } }>("/api/coding/workspace/pick", {
+        method: "POST",
+        body: JSON.stringify(workspaceId ? { workspaceId } : {})
+      });
+      await applyWorkspaceSelection(payload);
+      await Promise.all([refreshWorkspaces(), refreshFileTree(), refreshGit()]);
+    } catch (error) {
+      setWorkspaceBrowser((current) => ({ ...current, status: "error", notice: "打开文件夹选择器失败：" + formatUnknownError(error) }));
+    }
+  }, [activeWorkspaceId, applyWorkspaceSelection, fetchJson, refreshFileTree, refreshGit, refreshWorkspaces]);
+
+  const setActiveWorkspace = useCallback((workspaceId: string) => {
+    onActiveWorkspaceChange(workspaceId);
+    setSelectedFile(null);
+    setSearch(initialSearch);
+  }, [onActiveWorkspaceChange]);
+
+  useEffect(() => {
+    void refreshWorkspaces();
+  }, [refreshWorkspaces]);
 
   useEffect(() => {
     void refreshWorkspace();
@@ -366,6 +451,8 @@ export function useCodingWorkbench(apiBaseUrl: string, agentTrace: AgentTraceSta
     state: {
       syncStatus,
       notice,
+      activeWorkspaceId,
+      workspaces,
       workspace,
       workspaceBrowser,
       treeEntries,
@@ -377,6 +464,7 @@ export function useCodingWorkbench(apiBaseUrl: string, agentTrace: AgentTraceSta
       pendingWriteOrCommandToolCalls
     } satisfies CodingWorkbenchState,
     actions: {
+      refreshWorkspaces,
       refreshWorkspace,
       refreshFileTree,
       readFile,
@@ -385,7 +473,9 @@ export function useCodingWorkbench(apiBaseUrl: string, agentTrace: AgentTraceSta
       refreshGit,
       browseWorkspace,
       updateWorkspacePathDraft,
-      selectWorkspace
+      selectWorkspace,
+      pickWorkspace,
+      setActiveWorkspace
     }
   };
 }

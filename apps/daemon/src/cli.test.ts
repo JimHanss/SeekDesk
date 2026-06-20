@@ -1,4 +1,4 @@
-import { describe, expect, it } from "vitest";
+﻿import { describe, expect, it } from "vitest";
 import path from "node:path";
 
 import { runDaemonCli } from "./cli.js";
@@ -17,14 +17,14 @@ interface RuntimeStatus {
     executesShell: boolean;
     startsLongRunningServices: boolean;
     opensNetworkListeners: boolean;
+    workspaceRootLocked: boolean;
+    requiresApprovalForWritesAndCommands: boolean;
   };
-  ipc: {
+  pairing: {
     transport: string;
-    endpoint: string | null;
-  };
-  webSocket: {
-    transport: string;
-    endpoint: string | null;
+    apiUrl: string | null;
+    tokenConfigured: boolean;
+    port: number | null;
   };
 }
 
@@ -39,10 +39,11 @@ describe("daemon cli", () => {
     expect(result.exitCode).toBe(0);
     expect(result.output).toContain("Usage:");
     expect(result.output).toContain("seekdesk-daemon health [--workspace <path>]");
-    expect(result.output).toContain("local coding runtime boundary");
+    expect(result.output).toContain("seekdesk-daemon start --api <url> --token <pairing-token>");
+    expect(result.output).toContain("connects this machine to SeekDesk");
   });
 
-  it("prints health output with local runtime details", () => {
+  it("prints health output with local daemon details", () => {
     const result = runDaemonCli(["health", "--workspace", "."]);
     const output = parseRuntimeStatus(result.output);
 
@@ -52,11 +53,12 @@ describe("daemon cli", () => {
       service: "seekdesk-daemon",
       workspaceRoot: path.resolve("."),
       pid: process.pid,
-      runtimeMode: "local-runtime",
+      runtimeMode: "local-daemon",
       previewOnly: false,
       supportedCapabilities: [
         "health",
         "workspace-root-resolution",
+        "workspace-folder-picker",
         "coding.list_files",
         "coding.read_file",
         "coding.grep",
@@ -72,22 +74,32 @@ describe("daemon cli", () => {
         writesUserFiles: true,
         executesShell: true,
         startsLongRunningServices: false,
-        opensNetworkListeners: false
+        opensNetworkListeners: false,
+        workspaceRootLocked: true,
+        requiresApprovalForWritesAndCommands: true
       },
-      ipc: {
-        transport: "api-mediated",
-        endpoint: "/api/coding"
-      },
-      webSocket: {
-        transport: "api-mediated",
-        endpoint: "/api/coding"
+      pairing: {
+        transport: "websocket",
+        apiUrl: null,
+        tokenConfigured: false,
+        port: null
       }
     });
   });
 
-  it("prints start output as a local runtime status", () => {
+  it("prints start output as a paired local daemon status", () => {
     const workspace = path.join("fixtures", "daemon workspace");
-    const result = runDaemonCli(["start", "--workspace", workspace]);
+    const result = runDaemonCli([
+      "start",
+      "--workspace",
+      workspace,
+      "--api",
+      "http://127.0.0.1:3001",
+      "--token",
+      "seekdesk-local-dev",
+      "--port",
+      "4817"
+    ]);
     const output = parseRuntimeStatus(result.output);
 
     expect(result.exitCode).toBe(0);
@@ -99,10 +111,24 @@ describe("daemon cli", () => {
       writesUserFiles: true,
       executesShell: true,
       startsLongRunningServices: false,
-      opensNetworkListeners: false
+      opensNetworkListeners: false,
+      workspaceRootLocked: true,
+      requiresApprovalForWritesAndCommands: true
     });
-    expect(output.ipc).toEqual({ transport: "api-mediated", endpoint: "/api/coding" });
-    expect(output.webSocket).toEqual({ transport: "api-mediated", endpoint: "/api/coding" });
+    expect(output.pairing).toEqual({
+      transport: "websocket",
+      apiUrl: "http://127.0.0.1:3001",
+      tokenConfigured: true,
+      port: 4817
+    });
+  });
+
+  it("requires api and token for start", () => {
+    const result = runDaemonCli(["start"]);
+
+    expect(result.exitCode).toBe(1);
+    expect(result.output).toContain("Missing required option(s): --api, --token");
+    expect(result.output).toContain("seekdesk-daemon start --api <url> --token <pairing-token>");
   });
 
   it("resolves workspace paths before the command", () => {

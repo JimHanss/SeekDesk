@@ -5,6 +5,9 @@ import { appModeSchema } from "./app-modes.js";
 export const sessionRefSchema = z.object({
   id: z.string(),
   workspaceId: z.string(),
+  workspaceName: z.string().optional(),
+  workspaceRoot: z.string().optional(),
+  workspaceRuntimeMode: z.enum(["local_daemon", "server_local", "cloud_workspace"]).optional(),
   appMode: appModeSchema.default("daily_work"),
   title: z.string(),
   createdAt: z.string(),
@@ -45,6 +48,9 @@ export const dailyWorkSessionMessageSchema = z.object({
 export const dailyWorkSessionSummarySchema = z.object({
   id: z.string(),
   workspaceId: z.string(),
+  workspaceName: z.string().optional(),
+  workspaceRoot: z.string().optional(),
+  workspaceRuntimeMode: z.enum(["local_daemon", "server_local", "cloud_workspace"]).optional(),
   appMode: appModeSchema.default("daily_work"),
   title: z.string(),
   status: sessionWorkflowStatusSchema,

@@ -54,12 +54,12 @@ import { WorkflowPreviewPanel } from "@/features/daily-work/components/panels/Wo
 import {
   CodingDiffPanel,
   CodingFilesPanel,
-  CodingWorkspacePanel,
   CodingSearchPanel,
   CodingTerminalPanel
 } from "@/features/daily-work/components/panels/CodingWorkbenchPanels";
 import {
   DailyWorkDashboardShell,
+  type DailyWorkConversationGroup,
   type DailyWorkView,
   type DailyWorkViewConfig
 } from "@/features/daily-work/components/DailyWorkDashboardShell";
@@ -76,6 +76,8 @@ export default function Page() {
   >({});
   const [hiddenConversationIds, setHiddenConversationIds] = useState<string[]>([]);
   const [pinnedConversationIds, setPinnedConversationIds] = useState<string[]>([]);
+  const [selectedWorkspaceId, setSelectedWorkspaceId] = useState("");
+  const [newConversationDialogOpen, setNewConversationDialogOpen] = useState(false);
   const handleSessionTitleChanged = useCallback(
     (session: { sessionId: string; title: string }) => {
       setCurrentConversationTitle(session.title);
@@ -146,7 +148,8 @@ export default function Page() {
       templateId: selectedTemplateId,
       contextItemIds: selectedContextId ? [selectedContextId] : [],
       artifactIds: selectedArtifactId ? [selectedArtifactId] : [],
-      workflowIds: selectedWorkflowActionId ? [selectedWorkflowActionId] : []
+      workflowIds: selectedWorkflowActionId ? [selectedWorkflowActionId] : [],
+      ...(selectedWorkspaceId ? { workspaceId: selectedWorkspaceId } : {})
     },
     onActivityChanged: refreshActivityFeed,
     onSessionTitleChanged: handleSessionTitleChanged
@@ -180,7 +183,12 @@ export default function Page() {
     agentTrace.sessionId
   );
   const { persistencePanel } = usePersistencePanel(apiBaseUrl);
-  const codingWorkbench = useCodingWorkbench(apiBaseUrl, agentTrace);
+  const codingWorkbench = useCodingWorkbench(
+    apiBaseUrl,
+    agentTrace,
+    selectedWorkspaceId,
+    setSelectedWorkspaceId
+  );
   const activeModelSnapshot = modelUsagePanel.modelSnapshots[modelRouteMode];
   const modelInputPlaceholder =
     modelRouteMode === "fast"
@@ -331,13 +339,6 @@ export default function Page() {
 
   const settingsViews: DailyWorkViewConfig[] = [
     {
-      id: "workspace",
-      label: "工作区",
-      description: "选择本机文件夹并锁定编程 Agent 的执行范围。",
-      icon: <FolderOpen className="size-4" aria-hidden="true" />,
-      badge: codingWorkbench.state.workspace ? "已连接" : "未连接"
-    },
-    {
       id: "models",
       label: "模型与用量",
       description: "查看模型路由、token 用量和持久化状态。",
@@ -386,22 +387,27 @@ export default function Page() {
       ? 0
       : Math.max(messages.length, activeSessionId ? 1 : 0)
   };
-  const sidebarConversationItems = sessionHistoryPanelItems
+  const sidebarConversationRecords = sessionHistoryPanelItems
     .filter((item) => !hiddenConversationIds.includes(item.id))
     .map((item, sourceIndex) => ({
-      id: item.id,
-      title: conversationTitleOverrides[item.id] ?? item.title,
-      summary: item.summary,
-      status: item.status,
-      updatedAt: item.updatedAt,
-      messageCount: item.messageCount,
+      workspaceId: item.workspaceId,
+      workspaceName: item.workspaceName ?? workspaceLabelFromPath(item.workspaceRoot) ?? item.workspaceId,
+      workspaceRoot: item.workspaceRoot ?? item.workspaceId,
       createdAt: item.createdAt,
-      pinned: pinnedConversationIds.includes(item.id),
-      sourceIndex
+      sourceIndex,
+      item: {
+        id: item.id,
+        title: conversationTitleOverrides[item.id] ?? item.title,
+        summary: item.summary,
+        status: item.status,
+        updatedAt: item.updatedAt,
+        messageCount: item.messageCount,
+        pinned: pinnedConversationIds.includes(item.id)
+      }
     }))
     .sort((left, right) => {
-      const leftPinned = left.pinned ? 1 : 0;
-      const rightPinned = right.pinned ? 1 : 0;
+      const leftPinned = left.item.pinned ? 1 : 0;
+      const rightPinned = right.item.pinned ? 1 : 0;
 
       if (leftPinned !== rightPinned) {
         return rightPinned - leftPinned;
@@ -415,12 +421,9 @@ export default function Page() {
       }
 
       return left.sourceIndex - right.sourceIndex;
-    })
-    .map(({ createdAt, sourceIndex, ...item }) => {
-      void createdAt;
-      void sourceIndex;
-      return item;
     });
+  const sidebarConversationItems = sidebarConversationRecords.map((record) => record.item);
+  const sidebarConversationGroups = buildConversationGroups(sidebarConversationRecords);
   const assistantConversationTitle =
     activeSessionHistoryTitle ?? currentConversation.title;
 
@@ -546,11 +549,13 @@ export default function Page() {
   };
 
   return (
+    <>
     <DailyWorkDashboardShell
       activeConversationId={activeView === "assistant" ? selectedSessionHistoryId : null}
       activeView={activeView}
       currentConversation={currentConversation}
       conversationItems={sidebarConversationItems}
+      conversationGroups={sidebarConversationGroups}
       primaryViews={primaryViews}
       settingsViews={settingsViews}
       onConversationDelete={deleteSidebarConversation}
@@ -558,7 +563,10 @@ export default function Page() {
       onConversationRename={renameSidebarConversation}
       onConversationSelect={selectSidebarConversation}
       onCurrentConversationSelect={selectCurrentConversation}
-      onNewConversationSelect={selectCurrentConversation}
+      onNewConversationSelect={() => {
+        void codingWorkbench.actions.refreshWorkspaces();
+        setNewConversationDialogOpen(true);
+      }}
       onViewChange={setActiveView}
     >
             {activeView === "assistant" ? (
@@ -709,20 +717,6 @@ export default function Page() {
                 settingsViews={settingsViews}
                 onViewChange={setActiveView}
               >
-                  {activeView === "workspace" ? (
-                    <CodingWorkspacePanel
-                      state={codingWorkbench.state}
-                      onBrowseWorkspace={(path) =>
-                        void codingWorkbench.actions.browseWorkspace(path)
-                      }
-                      onSelectWorkspace={(path) =>
-                        void codingWorkbench.actions.selectWorkspace(path)
-                      }
-                      onUpdateWorkspacePath={
-                        codingWorkbench.actions.updateWorkspacePathDraft
-                      }
-                    />
-                  ) : null}
 
                   {activeView === "approvals" ? (
                     <>
@@ -761,9 +755,191 @@ export default function Page() {
               </DailyWorkSettingsSection>
             ) : null}
     </DailyWorkDashboardShell>
+    <NewConversationWorkspaceDialog
+      open={newConversationDialogOpen}
+      state={codingWorkbench.state}
+      onBrowseWorkspace={(path) => void codingWorkbench.actions.browseWorkspace(path)}
+      onClose={() => setNewConversationDialogOpen(false)}
+      onCreate={async () => {
+        const manualPath = codingWorkbench.state.workspaceBrowser.manualPath.trim();
+        if (manualPath) {
+          await codingWorkbench.actions.selectWorkspace(manualPath);
+        } else if (!selectedWorkspaceId && codingWorkbench.state.workspaces[0]) {
+          setSelectedWorkspaceId(codingWorkbench.state.workspaces[0].workspaceId);
+        }
+        selectCurrentConversation();
+        setNewConversationDialogOpen(false);
+      }}
+      onPickWorkspace={() => void codingWorkbench.actions.pickWorkspace()}
+      onSelectExistingWorkspace={(workspaceId) => {
+        codingWorkbench.actions.setActiveWorkspace(workspaceId);
+      }}
+      onUpdateWorkspacePath={codingWorkbench.actions.updateWorkspacePathDraft}
+    />
+    </>
   );
 }
 
+
+function buildConversationGroups(
+  records: Array<{
+    workspaceId: string;
+    workspaceName: string;
+    workspaceRoot: string;
+    item: {
+      id: string;
+      title: string;
+      summary: string;
+      status: string;
+      updatedAt: string;
+      messageCount: number;
+      pinned: boolean;
+    };
+  }>
+): DailyWorkConversationGroup[] {
+  const groups = new Map<string, DailyWorkConversationGroup>();
+
+  for (const record of records) {
+    const group = groups.get(record.workspaceId) ?? {
+      id: record.workspaceId,
+      label: record.workspaceName,
+      description: record.workspaceRoot,
+      items: []
+    };
+    group.items.push(record.item);
+    groups.set(record.workspaceId, group);
+  }
+
+  return [...groups.values()];
+}
+
+function workspaceLabelFromPath(pathValue: string | undefined) {
+  if (!pathValue) {
+    return null;
+  }
+
+  const normalized = pathValue.replace(/\\/g, "/");
+  return normalized.split("/").filter(Boolean).pop() ?? normalized;
+}
+
+type CodingWorkbenchController = ReturnType<typeof useCodingWorkbench>;
+
+function NewConversationWorkspaceDialog({
+  open,
+  state,
+  onBrowseWorkspace,
+  onClose,
+  onCreate,
+  onPickWorkspace,
+  onSelectExistingWorkspace,
+  onUpdateWorkspacePath
+}: {
+  open: boolean;
+  state: CodingWorkbenchController["state"];
+  onBrowseWorkspace: (path?: string) => void;
+  onClose: () => void;
+  onCreate: () => Promise<void>;
+  onPickWorkspace: () => void;
+  onSelectExistingWorkspace: (workspaceId: string) => void;
+  onUpdateWorkspacePath: (path: string) => void;
+}) {
+  if (!open) {
+    return null;
+  }
+
+  const activeWorkspaceId = state.activeWorkspaceId || state.workspace?.workspaceId || "";
+
+  return (
+    <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-950/45 p-4">
+      <div className="w-full max-w-3xl rounded-[10px] border border-slate-200 bg-white shadow-2xl">
+        <div className="flex items-center justify-between border-b border-slate-200 px-5 py-4">
+          <div>
+            <h2 className="font-heading text-base font-semibold text-slate-950">新建编程对话</h2>
+            <p className="mt-1 text-sm text-slate-600">先绑定一个本机工作区，后续文件、搜索、Diff、终端都会限定在该目录。</p>
+          </div>
+          <button type="button" onClick={onClose} className="rounded-[6px] border border-transparent px-3 py-1.5 text-sm font-medium text-slate-600 hover:border-slate-200 hover:bg-slate-50">
+            关闭
+          </button>
+        </div>
+
+        <div className="grid gap-4 p-5 lg:grid-cols-[minmax(0,0.9fr)_minmax(0,1.1fr)]">
+          <section className="rounded-[8px] border border-slate-200 p-4">
+            <div className="mb-3 flex items-center gap-2 text-sm font-semibold text-slate-900">
+              <FolderOpen className="size-4 text-teal-600" aria-hidden="true" />
+              已连接工作区
+            </div>
+            <div className="space-y-2">
+              {state.workspaces.map((workspace) => {
+                const active = activeWorkspaceId === workspace.workspaceId;
+                return (
+                  <button
+                    key={workspace.workspaceId}
+                    type="button"
+                    onClick={() => onSelectExistingWorkspace(workspace.workspaceId)}
+                    className={
+                      "w-full rounded-[8px] border px-3 py-2 text-left transition-colors " +
+                      (active
+                        ? "border-teal-300 bg-teal-50 text-teal-950"
+                        : "border-slate-200 text-slate-700 hover:border-teal-200 hover:bg-teal-50/60")
+                    }
+                  >
+                    <div className="truncate text-sm font-semibold">{workspace.name}</div>
+                    <div className="mt-1 truncate text-xs text-slate-500">{workspace.rootPath}</div>
+                    <div className="mt-1 text-[11px] text-slate-500">
+                      {workspace.runtimeMode === "local_daemon" ? "本机 daemon" : "远程 fallback"}
+                      {workspace.machineName ? " / " + workspace.machineName : ""}
+                    </div>
+                  </button>
+                );
+              })}
+            </div>
+          </section>
+
+          <section className="rounded-[8px] border border-slate-200 p-4">
+            <div className="mb-3 text-sm font-semibold text-slate-900">选择文件夹</div>
+            <div className="flex flex-wrap gap-2">
+              <button type="button" onClick={onPickWorkspace} className="h-9 rounded-[6px] border border-teal-200 bg-teal-50 px-3 text-sm font-semibold text-teal-800 hover:bg-teal-100">
+                打开本机选择器
+              </button>
+              <button type="button" onClick={() => onBrowseWorkspace(state.workspaceBrowser.currentPath || state.workspace?.workspaceRoot)} className="h-9 rounded-[6px] border border-slate-200 px-3 text-sm font-semibold text-slate-700 hover:bg-slate-50">
+                浏览目录
+              </button>
+            </div>
+            <input
+              value={state.workspaceBrowser.manualPath}
+              onChange={(event) => onUpdateWorkspacePath(event.target.value)}
+              placeholder="输入本机工作区路径"
+              className="mt-3 h-10 w-full rounded-[6px] border border-slate-200 px-3 text-sm outline-none focus:border-teal-400"
+            />
+            <div className="mt-2 text-xs text-slate-500">{state.workspaceBrowser.notice}</div>
+
+            <div className="mt-3 max-h-48 overflow-y-auto rounded-[8px] border border-slate-100">
+              {state.workspaceBrowser.parentPath ? (
+                <button type="button" onClick={() => onBrowseWorkspace(state.workspaceBrowser.parentPath ?? undefined)} className="block w-full border-b border-slate-100 px-3 py-2 text-left text-sm text-slate-700 hover:bg-slate-50">
+                  ../
+                </button>
+              ) : null}
+              {state.workspaceBrowser.entries.map((entry) => (
+                <button key={entry.path} type="button" onClick={() => onBrowseWorkspace(entry.path)} className="block w-full border-b border-slate-100 px-3 py-2 text-left text-sm text-slate-700 last:border-b-0 hover:bg-slate-50">
+                  {entry.name}
+                </button>
+              ))}
+            </div>
+          </section>
+        </div>
+
+        <div className="flex items-center justify-end gap-2 border-t border-slate-200 px-5 py-4">
+          <button type="button" onClick={onClose} className="h-9 rounded-[6px] border border-slate-200 px-4 text-sm font-semibold text-slate-700 hover:bg-slate-50">
+            取消
+          </button>
+          <button type="button" onClick={() => void onCreate()} className="h-9 rounded-[6px] border border-orange-500 bg-orange-500 px-4 text-sm font-semibold text-white hover:bg-orange-600">
+            创建对话
+          </button>
+        </div>
+      </div>
+    </div>
+  );
+}
 function parseConversationCreatedAt(value: string, fallbackIndex: number) {
   const timestamp = Date.parse(value);
   return Number.isNaN(timestamp) ? fallbackIndex : timestamp;

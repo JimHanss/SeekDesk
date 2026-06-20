@@ -1,8 +1,10 @@
 import { execFile } from "node:child_process";
-import { homedir } from "node:os";
+import { randomUUID } from "node:crypto";
 import { existsSync } from "node:fs";
 import { mkdir, readFile, readdir, stat, writeFile } from "node:fs/promises";
+import { hostname, homedir, platform } from "node:os";
 import path from "node:path";
+import process from "node:process";
 import { promisify } from "node:util";
 
 import type {
@@ -11,16 +13,17 @@ import type {
   CodingGrepInput,
   CodingListFilesInput,
   CodingReadFileInput,
-  CodingWorkspaceBrowseInput,
-  CodingWorkspaceSelectInput,
   CodingRunShellInput,
   CodingRunTestsInput,
   CodingToolName,
-  CodingWriteFileInput
+  CodingWorkspaceBrowseInput,
+  CodingWorkspaceSelectInput,
+  CodingWriteFileInput,
+  DaemonStatus
 } from "@seekdesk/shared";
 
 const execFileAsync = promisify(execFile);
-
+const maxCommandOutputBytes = 80_000;
 const ignoredDirectoryNames = new Set([
   ".git",
   ".next",
@@ -31,81 +34,33 @@ const ignoredDirectoryNames = new Set([
   ".turbo",
   ".cache"
 ]);
-const maxCommandOutputBytes = 80_000;
 
-function resolveDefaultWorkspaceRoot() {
-  const cwd = process.cwd();
-  const monorepoRoot = path.resolve(cwd, "../..");
-
-  if (
-    path.basename(cwd) === "api" &&
-    path.basename(path.dirname(cwd)) === "apps" &&
-    existsSync(path.join(monorepoRoot, "package.json"))
-  ) {
-    return monorepoRoot;
-  }
-
-  return cwd;
-}
-
-export class CodingRuntimeError extends Error {
+export class DaemonRuntimeError extends Error {
   constructor(
     message: string,
     readonly code: string,
     readonly details: Record<string, unknown> = {}
   ) {
     super(message);
-    this.name = "CodingRuntimeError";
+    this.name = "DaemonRuntimeError";
   }
 }
 
-export interface CodingRuntimeStatus {
-  status: "ok";
-  service: string;
-  workspaceId?: string;
-  workspaceName?: string;
-  workspaceRoot: string;
-  workspaceSelectable: true;
-  runtimeMode: "local_runtime" | "local_daemon" | "server_local";
-  supportedCapabilities: CodingToolName[];
-  safetyBoundary: {
-    readsUserFiles: true;
-    writesUserFiles: true;
-    executesShell: true;
-    workspaceRootLocked: true;
-    requiresApprovalForWritesAndCommands: true;
-  };
-}
+export class DaemonLocalRuntime {
+  private workspaceRoot: string;
+  readonly daemonId: string;
 
-export interface CodingRuntime {
-  status(): CodingRuntimeStatus;
-  browseWorkspaceDirectories(input: CodingWorkspaceBrowseInput): Promise<unknown>;
-  selectWorkspace(input: CodingWorkspaceSelectInput): Promise<unknown>;
-  pickWorkspaceDirectory?(): Promise<unknown>;
-  execute(name: CodingToolName, input: unknown): Promise<unknown>;
-  listFiles(input: CodingListFilesInput): Promise<unknown>;
-  readFile(input: CodingReadFileInput): Promise<unknown>;
-  grep(input: CodingGrepInput): Promise<unknown>;
-  gitStatus(): Promise<unknown>;
-  gitDiff(input: CodingGitDiffInput): Promise<unknown>;
-}
-
-export class LocalCodingRuntime implements CodingRuntime {
-  workspaceRoot: string;
-
-  constructor(workspaceRoot = process.env.SEEKDESK_WORKSPACE_ROOT ?? resolveDefaultWorkspaceRoot()) {
+  constructor(workspaceRoot = process.cwd(), daemonId = `daemon-${randomUUID()}`) {
     this.workspaceRoot = path.resolve(workspaceRoot);
+    this.daemonId = daemonId;
   }
 
-  status(): CodingRuntimeStatus {
+  status(): DaemonStatus {
     return {
-      status: "ok",
-      service: "seekdesk-coding-runtime",
-      workspaceId: "server-local-runtime",
-      workspaceName: path.basename(this.workspaceRoot) || "server-local",
+      daemonId: this.daemonId,
+      machineName: hostname(),
+      platform: platform(),
       workspaceRoot: this.workspaceRoot,
-      workspaceSelectable: true,
-      runtimeMode: "server_local",
       supportedCapabilities: [
         "coding.read_file",
         "coding.write_file",
@@ -117,71 +72,7 @@ export class LocalCodingRuntime implements CodingRuntime {
         "coding.git_status",
         "coding.run_tests"
       ],
-      safetyBoundary: {
-        readsUserFiles: true,
-        writesUserFiles: true,
-        executesShell: true,
-        workspaceRootLocked: true,
-        requiresApprovalForWritesAndCommands: true
-      }
-    };
-  }
-
-  async browseWorkspaceDirectories(input: CodingWorkspaceBrowseInput) {
-    const currentPath = await this.resolveLocalDirectory(input.path ?? this.workspaceRoot);
-    const parentPath = path.dirname(currentPath) === currentPath ? null : path.dirname(currentPath);
-    const dirents = await readdir(currentPath, { withFileTypes: true });
-    const entries: Array<{ name: string; path: string; selectable: true }> = [];
-
-    for (const dirent of dirents.sort((a, b) => a.name.localeCompare(b.name))) {
-      if (!dirent.isDirectory() || ignoredDirectoryNames.has(dirent.name)) {
-        continue;
-      }
-
-      const absolutePath = path.join(currentPath, dirent.name);
-      try {
-        const entryStat = await stat(absolutePath);
-        if (entryStat.isDirectory()) {
-          entries.push({
-            name: dirent.name,
-            path: absolutePath,
-            selectable: true
-          });
-        }
-      } catch {
-        // Skip directories that disappear or cannot be inspected.
-      }
-    }
-
-    return {
-      mode: "coding_agent",
-      workspaceRoot: this.workspaceRoot,
-      currentPath,
-      parentPath,
-      homePath: homedir(),
-      suggestedRoots: uniquePaths([
-        this.workspaceRoot,
-        process.cwd(),
-        homedir(),
-        path.join(homedir(), "project"),
-        path.join(homedir(), "Projects")
-      ]),
-      entries,
-      previewOnly: false,
-      externalEffects: ["none"]
-    };
-  }
-
-  async selectWorkspace(input: CodingWorkspaceSelectInput) {
-    const nextWorkspaceRoot = await this.resolveLocalDirectory(input.path);
-    this.workspaceRoot = nextWorkspaceRoot;
-
-    return {
-      mode: "coding_agent",
-      selected: true,
-      workspace: this.status(),
-      previewOnly: false,
-      externalEffects: ["workspace.runtime.select_root"]
+      pid: process.pid
     };
   }
 
@@ -208,15 +99,68 @@ export class LocalCodingRuntime implements CodingRuntime {
     }
   }
 
+  async browseWorkspaceDirectories(input: CodingWorkspaceBrowseInput) {
+    const currentPath = await this.resolveLocalDirectory(input.path ?? this.workspaceRoot);
+    const parentPath = path.dirname(currentPath) === currentPath ? null : path.dirname(currentPath);
+    const dirents = await readdir(currentPath, { withFileTypes: true });
+    const entries: Array<{ name: string; path: string; selectable: true }> = [];
+
+    for (const dirent of dirents.sort((left, right) => left.name.localeCompare(right.name))) {
+      if (!dirent.isDirectory() || ignoredDirectoryNames.has(dirent.name)) {
+        continue;
+      }
+
+      const absolutePath = path.join(currentPath, dirent.name);
+      try {
+        const entryStat = await stat(absolutePath);
+        if (entryStat.isDirectory()) {
+          entries.push({ name: dirent.name, path: absolutePath, selectable: true });
+        }
+      } catch {
+        // Directory may disappear or be inaccessible between readdir and stat.
+      }
+    }
+
+    return {
+      mode: "coding_agent",
+      workspaceRoot: this.workspaceRoot,
+      currentPath,
+      parentPath,
+      homePath: homedir(),
+      suggestedRoots: uniquePaths([
+        this.workspaceRoot,
+        process.cwd(),
+        homedir(),
+        path.join(homedir(), "project"),
+        path.join(homedir(), "Projects")
+      ]),
+      entries,
+      previewOnly: false,
+      externalEffects: ["none"]
+    };
+  }
+
+  async selectWorkspace(input: CodingWorkspaceSelectInput) {
+    this.workspaceRoot = await this.resolveLocalDirectory(input.path);
+
+    return {
+      mode: "coding_agent",
+      selected: true,
+      workspaceRoot: this.workspaceRoot,
+      status: this.status(),
+      previewOnly: false,
+      externalEffects: ["workspace.runtime.select_root"]
+    };
+  }
+
+  async pickWorkspaceDirectory() {
+    const selectedPath = await pickDirectoryWithSystemDialog();
+    return this.selectWorkspace({ path: selectedPath });
+  }
+
   async listFiles(input: CodingListFilesInput) {
     const root = this.resolveWorkspacePath(input.path);
-    const entries: Array<{
-      path: string;
-      type: "file" | "directory";
-      size: number;
-      depth: number;
-    }> = [];
-
+    const entries: Array<{ path: string; type: "file" | "directory"; size: number; depth: number }> = [];
     await this.walk(root.absolutePath, input.maxDepth, input.maxEntries, entries, 0);
 
     return {
@@ -233,12 +177,10 @@ export class LocalCodingRuntime implements CodingRuntime {
     const resolved = this.resolveWorkspacePath(input.path);
     const fileStat = await stat(resolved.absolutePath);
     if (!fileStat.isFile()) {
-      throw new CodingRuntimeError("Path is not a file.", "not_a_file", {
-        path: resolved.relativePath
-      });
+      throw new DaemonRuntimeError("Path is not a file.", "not_a_file", { path: resolved.relativePath });
     }
     if (fileStat.size > input.maxBytes) {
-      throw new CodingRuntimeError("File exceeds maxBytes.", "file_too_large", {
+      throw new DaemonRuntimeError("File exceeds maxBytes.", "file_too_large", {
         path: resolved.relativePath,
         size: fileStat.size,
         maxBytes: input.maxBytes
@@ -281,22 +223,14 @@ export class LocalCodingRuntime implements CodingRuntime {
     const occurrences = countOccurrences(content, input.search);
 
     if (occurrences !== input.expectedReplacements) {
-      throw new CodingRuntimeError(
+      throw new DaemonRuntimeError(
         "Exact replacement count did not match expectedReplacements.",
         "replacement_count_mismatch",
-        {
-          path: resolved.relativePath,
-          occurrences,
-          expectedReplacements: input.expectedReplacements
-        }
+        { path: resolved.relativePath, occurrences, expectedReplacements: input.expectedReplacements }
       );
     }
 
-    await writeFile(
-      resolved.absolutePath,
-      content.split(input.search).join(input.replace),
-      "utf8"
-    );
+    await writeFile(resolved.absolutePath, content.split(input.search).join(input.replace), "utf8");
 
     return {
       path: resolved.relativePath,
@@ -308,15 +242,9 @@ export class LocalCodingRuntime implements CodingRuntime {
 
   async grep(input: CodingGrepInput) {
     const root = this.resolveWorkspacePath(input.path);
-    const matches: Array<{
-      path: string;
-      line: number;
-      text: string;
-    }> = [];
+    const matches: Array<{ path: string; line: number; text: string }> = [];
     const query = input.query.toLowerCase();
-    const includeRegex = input.includeGlob
-      ? globToRegExp(input.includeGlob)
-      : null;
+    const includeRegex = input.includeGlob ? globToRegExp(input.includeGlob) : null;
 
     await this.walkTextFiles(root.absolutePath, async (filePath) => {
       if (matches.length >= input.maxResults) {
@@ -333,14 +261,9 @@ export class LocalCodingRuntime implements CodingRuntime {
         return;
       }
 
-      const lines = buffer.toString("utf8").split(/\r?\n/);
-      lines.forEach((line, index) => {
+      buffer.toString("utf8").split(/\r?\n/).forEach((line, index) => {
         if (matches.length < input.maxResults && line.toLowerCase().includes(query)) {
-          matches.push({
-            path: relativePath,
-            line: index + 1,
-            text: line.slice(0, 500)
-          });
+          matches.push({ path: relativePath, line: index + 1, text: line.slice(0, 500) });
         }
       });
     });
@@ -357,13 +280,7 @@ export class LocalCodingRuntime implements CodingRuntime {
 
   async gitStatus() {
     const result = await this.runBinary("git", ["status", "--short", "--branch"], 30_000);
-
-    return {
-      command: "git status --short --branch",
-      ...result,
-      previewOnly: false,
-      externalEffects: ["none"]
-    };
+    return { command: "git status --short --branch", ...result, previewOnly: false, externalEffects: ["none"] };
   }
 
   async gitDiff(input: CodingGitDiffInput) {
@@ -375,53 +292,30 @@ export class LocalCodingRuntime implements CodingRuntime {
       const resolved = this.resolveWorkspacePath(input.path);
       args.push("--", resolved.relativePath);
     }
-    const result = await this.runBinary("git", args, 30_000);
 
-    return {
-      command: ["git", ...args].join(" "),
-      ...result,
-      previewOnly: false,
-      externalEffects: ["none"]
-    };
+    const result = await this.runBinary("git", args, 30_000);
+    return { command: ["git", ...args].join(" "), ...result, previewOnly: false, externalEffects: ["none"] };
   }
 
   async runShell(input: CodingRunShellInput) {
     rejectDangerousCommand(input.command);
-    const result = await this.runBinary("/bin/zsh", ["-lc", input.command], input.timeoutMs);
-
-    return {
-      command: input.command,
-      ...result,
-      previewOnly: false,
-      externalEffects: ["workspace.command.run"]
-    };
+    const result = await this.runShellCommand(input.command, input.timeoutMs);
+    return { command: input.command, ...result, previewOnly: false, externalEffects: ["workspace.command.run"] };
   }
 
   async runTests(input: CodingRunTestsInput) {
     rejectDangerousCommand(input.command);
-    const result = await this.runBinary("/bin/zsh", ["-lc", input.command], input.timeoutMs);
-
-    return {
-      command: input.command,
-      ...result,
-      previewOnly: false,
-      externalEffects: ["workspace.command.run"]
-    };
+    const result = await this.runShellCommand(input.command, input.timeoutMs);
+    return { command: input.command, ...result, previewOnly: false, externalEffects: ["workspace.command.run"] };
   }
 
   private async resolveLocalDirectory(inputPath: string) {
     const expandedPath = expandHomePath(inputPath);
-    const absolutePath = path.resolve(
-      path.isAbsolute(expandedPath) ? expandedPath : path.join(this.workspaceRoot, expandedPath)
-    );
+    const absolutePath = path.resolve(path.isAbsolute(expandedPath) ? expandedPath : path.join(this.workspaceRoot, expandedPath));
     const directoryStat = await stat(absolutePath);
-
     if (!directoryStat.isDirectory()) {
-      throw new CodingRuntimeError("Path is not a directory.", "not_a_directory", {
-        path: inputPath
-      });
+      throw new DaemonRuntimeError("Path is not a directory.", "not_a_directory", { path: inputPath });
     }
-
     return absolutePath;
   }
 
@@ -429,25 +323,15 @@ export class LocalCodingRuntime implements CodingRuntime {
     const absolutePath = path.resolve(this.workspaceRoot, inputPath);
     const relativePath = toRelativePath(this.workspaceRoot, absolutePath);
 
-    if (
-      absolutePath !== this.workspaceRoot &&
-      !absolutePath.startsWith(this.workspaceRoot + path.sep)
-    ) {
-      throw new CodingRuntimeError("Path escapes workspace root.", "path_outside_workspace", {
-        path: inputPath
-      });
+    if (absolutePath !== this.workspaceRoot && !absolutePath.startsWith(this.workspaceRoot + path.sep)) {
+      throw new DaemonRuntimeError("Path escapes workspace root.", "path_outside_workspace", { path: inputPath });
     }
 
-    if (relativePath.split(path.sep).some((part) => ignoredDirectoryNames.has(part))) {
-      throw new CodingRuntimeError("Path is inside an ignored directory.", "ignored_path", {
-        path: relativePath
-      });
+    if (relativePath.split(/[\\/]/).some((part) => ignoredDirectoryNames.has(part))) {
+      throw new DaemonRuntimeError("Path is inside an ignored directory.", "ignored_path", { path: relativePath });
     }
 
-    return {
-      absolutePath,
-      relativePath
-    };
+    return { absolutePath, relativePath };
   }
 
   private async walk(
@@ -462,7 +346,7 @@ export class LocalCodingRuntime implements CodingRuntime {
     }
 
     const dirents = await readdir(directory, { withFileTypes: true });
-    for (const dirent of dirents.sort((a, b) => a.name.localeCompare(b.name))) {
+    for (const dirent of dirents.sort((left, right) => left.name.localeCompare(right.name))) {
       if (entries.length >= maxEntries || ignoredDirectoryNames.has(dirent.name)) {
         continue;
       }
@@ -470,12 +354,7 @@ export class LocalCodingRuntime implements CodingRuntime {
       const absolutePath = path.join(directory, dirent.name);
       const fileStat = await stat(absolutePath);
       const type = dirent.isDirectory() ? "directory" : "file";
-      entries.push({
-        path: toRelativePath(this.workspaceRoot, absolutePath),
-        type,
-        size: fileStat.size,
-        depth
-      });
+      entries.push({ path: toRelativePath(this.workspaceRoot, absolutePath), type, size: fileStat.size, depth });
 
       if (dirent.isDirectory()) {
         await this.walk(absolutePath, maxDepth, maxEntries, entries, depth + 1);
@@ -505,20 +384,24 @@ export class LocalCodingRuntime implements CodingRuntime {
     }
   }
 
+  private async runShellCommand(command: string, timeoutMs: number) {
+    if (process.platform === "win32") {
+      return this.runBinary("cmd.exe", ["/d", "/s", "/c", command], timeoutMs);
+    }
+
+    return this.runBinary(process.env.SHELL ?? "/bin/sh", ["-lc", command], timeoutMs);
+  }
+
   private async runBinary(file: string, args: string[], timeoutMs: number) {
     try {
       const result = await execFileAsync(file, args, {
         cwd: this.workspaceRoot,
         env: sanitizeEnv(process.env),
         maxBuffer: maxCommandOutputBytes,
-        timeout: timeoutMs
+        timeout: timeoutMs,
+        windowsHide: true
       });
-
-      return {
-        exitCode: 0,
-        stdout: truncateOutput(result.stdout),
-        stderr: truncateOutput(result.stderr)
-      };
+      return { exitCode: 0, stdout: truncateOutput(result.stdout), stderr: truncateOutput(result.stderr) };
     } catch (error) {
       if (isExecError(error)) {
         return {
@@ -527,21 +410,43 @@ export class LocalCodingRuntime implements CodingRuntime {
           stderr: truncateOutput(error.stderr ?? error.message)
         };
       }
-
       throw error;
     }
   }
+}
+
+async function pickDirectoryWithSystemDialog() {
+  if (process.platform === "win32") {
+    const script = [
+      "Add-Type -AssemblyName System.Windows.Forms",
+      "$dialog = New-Object System.Windows.Forms.FolderBrowserDialog",
+      "$dialog.Description = 'Select SeekDesk workspace'",
+      "if ($dialog.ShowDialog() -eq 'OK') { [Console]::Out.Write($dialog.SelectedPath) } else { exit 2 }"
+    ].join("; ");
+    const result = await execFileAsync("powershell.exe", ["-NoProfile", "-STA", "-Command", script], { windowsHide: false });
+    return result.stdout.trim();
+  }
+
+  if (process.platform === "darwin") {
+    const result = await execFileAsync("osascript", ["-e", "POSIX path of (choose folder with prompt \"Select SeekDesk workspace\")"]);
+    return result.stdout.trim();
+  }
+
+  if (existsSync("/usr/bin/zenity")) {
+    const result = await execFileAsync("zenity", ["--file-selection", "--directory", "--title=Select SeekDesk workspace"]);
+    return result.stdout.trim();
+  }
+
+  throw new DaemonRuntimeError("No system folder picker is available on this host.", "folder_picker_unavailable");
 }
 
 function expandHomePath(inputPath: string) {
   if (inputPath === "~") {
     return homedir();
   }
-
-  if (inputPath.startsWith("~/")) {
+  if (inputPath.startsWith("~/") || inputPath.startsWith("~\\")) {
     return path.join(homedir(), inputPath.slice(2));
   }
-
   return inputPath;
 }
 
@@ -551,14 +456,12 @@ function uniquePaths(paths: string[]) {
 
 function toRelativePath(root: string, absolutePath: string) {
   const relative = path.relative(root, absolutePath);
-  return relative || ".";
+  return (relative || ".").replace(/\\/g, "/");
 }
 
 function assertTextBuffer(buffer: Buffer, filePath: string) {
   if (looksBinary(buffer)) {
-    throw new CodingRuntimeError("Binary files are not readable through coding tools.", "binary_file", {
-      path: filePath
-    });
+    throw new DaemonRuntimeError("Binary files are not readable through coding tools.", "binary_file", { path: filePath });
   }
 }
 
@@ -567,19 +470,11 @@ function looksBinary(buffer: Buffer) {
 }
 
 function countOccurrences(content: string, search: string) {
-  if (!search) {
-    return 0;
-  }
-
-  return content.split(search).length - 1;
+  return search ? content.split(search).length - 1 : 0;
 }
 
 function globToRegExp(glob: string) {
-  const escaped = glob
-    .replace(/[.+^${}()|[\]\\]/g, "\\$&")
-    .replace(/\*/g, ".*")
-    .replace(/\?/g, ".");
-
+  const escaped = glob.replace(/[.+^${}()|[\]\\]/g, "\\$&").replace(/\*/g, ".*").replace(/\?/g, ".");
   return new RegExp("^" + escaped + "$");
 }
 
@@ -592,13 +487,13 @@ function rejectDangerousCommand(command: string) {
     /\bdd\s+if=/,
     /:\(\)\s*\{\s*:\|:/,
     /\bshutdown\b/,
-    /\breboot\b/
+    /\breboot\b/,
+    /\bformat\s+[a-z]:/i,
+    /\bdel\s+\/f\s+\/s\s+\/q\s+[a-z]:/i
   ];
 
   if (blockedPatterns.some((pattern) => pattern.test(normalized))) {
-    throw new CodingRuntimeError("Command is blocked by the safety policy.", "dangerous_command", {
-      command
-    });
+    throw new DaemonRuntimeError("Command is blocked by the safety policy.", "dangerous_command", { command });
   }
 }
 
@@ -614,17 +509,11 @@ function sanitizeEnv(env: NodeJS.ProcessEnv) {
 }
 
 function truncateOutput(value: string) {
-  if (value.length <= maxCommandOutputBytes) {
-    return value;
-  }
-
-  return value.slice(0, maxCommandOutputBytes) + "\n[seekdesk: output truncated]";
+  return value.length <= maxCommandOutputBytes
+    ? value
+    : value.slice(0, maxCommandOutputBytes) + "\n[seekdesk: output truncated]";
 }
 
-function isExecError(error: unknown): error is Error & {
-  code?: number | string;
-  stdout?: string;
-  stderr?: string;
-} {
+function isExecError(error: unknown): error is Error & { code?: number | string; stdout?: string; stderr?: string } {
   return error instanceof Error;
 }

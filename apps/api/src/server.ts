@@ -33,6 +33,7 @@ import {
 } from "./repositories/daily-work-repository.js";
 import { registerDailyWorkRoutes } from "./routes/daily-work-routes.js";
 import { registerCodingRoutes } from "./routes/coding-routes.js";
+import { DaemonRegistry } from "./services/daemon-registry.js";
 import {
   createDailyModelUsageSnapshot,
   filterDailyActivityEvents
@@ -55,6 +56,7 @@ export async function buildServer(options?: {
   const app = Fastify({
     logger: true
   });
+  const daemonRegistry = new DaemonRegistry();
 
   await app.register(websocket);
   await app.register(multipart);
@@ -66,7 +68,7 @@ export async function buildServer(options?: {
   app.options("/api/chat", async (_request, reply) => reply.code(204).send());
 
   await registerDailyWorkRoutes(app, dailyWorkRepository);
-  await registerCodingRoutes(app, dailyWorkRepository);
+  await registerCodingRoutes(app, dailyWorkRepository, daemonRegistry);
 
   app.get("/health", async () => ({
     status: "ok",
@@ -106,12 +108,18 @@ export async function buildServer(options?: {
       mode: chatRequest.mode,
       ...(agentContext?.modelRoute ? { modelRoute: agentContext.modelRoute } : {})
     });
+    const chatWorkspace = daemonRegistry.getWorkspace(chatRequest.context?.workspaceId) ?? undefined;
     const toolRuntime =
-      chatRequest.mode === "coding_agent" ? createCodingToolRuntime() : undefined;
+      chatRequest.mode === "coding_agent"
+        ? createCodingToolRuntime({
+            ...(chatWorkspace ? { runtime: daemonRegistry.createRuntime(chatWorkspace.workspaceId) } : {})
+          })
+        : undefined;
     await recordIncomingChatMessage({
       dailyWorkRepository,
       chatRequest,
-      sessionId
+      sessionId,
+      ...(chatWorkspace ? { workspace: chatWorkspace } : {})
     });
     const generatedSessionTitle = shouldGenerateSessionTitle && incomingUserMessage
       ? await generateSessionTitle({
@@ -192,6 +200,9 @@ export async function buildServer(options?: {
     }
   );
 
+  app.get("/ws/daemon", { websocket: true }, async (socket) => {
+    daemonRegistry.handleConnection(socket);
+  });
   app.get("/ws", { websocket: true }, async (socket) => {
     socket.send(
       JSON.stringify({
@@ -315,12 +326,15 @@ async function recordIncomingChatMessage(input: {
   dailyWorkRepository: DailyWorkRepository;
   chatRequest: ChatRequest;
   sessionId: string;
+  workspace?: { workspaceId: string; name: string; rootPath: string; runtimeMode: string };
 }) {
   const message = findIncomingUserMessage(input.chatRequest);
 
   if (!message?.content.trim()) {
     return;
   }
+
+  const workspaceId = input.workspace?.workspaceId ?? input.chatRequest.context?.workspaceId;
 
   await input.dailyWorkRepository.recordChatMessage({
     id: `message-${randomUUID()}`,
@@ -331,7 +345,11 @@ async function recordIncomingChatMessage(input: {
     createdAt: new Date().toISOString(),
     artifactIds: input.chatRequest.context?.artifactIds ?? [],
     contextItemIds: input.chatRequest.context?.contextItemIds ?? [],
-    approvalRequestIds: input.chatRequest.context?.approvalRequestIds ?? []
+    approvalRequestIds: input.chatRequest.context?.approvalRequestIds ?? [],
+    ...(workspaceId ? { workspaceId } : {}),
+    ...(input.workspace?.name ? { workspaceName: input.workspace.name } : {}),
+    ...(input.workspace?.rootPath ? { workspaceRoot: input.workspace.rootPath } : {}),
+    ...(input.workspace?.runtimeMode ? { workspaceRuntimeMode: input.workspace.runtimeMode } : {})
   });
 }
 

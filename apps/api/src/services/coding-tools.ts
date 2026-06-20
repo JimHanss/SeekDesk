@@ -22,7 +22,7 @@ import {
 
 import type { DailyWorkRepository } from "../repositories/daily-work-repository.js";
 import { createToolActivityEvent } from "./daily-work-tool-activity.js";
-import { CodingRuntimeError, LocalCodingRuntime } from "./coding-runtime.js";
+import { CodingRuntimeError, LocalCodingRuntime, type CodingRuntime } from "./coding-runtime.js";
 
 const writeOrCommandTools = new Set<CodingToolName>([
   "coding.write_file",
@@ -31,8 +31,8 @@ const writeOrCommandTools = new Set<CodingToolName>([
   "coding.run_tests"
 ]);
 
-export function createCodingToolRuntime() {
-  const runtime = new LocalCodingRuntime();
+export function createCodingToolRuntime(options: { runtime?: CodingRuntime } = {}) {
+  const runtime = options.runtime ?? new LocalCodingRuntime();
   const registry = new ToolRegistry(
     createDefaultToolRegistry()
       .list()
@@ -73,6 +73,7 @@ export async function executeAuthorizedCodingToolCall(input: {
   repository: DailyWorkRepository;
   toolCallId: string;
   sessionId: string;
+  runtime?: CodingRuntime;
 }) {
   const toolCall = (
     await input.repository.listToolCalls({ sessionId: input.sessionId, limit: 200 })
@@ -110,7 +111,7 @@ export async function executeAuthorizedCodingToolCall(input: {
   }
 
   const parsedInput = codingToolInputSchemas[toolName].parse(toolCall.inputJson ?? {});
-  const runtime = new LocalCodingRuntime();
+  const runtime = input.runtime ?? new LocalCodingRuntime();
   const startedAt = new Date().toISOString();
   await input.repository.recordToolCall({
     ...toolCall,
@@ -201,7 +202,7 @@ export { codingPermissionGrantCreateRequestSchema, codingPermissionGrantRevokeRe
 
 function attachRuntimeExecutor(
   definition: ToolDefinition,
-  runtime: LocalCodingRuntime
+  runtime: CodingRuntime
 ): ToolDefinition {
   const toolName = normalizeCodingToolName(definition.name);
   if (!toolName || writeOrCommandTools.has(toolName)) {

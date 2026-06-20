@@ -178,6 +178,14 @@ async function main() {
     fail("web page still contains placeholder question marks.");
   }
 
+  const { json: workspaceList } = await fetchJson(`${apiUrl}/api/coding/workspaces`);
+  if (!Array.isArray(workspaceList.workspaces) || !workspaceList.workspaces.length) {
+    fail("workspace list did not return any workspace options.");
+  }
+  if (!workspaceList.workspaces.some((item) => item.workspaceId === "server-local-runtime")) {
+    fail("workspace list did not include server-local fallback.");
+  }
+
   const { json: workspace } = await fetchJson(`${apiUrl}/api/coding/workspace`);
   if (workspace.mode && workspace.mode !== "coding_agent") fail("workspace endpoint returned wrong mode.");
   if (workspace.service !== "seekdesk-coding-runtime") fail("workspace runtime service mismatch.");

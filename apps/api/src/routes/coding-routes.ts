@@ -15,18 +15,22 @@ import {
   createCodingPermissionGrant,
   executeAuthorizedCodingToolCall
 } from "../services/coding-tools.js";
-import { CodingRuntimeError, LocalCodingRuntime } from "../services/coding-runtime.js";
+import { CodingRuntimeError, LocalCodingRuntime, type CodingRuntime } from "../services/coding-runtime.js";
+import type { DaemonRegistry } from "../services/daemon-registry.js";
 
 export async function registerCodingRoutes(
   app: FastifyInstance,
-  repository: DailyWorkRepository
+  repository: DailyWorkRepository,
+  daemonRegistry?: DaemonRegistry
 ) {
-  const runtime = new LocalCodingRuntime();
+  const localRuntime = new LocalCodingRuntime();
 
   for (const route of [
     "/api/coding/workspace",
     "/api/coding/workspace/browse",
     "/api/coding/workspace/select",
+    "/api/coding/workspace/pick",
+    "/api/coding/workspaces",
     "/api/coding/files/tree",
     "/api/coding/files/read",
     "/api/coding/search",
@@ -39,7 +43,17 @@ export async function registerCodingRoutes(
     app.options(route, async (_request, reply) => reply.code(204).send());
   }
 
-  app.get("/api/coding/workspace", async () => runtime.status());
+  app.get<{ Querystring: { workspaceId?: string } }>("/api/coding/workspaces", async () => ({
+    mode: "coding_agent",
+    workspaces: [
+      ...(daemonRegistry?.listWorkspaces() ?? []),
+      createServerLocalWorkspace(localRuntime)
+    ]
+  }));
+
+  app.get<{ Querystring: { workspaceId?: string } }>("/api/coding/workspace", async (request) =>
+    getRuntime(request.query.workspaceId).status()
+  );
 
   app.post<{ Body: unknown }>("/api/coding/workspace/browse", async (request, reply) => {
     const parsed = codingWorkspaceBrowseInputSchema.safeParse(request.body ?? {});
@@ -47,7 +61,7 @@ export async function registerCodingRoutes(
       return reply.code(400).send(createValidationError(parsed.error.issues));
     }
 
-    return safeRuntimeReply(reply, () => runtime.browseWorkspaceDirectories(parsed.data));
+    return safeRuntimeReply(reply, () => getRuntime(extractWorkspaceId(request.body)).browseWorkspaceDirectories(parsed.data));
   });
 
   app.post<{ Body: unknown }>("/api/coding/workspace/select", async (request, reply) => {
@@ -56,7 +70,20 @@ export async function registerCodingRoutes(
       return reply.code(400).send(createValidationError(parsed.error.issues));
     }
 
-    return safeRuntimeReply(reply, () => runtime.selectWorkspace(parsed.data));
+    return safeRuntimeReply(reply, () => getRuntime(extractWorkspaceId(request.body)).selectWorkspace(parsed.data));
+  });
+
+  app.post<{ Body: unknown }>("/api/coding/workspace/pick", async (request, reply) => {
+    const runtime = getRuntime(extractWorkspaceId(request.body));
+    if (!runtime.pickWorkspaceDirectory) {
+      return reply.code(400).send({
+        mode: "coding_agent",
+        error: "folder_picker_unavailable",
+        message: "System folder picker is only available through a connected local daemon."
+      });
+    }
+
+    return safeRuntimeReply(reply, () => runtime.pickWorkspaceDirectory!());
   });
 
   app.post<{ Body: unknown }>("/api/coding/files/tree", async (request, reply) => {
@@ -65,7 +92,7 @@ export async function registerCodingRoutes(
       return reply.code(400).send(createValidationError(parsed.error.issues));
     }
 
-    return safeRuntimeReply(reply, () => runtime.listFiles(parsed.data));
+    return safeRuntimeReply(reply, () => getRuntime(extractWorkspaceId(request.body)).listFiles(parsed.data));
   });
 
   app.post<{ Body: unknown }>("/api/coding/files/read", async (request, reply) => {
@@ -74,7 +101,7 @@ export async function registerCodingRoutes(
       return reply.code(400).send(createValidationError(parsed.error.issues));
     }
 
-    return safeRuntimeReply(reply, () => runtime.readFile(parsed.data));
+    return safeRuntimeReply(reply, () => getRuntime(extractWorkspaceId(request.body)).readFile(parsed.data));
   });
 
   app.post<{ Body: unknown }>("/api/coding/search", async (request, reply) => {
@@ -83,11 +110,11 @@ export async function registerCodingRoutes(
       return reply.code(400).send(createValidationError(parsed.error.issues));
     }
 
-    return safeRuntimeReply(reply, () => runtime.grep(parsed.data));
+    return safeRuntimeReply(reply, () => getRuntime(extractWorkspaceId(request.body)).grep(parsed.data));
   });
 
-  app.get("/api/coding/git/status", async (_request, reply) =>
-    safeRuntimeReply(reply, () => runtime.gitStatus())
+  app.get<{ Querystring: { workspaceId?: string } }>("/api/coding/git/status", async (request, reply) =>
+    safeRuntimeReply(reply, () => getRuntime(request.query?.workspaceId).gitStatus())
   );
 
   app.post<{ Body: unknown }>("/api/coding/git/diff", async (request, reply) => {
@@ -96,7 +123,7 @@ export async function registerCodingRoutes(
       return reply.code(400).send(createValidationError(parsed.error.issues));
     }
 
-    return safeRuntimeReply(reply, () => runtime.gitDiff(parsed.data));
+    return safeRuntimeReply(reply, () => getRuntime(extractWorkspaceId(request.body)).gitDiff(parsed.data));
   });
 
   app.get<{ Querystring: { sessionId?: string; activeOnly?: string } }>(
@@ -176,7 +203,7 @@ export async function registerCodingRoutes(
     "/api/coding/tool-calls/:toolCallId/execute",
     async (request, reply) => {
       const body = request.body && typeof request.body === "object"
-        ? (request.body as { sessionId?: unknown })
+        ? (request.body as { sessionId?: unknown; workspaceId?: unknown })
         : {};
       const sessionId = typeof body.sessionId === "string" ? body.sessionId.trim() : "";
       if (!sessionId) {
@@ -190,11 +217,24 @@ export async function registerCodingRoutes(
         executeAuthorizedCodingToolCall({
           repository,
           toolCallId: request.params.toolCallId,
-          sessionId
+          sessionId,
+          runtime: getRuntime(typeof body.workspaceId === "string" ? body.workspaceId : undefined)
         })
       );
     }
   );
+  function getRuntime(workspaceId: string | undefined): CodingRuntime {
+    const daemonWorkspace = daemonRegistry?.getWorkspace(workspaceId);
+    if (daemonWorkspace) {
+      return daemonRegistry!.createRuntime(daemonWorkspace.workspaceId);
+    }
+
+    if (workspaceId && workspaceId !== "server-local-runtime") {
+      return daemonRegistry?.createRuntime(workspaceId) ?? localRuntime;
+    }
+
+    return localRuntime;
+  }
 }
 
 async function safeRuntimeReply<T>(
@@ -229,5 +269,26 @@ function createValidationError(issues: Array<{ path: PropertyKey[]; message: str
       path: issue.path.map(String).join("."),
       message: issue.message
     }))
+  };
+}
+
+function extractWorkspaceId(body: unknown) {
+  if (body && typeof body === "object" && typeof (body as { workspaceId?: unknown }).workspaceId === "string") {
+    return (body as { workspaceId: string }).workspaceId.trim() || undefined;
+  }
+
+  return undefined;
+}
+
+function createServerLocalWorkspace(runtime: LocalCodingRuntime) {
+  const status = runtime.status();
+  return {
+    workspaceId: status.workspaceId ?? "server-local-runtime",
+    daemonId: "server-local-runtime",
+    name: status.workspaceName ?? "server-local",
+    rootPath: status.workspaceRoot,
+    runtimeMode: "server_local" as const,
+    connected: true,
+    updatedAt: new Date().toISOString()
   };
 }

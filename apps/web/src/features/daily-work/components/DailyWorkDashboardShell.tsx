@@ -43,12 +43,20 @@ export interface DailyWorkConversationItem {
   pinned?: boolean;
 }
 
+export interface DailyWorkConversationGroup {
+  id: string;
+  label: string;
+  description?: string;
+  items: DailyWorkConversationItem[];
+}
+
 interface DailyWorkDashboardShellProps {
   activeConversationId?: string | null;
   activeView: DailyWorkView;
   children: ReactNode;
   currentConversation: DailyWorkConversationItem;
   conversationItems?: DailyWorkConversationItem[];
+  conversationGroups?: DailyWorkConversationGroup[];
   primaryViews: DailyWorkViewConfig[];
   settingsViews: DailyWorkViewConfig[];
   onConversationDelete?: (conversationId: string) => void;
@@ -66,6 +74,7 @@ export function DailyWorkDashboardShell({
   children,
   currentConversation,
   conversationItems = [],
+  conversationGroups,
   primaryViews,
   settingsViews,
   onConversationDelete,
@@ -79,6 +88,13 @@ export function DailyWorkDashboardShell({
   const views = [...primaryViews, ...settingsViews];
   const currentView = views.find((view) => view.id === activeView) ?? views[0]!;
   const headerViews = primaryViews.filter((view) => view.id !== "assistant");
+  const groupedConversationItems = conversationGroups?.length
+    ? conversationGroups
+    : [{ id: "default", label: "当前工作区", items: conversationItems }];
+  const historyConversationCount = groupedConversationItems.reduce(
+    (total, group) => total + group.items.length,
+    0
+  );
   const isSettingsActive = settingsViews.some((view) => view.id === activeView);
   const settingsEntry: DailyWorkViewConfig = {
     id: "models",
@@ -151,7 +167,7 @@ export function DailyWorkDashboardShell({
           <div className="flex min-h-0 flex-1 flex-col border-t border-white/10 px-3 py-3">
             <div className="mb-2 flex items-center justify-between px-1 text-[11px] font-semibold uppercase tracking-[0.14em] text-slate-500">
               <span>{"\u5bf9\u8bdd"}</span>
-              <span>{conversationItems.length + 1}</span>
+              <span>{historyConversationCount + 1}</span>
             </div>
 
             <button
@@ -187,40 +203,55 @@ export function DailyWorkDashboardShell({
                 }}
               />
 
-              {conversationItems.map((conversation) => {
-                const isActive = activeView === "assistant" && activeConversationId === conversation.id;
-                const menuOpen = openConversationMenuId === conversation.id;
+              {groupedConversationItems.map((group) => (
+                <div key={group.id} className="mt-2 first:mt-1">
+                  <div className="mb-1 flex items-center justify-between px-2 text-[11px] font-semibold text-slate-500">
+                    <span className="truncate">{group.label}</span>
+                    <span>{group.items.length}</span>
+                  </div>
+                  {group.description ? (
+                    <div className="mb-1 truncate px-2 text-[10px] text-slate-600">
+                      {group.description}
+                    </div>
+                  ) : null}
+                  <div className="flex flex-col gap-1">
+                    {group.items.map((conversation) => {
+                      const isActive = activeView === "assistant" && activeConversationId === conversation.id;
+                      const menuOpen = openConversationMenuId === conversation.id;
 
-                return (
-                  <ConversationRow
-                    key={conversation.id}
-                    conversation={conversation}
-                    isActive={isActive}
-                    menuOpen={menuOpen}
-                    onMenuToggle={() =>
-                      setOpenConversationMenuId((current) =>
-                        current === conversation.id ? null : conversation.id
-                      )
-                    }
-                    onRename={() =>
-                      handleConversationMenuAction(() =>
-                        onConversationRename?.(conversation.id)
-                      )
-                    }
-                    onDelete={() =>
-                      handleConversationMenuAction(() =>
-                        onConversationDelete?.(conversation.id)
-                      )
-                    }
-                    onPinToggle={() =>
-                      handleConversationMenuAction(() =>
-                        onConversationPinToggle?.(conversation.id)
-                      )
-                    }
-                    onSelect={() => onConversationSelect?.(conversation.id)}
-                  />
-                );
-              })}
+                      return (
+                        <ConversationRow
+                          key={conversation.id}
+                          conversation={conversation}
+                          isActive={isActive}
+                          menuOpen={menuOpen}
+                          onMenuToggle={() =>
+                            setOpenConversationMenuId((current) =>
+                              current === conversation.id ? null : conversation.id
+                            )
+                          }
+                          onRename={() =>
+                            handleConversationMenuAction(() =>
+                              onConversationRename?.(conversation.id)
+                            )
+                          }
+                          onDelete={() =>
+                            handleConversationMenuAction(() =>
+                              onConversationDelete?.(conversation.id)
+                            )
+                          }
+                          onPinToggle={() =>
+                            handleConversationMenuAction(() =>
+                              onConversationPinToggle?.(conversation.id)
+                            )
+                          }
+                          onSelect={() => onConversationSelect?.(conversation.id)}
+                        />
+                      );
+                    })}
+                  </div>
+                </div>
+              ))}
             </div>
           </div>
         </aside>

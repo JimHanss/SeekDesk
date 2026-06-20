@@ -2974,6 +2974,119 @@ describe("api server", () => {
     await app.close();
   });
 
+  it("routes coding file reads through a connected local daemon workspace", async () => {
+    const workspaceDir = await mkdtemp(join(tmpdir(), "seekdesk-daemon-ws-"));
+    const app = await buildServer();
+    let socket: WebSocket | null = null;
+
+    try {
+      await app.listen({ port: 0, host: "127.0.0.1" });
+      const address = app.server.address() as AddressInfo;
+      socket = new WebSocket(`ws://127.0.0.1:${address.port}/ws/daemon`);
+
+      const registered = await new Promise<Record<string, unknown>>((resolve, reject) => {
+        const timeout = setTimeout(() => {
+          reject(new Error("Timed out waiting for daemon registration."));
+        }, 2000);
+
+        socket?.addEventListener("open", () => {
+          socket?.send(JSON.stringify({
+            type: "daemon.register",
+            token: "seekdesk-local-dev",
+            status: {
+              daemonId: "daemon-test-windows",
+              machineName: "windows-workstation",
+              platform: "win32",
+              workspaceRoot: workspaceDir,
+              supportedCapabilities: ["coding.read_file"],
+              pid: process.pid
+            }
+          }));
+        });
+
+        socket?.addEventListener("message", (event) => {
+          const message = parseWebSocketMessage(event.data) as Record<string, unknown>;
+          if (message.type === "daemon.registered") {
+            clearTimeout(timeout);
+            resolve(message);
+          }
+        });
+
+        socket?.addEventListener("error", () => {
+          clearTimeout(timeout);
+          reject(new Error("Daemon WebSocket connection failed."));
+        });
+      });
+
+      const workspace = registered.workspace as { workspaceId: string; rootPath: string };
+      expect(workspace.rootPath).toBe(workspaceDir);
+
+      const requestFromApi = new Promise<Record<string, unknown>>((resolve, reject) => {
+        const timeout = setTimeout(() => {
+          reject(new Error("Timed out waiting for daemon tool request."));
+        }, 2000);
+
+        socket?.addEventListener("message", (event) => {
+          const message = parseWebSocketMessage(event.data) as Record<string, unknown>;
+          if (message.type !== "daemon.request") {
+            return;
+          }
+
+          clearTimeout(timeout);
+          socket?.send(JSON.stringify({
+            type: "daemon.response",
+            requestId: message.requestId,
+            ok: true,
+            result: {
+              path: "README.md",
+              content: "read through local daemon",
+              sizeBytes: 25,
+              truncated: false,
+              previewOnly: false,
+              externalEffects: ["none"]
+            }
+          }));
+          resolve(message);
+        });
+      });
+
+      const response = await app.inject({
+        method: "POST",
+        url: "/api/coding/files/read",
+        payload: {
+          workspaceId: workspace.workspaceId,
+          path: "README.md",
+          maxBytes: 1000
+        }
+      });
+      const request = await requestFromApi;
+
+      expect(response.statusCode).toBe(200);
+      expect(request).toEqual(
+        expect.objectContaining({
+          type: "daemon.request",
+          command: "tool.execute",
+          payload: expect.objectContaining({
+            toolName: "coding.read_file",
+            input: expect.objectContaining({ path: "README.md" })
+          })
+        })
+      );
+      expect(response.json()).toEqual(
+        expect.objectContaining({
+          path: "README.md",
+          content: "read through local daemon",
+          previewOnly: false,
+          externalEffects: ["none"]
+        })
+      );
+    } finally {
+      socket?.close();
+      await app.close();
+      await rm(workspaceDir, { force: true, recursive: true });
+    }
+  });
+
   it("streams chat text from a messages request", async () => {
     const app = await buildServer();
     const response = await app.inject({
@@ -3506,7 +3619,7 @@ describe("api server", () => {
     expect(response.json()).toEqual(
       expect.objectContaining({
         service: "seekdesk-coding-runtime",
-        runtimeMode: "local_runtime"
+        runtimeMode: "server_local"
       })
     );
     await app.close();

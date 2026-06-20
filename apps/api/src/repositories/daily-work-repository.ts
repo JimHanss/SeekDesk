@@ -72,6 +72,10 @@ export interface PersistedChatMessage {
   artifactIds?: string[];
   contextItemIds?: string[];
   approvalRequestIds?: string[];
+  workspaceId?: string;
+  workspaceName?: string;
+  workspaceRoot?: string;
+  workspaceRuntimeMode?: string;
 }
 
 export interface DailyWorkPermissionGrantQuery extends DailyWorkTraceQuery {
@@ -749,7 +753,10 @@ function mergeChatMessageIntoSessions(
   if (!existing) {
     sessions.unshift({
       id: message.sessionId,
-      workspaceId: "workspace-seekdesk",
+      workspaceId: message.workspaceId ?? "workspace-seekdesk",
+      ...(message.workspaceName ? { workspaceName: message.workspaceName } : {}),
+      ...(message.workspaceRoot ? { workspaceRoot: message.workspaceRoot } : {}),
+      ...(message.workspaceRuntimeMode ? { workspaceRuntimeMode: message.workspaceRuntimeMode as "local_daemon" | "server_local" | "cloud_workspace" } : {}),
       appMode: message.appMode ?? "daily_work",
       title: createSessionTitle(parsedMessage.content),
       status: "active",
@@ -777,6 +784,15 @@ function mergeChatMessageIntoSessions(
     return;
   }
 
+  if (message.workspaceName && !existing.workspaceName) {
+    existing.workspaceName = message.workspaceName;
+  }
+  if (message.workspaceRoot && !existing.workspaceRoot) {
+    existing.workspaceRoot = message.workspaceRoot;
+  }
+  if (message.workspaceRuntimeMode && !existing.workspaceRuntimeMode) {
+    existing.workspaceRuntimeMode = message.workspaceRuntimeMode as "local_daemon" | "server_local" | "cloud_workspace";
+  }
   existing.recentMessages = [...existing.recentMessages, parsedMessage].slice(-20);
   existing.messageCount = Math.max(
     existing.messageCount + 1,

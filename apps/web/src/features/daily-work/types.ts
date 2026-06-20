@@ -249,6 +249,10 @@ export interface WorkflowSnapshotItem {
   id: string;
   title: string;
   status: SessionHistoryStatus;
+  workspaceId: string;
+  workspaceName?: string;
+  workspaceRoot?: string;
+  workspaceRuntimeMode?: "local_daemon" | "server_local" | "cloud_workspace";
   createdAt: string;
   updatedAt: string;
   summary: string;
@@ -289,6 +293,9 @@ export interface DailyWorkSessionMessageDto {
 export interface DailyWorkSessionDto {
   id?: string;
   workspaceId?: string;
+  workspaceName?: string;
+  workspaceRoot?: string;
+  workspaceRuntimeMode?: "local_daemon" | "server_local" | "cloud_workspace";
   appMode?: AppMode;
   title?: string;
   status?: string;
