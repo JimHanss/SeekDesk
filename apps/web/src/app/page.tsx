@@ -756,6 +756,7 @@ export default function Page() {
             ) : null}
     </DailyWorkDashboardShell>
     <NewConversationWorkspaceDialog
+      apiBaseUrl={apiBaseUrl}
       open={newConversationDialogOpen}
       state={codingWorkbench.state}
       onBrowseWorkspace={(path) => void codingWorkbench.actions.browseWorkspace(path)}
@@ -825,6 +826,7 @@ function workspaceLabelFromPath(pathValue: string | undefined) {
 type CodingWorkbenchController = ReturnType<typeof useCodingWorkbench>;
 
 function NewConversationWorkspaceDialog({
+  apiBaseUrl,
   open,
   state,
   onBrowseWorkspace,
@@ -834,6 +836,7 @@ function NewConversationWorkspaceDialog({
   onSelectExistingWorkspace,
   onUpdateWorkspacePath
 }: {
+  apiBaseUrl: string;
   open: boolean;
   state: CodingWorkbenchController["state"];
   onBrowseWorkspace: (path?: string) => void;
@@ -848,6 +851,13 @@ function NewConversationWorkspaceDialog({
   }
 
   const activeWorkspaceId = state.activeWorkspaceId || state.workspace?.workspaceId || "";
+  const hasConnectedLocalDaemon = state.workspaces.some(
+    (workspace) => workspace.runtimeMode === "local_daemon"
+  );
+  const daemonStartCommand =
+    'seekdesk-daemon start --api ' +
+    apiBaseUrl +
+    ' --token seekdesk-local-dev --workspace "C:\\path\\to\\project"';
 
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-950/45 p-4">
@@ -868,6 +878,15 @@ function NewConversationWorkspaceDialog({
               <FolderOpen className="size-4 text-teal-600" aria-hidden="true" />
               已连接工作区
             </div>
+            {!hasConnectedLocalDaemon ? (
+              <div className="mb-3 rounded-[8px] border border-amber-200 bg-amber-50 p-3 text-xs text-amber-900">
+                <div className="font-semibold">未检测到本机 daemon</div>
+                <p className="mt-1 leading-5">先在本机项目目录启动 daemon，再回到这里选择本机工作区。</p>
+                <code className="mt-2 block select-all break-all rounded-[6px] bg-white/80 px-2 py-1 font-mono text-[11px] text-slate-800">
+                  {daemonStartCommand}
+                </code>
+              </div>
+            ) : null}
             <div className="space-y-2">
               {state.workspaces.map((workspace) => {
                 const active = activeWorkspaceId === workspace.workspaceId;
@@ -898,7 +917,17 @@ function NewConversationWorkspaceDialog({
           <section className="rounded-[8px] border border-slate-200 p-4">
             <div className="mb-3 text-sm font-semibold text-slate-900">选择文件夹</div>
             <div className="flex flex-wrap gap-2">
-              <button type="button" onClick={onPickWorkspace} className="h-9 rounded-[6px] border border-teal-200 bg-teal-50 px-3 text-sm font-semibold text-teal-800 hover:bg-teal-100">
+              <button
+                type="button"
+                onClick={onPickWorkspace}
+                disabled={!hasConnectedLocalDaemon}
+                className={
+                  "h-9 rounded-[6px] border px-3 text-sm font-semibold " +
+                  (hasConnectedLocalDaemon
+                    ? "border-teal-200 bg-teal-50 text-teal-800 hover:bg-teal-100"
+                    : "cursor-not-allowed border-slate-200 bg-slate-100 text-slate-400")
+                }
+              >
                 打开本机选择器
               </button>
               <button type="button" onClick={() => onBrowseWorkspace(state.workspaceBrowser.currentPath || state.workspace?.workspaceRoot)} className="h-9 rounded-[6px] border border-slate-200 px-3 text-sm font-semibold text-slate-700 hover:bg-slate-50">
@@ -911,7 +940,12 @@ function NewConversationWorkspaceDialog({
               placeholder="输入本机工作区路径"
               className="mt-3 h-10 w-full rounded-[6px] border border-slate-200 px-3 text-sm outline-none focus:border-teal-400"
             />
-            <div className="mt-2 text-xs text-slate-500">{state.workspaceBrowser.notice}</div>
+            <div className="mt-2 text-xs text-slate-500">
+              {state.workspaceBrowser.notice ||
+                (!hasConnectedLocalDaemon
+                  ? "本机选择器需要已连接的本机 daemon；远程 fallback 只能浏览服务器目录。"
+                  : "")}
+            </div>
 
             <div className="mt-3 max-h-48 overflow-y-auto rounded-[8px] border border-slate-100">
               {state.workspaceBrowser.parentPath ? (
