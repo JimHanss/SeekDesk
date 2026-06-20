@@ -3087,6 +3087,188 @@ describe("api server", () => {
     }
   });
 
+  it("rejects daemon registration with an invalid pairing token", async () => {
+    const app = await buildServer();
+    let socket: WebSocket | null = null;
+
+    try {
+      await app.listen({ port: 0, host: "127.0.0.1" });
+      const address = app.server.address() as AddressInfo;
+      socket = new WebSocket(`ws://127.0.0.1:${address.port}/ws/daemon`);
+
+      const errorMessage = await new Promise<Record<string, unknown>>((resolve, reject) => {
+        const timeout = setTimeout(() => {
+          reject(new Error("Timed out waiting for invalid token error."));
+        }, 2000);
+
+        socket?.addEventListener("open", () => {
+          socket?.send(JSON.stringify({
+            type: "daemon.register",
+            token: "wrong-token",
+            status: {
+              daemonId: "bad-daemon",
+              machineName: "windows-workstation",
+              platform: "win32",
+              workspaceRoot: "/tmp/bad-workspace",
+              supportedCapabilities: ["coding.read_file"],
+              pid: process.pid
+            }
+          }));
+        });
+
+        socket?.addEventListener("message", (event) => {
+          const message = parseWebSocketMessage(event.data) as Record<string, unknown>;
+          if (message.type === "daemon.error" && String(message.error).includes("Invalid daemon pairing token")) {
+            clearTimeout(timeout);
+            resolve(message);
+          }
+        });
+
+        socket?.addEventListener("error", () => {
+          clearTimeout(timeout);
+          reject(new Error("Daemon WebSocket connection failed."));
+        });
+      });
+
+      expect(errorMessage).toEqual(
+        expect.objectContaining({
+          type: "daemon.error",
+          error: expect.stringContaining("Invalid daemon pairing token")
+        })
+      );
+
+      const workspaces = await app.inject({
+        method: "GET",
+        url: "/api/coding/workspaces"
+      });
+      expect(workspaces.json().workspaces).not.toEqual(
+        expect.arrayContaining([expect.objectContaining({ daemonId: "bad-daemon" })])
+      );
+    } finally {
+      socket?.close();
+      await app.close();
+    }
+  });
+
+  it("updates daemon workspace on heartbeat and returns runtime_unavailable after disconnect", async () => {
+    const firstWorkspaceDir = await mkdtemp(join(tmpdir(), "seekdesk-daemon-first-"));
+    const secondWorkspaceDir = await mkdtemp(join(tmpdir(), "seekdesk-daemon-second-"));
+    const app = await buildServer();
+    let socket: WebSocket | null = null;
+
+    try {
+      await app.listen({ port: 0, host: "127.0.0.1" });
+      const address = app.server.address() as AddressInfo;
+      socket = new WebSocket(`ws://127.0.0.1:${address.port}/ws/daemon`);
+
+      const registered = await new Promise<Record<string, unknown>>((resolve, reject) => {
+        const timeout = setTimeout(() => {
+          reject(new Error("Timed out waiting for daemon registration."));
+        }, 2000);
+
+        socket?.addEventListener("open", () => {
+          socket?.send(JSON.stringify({
+            type: "daemon.register",
+            token: "seekdesk-local-dev",
+            status: {
+              daemonId: "daemon-heartbeat-test",
+              machineName: "windows-workstation",
+              platform: "win32",
+              workspaceRoot: firstWorkspaceDir,
+              supportedCapabilities: ["coding.read_file"],
+              pid: process.pid
+            }
+          }));
+        });
+
+        socket?.addEventListener("message", (event) => {
+          const message = parseWebSocketMessage(event.data) as Record<string, unknown>;
+          if (message.type === "daemon.registered") {
+            clearTimeout(timeout);
+            resolve(message);
+          }
+        });
+
+        socket?.addEventListener("error", () => {
+          clearTimeout(timeout);
+          reject(new Error("Daemon WebSocket connection failed."));
+        });
+      });
+
+      expect((registered.workspace as { rootPath: string }).rootPath).toBe(firstWorkspaceDir);
+
+      socket.send(JSON.stringify({
+        type: "daemon.heartbeat",
+        status: {
+          daemonId: "daemon-heartbeat-test",
+          machineName: "windows-workstation",
+          platform: "win32",
+          workspaceRoot: secondWorkspaceDir,
+          supportedCapabilities: ["coding.read_file"],
+          pid: process.pid
+        }
+      }));
+
+      let updatedWorkspace: Record<string, unknown> | undefined;
+      for (let attempt = 0; attempt < 20; attempt += 1) {
+        const response = await app.inject({ method: "GET", url: "/api/coding/workspaces" });
+        const workspaces = response.json().workspaces as Record<string, unknown>[];
+        updatedWorkspace = workspaces.find((workspace) => workspace.rootPath === secondWorkspaceDir);
+        if (updatedWorkspace) {
+          break;
+        }
+        await new Promise((resolve) => setTimeout(resolve, 20));
+      }
+
+      expect(updatedWorkspace).toEqual(
+        expect.objectContaining({
+          daemonId: "daemon-heartbeat-test",
+          rootPath: secondWorkspaceDir,
+          runtimeMode: "local_daemon"
+        })
+      );
+
+      const updatedWorkspaceId = String(updatedWorkspace?.workspaceId);
+      socket.close();
+
+      let removed = false;
+      for (let attempt = 0; attempt < 20; attempt += 1) {
+        const response = await app.inject({ method: "GET", url: "/api/coding/workspaces" });
+        const workspaces = response.json().workspaces as Record<string, unknown>[];
+        removed = !workspaces.some((workspace) => workspace.workspaceId === updatedWorkspaceId);
+        if (removed) {
+          break;
+        }
+        await new Promise((resolve) => setTimeout(resolve, 20));
+      }
+
+      expect(removed).toBe(true);
+
+      const unavailable = await app.inject({
+        method: "POST",
+        url: "/api/coding/files/read",
+        payload: {
+          workspaceId: updatedWorkspaceId,
+          path: "README.md",
+          maxBytes: 1000
+        }
+      });
+
+      expect(unavailable.statusCode).toBe(400);
+      expect(unavailable.json()).toEqual(
+        expect.objectContaining({
+          mode: "coding_agent",
+          error: "runtime_unavailable"
+        })
+      );
+    } finally {
+      socket?.close();
+      await app.close();
+      await rm(firstWorkspaceDir, { force: true, recursive: true });
+      await rm(secondWorkspaceDir, { force: true, recursive: true });
+    }
+  });
+
   it("streams chat text from a messages request", async () => {
     const app = await buildServer();
     const response = await app.inject({
