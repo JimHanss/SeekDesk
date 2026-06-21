@@ -177,6 +177,17 @@ async function main() {
   if (/\?\?\?\?|\?\? token/.test(pageHtml)) {
     fail("web page still contains placeholder question marks.");
   }
+  if (pageHtml.includes("当前分支没有开放文件") || pageHtml.includes("daily_work templates")) {
+    fail("web page still contains legacy daily-work/coding-disabled copy.");
+  }
+  const { body: templateHtml } = await fetchText(`${webUrl.replace(/\/$/, "")}/templates`);
+  assertNoEmailConnectorText("template html", templateHtml);
+  if (templateHtml.includes("daily_work templates") || templateHtml.includes("daily work mode")) {
+    fail("template manager still contains legacy daily_work visible copy.");
+  }
+  if (!templateHtml.includes("Agent Template Manager")) {
+    fail("template manager did not render.");
+  }
 
   const { json: workspaceList } = await fetchJson(`${apiUrl}/api/coding/workspaces`);
   if (!Array.isArray(workspaceList.workspaces) || !workspaceList.workspaces.length) {

@@ -50,13 +50,13 @@ const emptyForm: TemplateFormState = {
   category: "writing",
   artifactType: "brief",
   prompt: "",
-  systemPrompt: "You are SeekDesk daily_work assistant. Produce safe, reviewable drafts only.",
+  systemPrompt: "You are SeekDesk coding agent. Inspect the workspace, propose safe changes, and keep writes or commands permission-gated.",
   promptTemplate: "{{input}}\n\nContext:\n{{context}}",
   defaultModelRoute: "fast",
-  allowedToolNames: "daily.persist_artifact",
+  allowedToolNames: "coding.read_file, coding.grep, coding.git_status, coding.git_diff",
   maxContextTokens: 12000,
   status: "active",
-  tags: "daily_work",
+  tags: "coding_agent",
   enabled: true
 };
 
@@ -78,7 +78,7 @@ export default function TemplatesPage() {
       }
       const payload = (await response.json()) as DailyWorkTemplatesResponseDto;
       setTemplates(payload.templates ?? []);
-      setNotice("Template catalog synced from the daily_work API.");
+      setNotice("Agent template catalog synced.");
       setSyncStatus("ready");
     } catch (error) {
       setNotice(error instanceof Error ? error.message : "Template sync failed.");
@@ -221,13 +221,13 @@ export default function TemplatesPage() {
               <div className="min-w-0">
                 <div className="inline-flex items-center gap-2 rounded-[999px] bg-teal-50 px-2.5 py-1 text-xs font-medium text-teal-700">
                   <Sparkles className="size-3.5" aria-hidden="true" />
-                  daily_work templates
+                  Agent templates
                 </div>
                 <h1 className="mt-3 font-heading text-2xl font-semibold tracking-normal text-slate-950">
                   Agent Template Manager
                 </h1>
                 <p className="mt-1 max-w-3xl text-sm leading-6 text-slate-600">
-                  Manage reusable system prompts, prompt templates, tool boundaries and context budgets for daily work mode.
+                  Manage reusable system prompts, prompt templates, tool boundaries and context budgets for coding-agent sessions.
                 </p>
               </div>
               <Link
@@ -353,7 +353,7 @@ export default function TemplatesPage() {
                 {form.id ? "Edit template" : "New template"}
               </h2>
               <p className="mt-1 text-xs leading-5 text-slate-600">
-                Keep tools preview-only and set a deterministic context budget.
+                Keep write and command tools permission-gated, and set a deterministic context budget.
               </p>
             </div>
             <Button type="button" variant="ghost" size="icon" aria-label="Reset form" onClick={() => setForm(emptyForm)}>
@@ -499,7 +499,7 @@ function formFromTemplate(template: DailyWorkTemplateDto): TemplateFormState {
     systemPrompt: template.systemPrompt ?? emptyForm.systemPrompt,
     promptTemplate: template.promptTemplate ?? emptyForm.promptTemplate,
     defaultModelRoute: template.defaultModelRoute ?? "fast",
-    allowedToolNames: (template.allowedToolNames ?? ["daily.persist_artifact"]).join(", "),
+    allowedToolNames: (template.allowedToolNames ?? ["coding.read_file"]).join(", "),
     maxContextTokens: template.contextPolicy?.maxContextTokens ?? 12000,
     status: normalizeTemplateStatus(template.status, template.enabled),
     tags: (template.tags ?? []).join(", "),
@@ -511,8 +511,8 @@ function templatePayloadFromForm(form: TemplateFormState) {
   return {
     category: form.category.trim() || "writing",
     title: form.title.trim() || "Untitled template",
-    description: form.description.trim() || "Reusable daily_work template.",
-    prompt: form.prompt.trim() || "Please continue this daily_work task.",
+    description: form.description.trim() || "Reusable coding-agent template.",
+    prompt: form.prompt.trim() || "Please continue this coding task.",
     systemPrompt: form.systemPrompt.trim(),
     promptTemplate: form.promptTemplate.trim(),
     defaultModelRoute: form.defaultModelRoute,

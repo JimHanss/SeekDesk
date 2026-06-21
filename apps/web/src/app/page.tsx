@@ -43,7 +43,6 @@ import {
 import type { ChatMessage } from "@/features/daily-work/types";
 import { PersistenceStatusPanel } from "@/features/daily-work/components/DailyWorkPrimitives";
 import { ActivityFeedPanel } from "@/features/daily-work/components/panels/ActivityFeedPanel";
-import { ApprovalLedgerPanel } from "@/features/daily-work/components/panels/ApprovalLedgerPanel";
 import { ArtifactPanel } from "@/features/daily-work/components/panels/ArtifactPanel";
 import { ContextPanel } from "@/features/daily-work/components/panels/ContextPanel";
 import { ModeSnapshotPanel } from "@/features/daily-work/components/panels/ModeSnapshotPanel";
@@ -199,6 +198,8 @@ export default function Page() {
     templateItems.find((template) => template.id === selectedTemplateId) ?? null;
   const contextPanelItems = contextPanel.items;
   const approvalRequests = approvalPanel.items;
+  const pendingCodingToolCount =
+    codingWorkbench.state.pendingWriteOrCommandToolCalls.length;
   const artifactItems = artifactPanel.items;
   const sessionHistoryPanelItems = sessionHistoryPanel.items;
   const {
@@ -232,7 +233,6 @@ export default function Page() {
     restoreSessionHistory,
     selectSessionHistory,
     switchModelRoute,
-    updateApprovalStatus,
     useContextItem
   } = useDailyWorkActions({
     apiBaseUrl,
@@ -350,7 +350,7 @@ export default function Page() {
       label: "审批与权限",
       description: "查看会话授权、审批策略和安全边界。",
       icon: <ShieldCheck className="size-4" aria-hidden="true" />,
-      badge: String(approvalRequests.length)
+      badge: String(pendingCodingToolCount)
     },
     {
       id: "activity",
@@ -720,12 +720,17 @@ export default function Page() {
 
                   {activeView === "approvals" ? (
                     <>
-                      <ApprovalLedgerPanel
-                        approvalPanel={approvalPanel}
-                        approvalRequests={approvalRequests}
-                        onUpdateApprovalStatus={updateApprovalStatus}
+                      <AgentTracePanel
+                        agentTrace={agentTrace}
+                        modelName={activeModelSnapshot.selectedModel}
+                        onAuthorizeToolCall={authorizeToolCallForSession}
+                        onExecuteToolCall={executeToolCall}
                       />
-                      <ModeSnapshotPanel approvalCount={approvalRequests.length} />
+                      <ModeSnapshotPanel
+                        pendingToolCount={pendingCodingToolCount}
+                        runtimeMode={codingWorkbench.state.workspace?.runtimeMode}
+                        workspaceName={codingWorkbench.state.workspace?.workspaceName}
+                      />
                     </>
                   ) : null}
 

@@ -4,7 +4,7 @@ import "./globals.css";
 
 export const metadata: Metadata = {
   title: "SeekDesk",
-  description: "AI ecosystem workspace for everyday productivity.",
+  description: "AI coding workspace with local daemon tools.",
   icons: {
     icon: "/favicon.ico",
     shortcut: "/favicon.ico"
