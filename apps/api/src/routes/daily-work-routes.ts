@@ -8,12 +8,16 @@ import {
   dailyApprovalDecisionRequestSchema,
   dailyContextUsePreviewRequestSchema,
   dailyWorkSessionRestorePreviewRequestSchema,
+  dailyWorkSessionUpdateRequestSchema,
   dailyWorkTemplateApplyPreviewRequestSchema,
   dailyWorkTemplateCreateRequestSchema,
   dailyWorkTemplateDuplicateRequestSchema,
   dailyWorkTemplateSchema,
   dailyWorkTemplateUpdateRequestSchema,
   dailyWorkWorkflowPreviewRequestSchema,
+  type AppMode,
+  type DailyActivityEvent,
+  type DailyActivityEventType,
   type ConnectorActionPreviewResponse,
   type DailyActivityEventResponse,
   type DailyActivityEventsResponse,
@@ -705,6 +709,121 @@ export async function registerDailyWorkRoutes(
       }
     );
 
+  app.patch<{
+      Params: { sessionId: string };
+      Body: unknown;
+    }>(
+      "/api/daily/sessions/:sessionId",
+      async (request, reply): Promise<DailyWorkSessionResponse | void> => {
+        const parsed = dailyWorkSessionUpdateRequestSchema.safeParse(
+          request.body ?? {}
+        );
+        if (!parsed.success) {
+          reply
+            .code(400)
+            .send(
+              createValidationError(
+                "Invalid session update request.",
+                parsed.error.issues
+              )
+            );
+          return;
+        }
+
+        const mode = normalizeAppMode(parsed.data.mode);
+        const session = await filterDailyWorkSessionDetail(
+          dailyWorkRepository,
+          mode,
+          request.params.sessionId
+        );
+
+        if (!session) {
+          reply.code(404).send({
+            mode,
+            error: "Session not found."
+          });
+          return;
+        }
+
+        const updatedAt = new Date().toISOString();
+        const updatedSession = await dailyWorkRepository.updateSessionDetail({
+          ...session,
+          ...(parsed.data.title !== undefined ? { title: parsed.data.title } : {}),
+          ...(parsed.data.pinned !== undefined ? { pinned: parsed.data.pinned } : {}),
+          ...(parsed.data.status !== undefined ? { status: parsed.data.status } : {}),
+          updatedAt
+        });
+
+        await dailyWorkRepository.upsertActivityEvent(
+          createSessionMutationActivityEvent({
+            mode,
+            sessionId: updatedSession.id,
+            title: "Session updated",
+            summary: describeSessionUpdate(parsed.data),
+            eventType: "session.updated",
+            timestamp: updatedAt
+          })
+        );
+
+        return {
+          mode,
+          session: updatedSession
+        };
+      }
+    );
+
+  app.delete<{
+      Params: { sessionId: string };
+      Querystring: { mode?: string };
+    }>(
+      "/api/daily/sessions/:sessionId",
+      async (request, reply): Promise<{ mode: string; deleted: true; sessionId: string } | void> => {
+        const mode = normalizeAppMode(request.query.mode);
+        const session = await filterDailyWorkSessionDetail(
+          dailyWorkRepository,
+          mode,
+          request.params.sessionId
+        );
+
+        if (!session) {
+          reply.code(404).send({
+            mode,
+            error: "Session not found."
+          });
+          return;
+        }
+
+        const deleted = await dailyWorkRepository.deleteSessionDetail(
+          request.params.sessionId
+        );
+        if (!deleted) {
+          reply.code(404).send({
+            mode,
+            error: "Session not found."
+          });
+          return;
+        }
+
+        const timestamp = new Date().toISOString();
+        await dailyWorkRepository.upsertActivityEvent(
+          createSessionMutationActivityEvent({
+            mode,
+            sessionId: request.params.sessionId,
+            title: "Session deleted",
+            summary: `Deleted session ${session.title}.`,
+            eventType: "session.deleted",
+            timestamp
+          })
+        );
+
+        return {
+          mode,
+          deleted: true,
+          sessionId: request.params.sessionId
+        };
+      }
+    );
+
   app.post<{
       Params: { sessionId: string };
       Body: unknown;
@@ -1125,6 +1244,71 @@ function isMultipartFileTooLargeError(error: unknown) {
     (error.name === "RequestFileTooLargeError" ||
       error.message.toLowerCase().includes("request file too large"))
   );
+}
+
+function createSessionMutationActivityEvent(input: {
+  mode: AppMode;
+  sessionId: string;
+  eventType: DailyActivityEventType;
+  title: string;
+  summary: string;
+  timestamp: string;
+}): DailyActivityEvent {
+  return {
+    id: `session-${input.eventType.replace(/\./g, "-")}-${input.sessionId}-${randomUUID().slice(0, 8)}`,
+    mode: input.mode,
+    eventType: input.eventType,
+    status: "completed",
+    timestamp: input.timestamp,
+    title: input.title,
+    summary: input.summary,
+    actor: "seekdesk-api",
+    relatedRefs: {
+      sessionIds: [input.sessionId],
+      templateIds: [],
+      workflowIds: [],
+      actionQueueItemIds: [],
+      artifactIds: [],
+      approvalRequestIds: [],
+      connectorIds: [],
+      contextItemIds: []
+    },
+    safetyBoundary: {
+      previewOnly: true,
+      externalEffects: ["none"],
+      prohibitedExternalActions: [
+        "send_email",
+        "write_document",
+        "schedule_calendar_event",
+        "create_task"
+      ],
+      statement:
+        "Session metadata mutation only updates SeekDesk persistence. It does not read or write workspace files and has no external effects."
+    },
+    nextAction: null,
+    metadata: {
+      externalEffects: ["none"],
+      reference: input.sessionId
+    }
+  };
+}
+
+function describeSessionUpdate(input: {
+  title?: string | undefined;
+  pinned?: boolean | undefined;
+  status?: string | undefined;
+}) {
+  const changes = [
+    input.title !== undefined ? `renamed to "${input.title}"` : null,
+    input.pinned !== undefined
+      ? input.pinned
+        ? "pinned"
+        : "unpinned"
+      : null,
+    input.status !== undefined ? `status changed to ${input.status}` : null
+  ].filter(Boolean);
+
+  return `Updated session metadata: ${changes.join(", ")}.`;
 }
 
 function createTemplateId(title: string) {

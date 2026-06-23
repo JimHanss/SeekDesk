@@ -53,6 +53,7 @@ export const dailyWorkSessionSummarySchema = z.object({
   workspaceRuntimeMode: z.enum(["local_daemon", "server_local", "cloud_workspace"]).optional(),
   appMode: appModeSchema.default("daily_work"),
   title: z.string(),
+  pinned: z.boolean().default(false),
   status: sessionWorkflowStatusSchema,
   createdAt: z.string().datetime(),
   updatedAt: z.string().datetime(),
@@ -80,6 +81,23 @@ export const dailyWorkSessionResponseSchema = z.object({
   mode: appModeSchema,
   session: dailyWorkSessionDetailSchema
 });
+
+export const dailyWorkSessionUpdateRequestSchema = z
+  .object({
+    mode: appModeSchema.default("coding_agent"),
+    title: z.string().trim().min(1).max(80).optional(),
+    pinned: z.boolean().optional(),
+    status: sessionWorkflowStatusSchema.optional()
+  })
+  .refine(
+    (value) =>
+      value.title !== undefined ||
+      value.pinned !== undefined ||
+      value.status !== undefined,
+    {
+      message: "At least one session field must be updated."
+    }
+  );
 
 export const dailyWorkSessionRestorePreviewRequestSchema = z.object({
   mode: appModeSchema.default("daily_work"),
@@ -142,6 +160,7 @@ export const defaultDailyWorkSessionDetails: DailyWorkSessionDetail[] = [
     workspaceId: "workspace-seekdesk",
     appMode: "daily_work",
     title: "Customer follow-up draft",
+    pinned: false,
     status: "waiting_for_approval",
     createdAt: "2026-06-02T10:55:00.000Z",
     updatedAt: "2026-06-02T11:25:00.000Z",
@@ -190,6 +209,7 @@ export const defaultDailyWorkSessionDetails: DailyWorkSessionDetail[] = [
     workspaceId: "workspace-seekdesk",
     appMode: "daily_work",
     title: "Meeting recap and action review",
+    pinned: false,
     status: "completed",
     createdAt: "2026-06-01T08:25:00.000Z",
     updatedAt: "2026-06-02T09:20:00.000Z",
@@ -235,6 +255,7 @@ export const defaultDailyWorkSessionDetails: DailyWorkSessionDetail[] = [
     workspaceId: "workspace-seekdesk",
     appMode: "daily_work",
     title: "Planning refresh from project context",
+    pinned: false,
     status: "active",
     createdAt: "2026-06-02T10:20:00.000Z",
     updatedAt: "2026-06-02T12:10:00.000Z",
@@ -312,6 +333,9 @@ export type DailyWorkSessionsResponse = z.infer<
 >;
 export type DailyWorkSessionResponse = z.infer<
   typeof dailyWorkSessionResponseSchema
+>;
+export type DailyWorkSessionUpdateRequest = z.infer<
+  typeof dailyWorkSessionUpdateRequestSchema
 >;
 export type DailyWorkSessionRestorePreviewRequest = z.infer<
   typeof dailyWorkSessionRestorePreviewRequestSchema

@@ -50,7 +50,7 @@ export function useArtifacts(
           setSelectedArtifactId((current) =>
             current && items.some((item) => item.id === current)
               ? current
-              : items[0]?.id ?? null
+              : null
           );
         }
       } catch {

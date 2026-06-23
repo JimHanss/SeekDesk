@@ -1,11 +1,12 @@
 "use client";
 
 import type { ReactNode } from "react";
-import { ArrowUp, CheckCircle2, FileCode2, Folder, FolderOpen, GitCompare, HardDrive, Home, RefreshCw, Search, Terminal } from "lucide-react";
+import { ArrowUp, CheckCircle2, FileCode2, Folder, FolderOpen, GitCompare, HardDrive, Home, Play, RefreshCw, Search, ShieldCheck, Terminal } from "lucide-react";
 
 import { Button } from "@/components/ui/button";
 import { cn } from "@/lib/utils";
 import type { CodingWorkbenchState } from "../../hooks/useCodingWorkbench";
+import type { AgentToolCallTraceItem } from "../../types";
 
 interface CodingPanelProps {
   state: CodingWorkbenchState;
@@ -23,6 +24,7 @@ interface CodingSearchPanelProps extends CodingPanelProps {
 }
 
 interface CodingDiffPanelProps extends CodingPanelProps {
+  onApproveAndApplyToolCall: (toolCall: AgentToolCallTraceItem) => void;
   onRefreshGit: () => void;
 }
 
@@ -68,7 +70,7 @@ export function CodingWorkspacePanel({
           </div>
           <div className="mt-3 grid gap-2 md:grid-cols-[minmax(0,1fr)_auto_auto]">
             <input
-              value={browser.manualPath}
+              value={browser.manualPath ?? ""}
               onChange={(event) => onUpdateWorkspacePath(event.target.value)}
               className="h-9 min-w-0 rounded-[6px] border border-slate-200 px-3 font-mono text-xs outline-none focus:border-teal-500 focus:ring-2 focus:ring-teal-100"
               placeholder="输入本机路径，例如 /Users/name/project/app"
@@ -237,7 +239,7 @@ export function CodingSearchPanel({ state, onOpenFile, onRunSearch, onUpdateSear
           <Field label="关键词">
             <input
               data-coding-search-input
-              value={state.search.query}
+              value={state.search.query ?? ""}
               onChange={(event) => onUpdateSearch({ query: event.target.value })}
               className="h-9 w-full rounded-[6px] border border-slate-200 px-3 text-sm outline-none focus:border-teal-500 focus:ring-2 focus:ring-teal-100"
               placeholder="例如 coding_agent"
@@ -245,7 +247,7 @@ export function CodingSearchPanel({ state, onOpenFile, onRunSearch, onUpdateSear
           </Field>
           <Field label="路径">
             <input
-              value={state.search.path}
+              value={state.search.path ?? ""}
               onChange={(event) => onUpdateSearch({ path: event.target.value })}
               className="h-9 w-full rounded-[6px] border border-slate-200 px-3 text-sm outline-none focus:border-teal-500 focus:ring-2 focus:ring-teal-100"
               placeholder="."
@@ -253,7 +255,7 @@ export function CodingSearchPanel({ state, onOpenFile, onRunSearch, onUpdateSear
           </Field>
           <Field label="Glob">
             <input
-              value={state.search.includeGlob}
+              value={state.search.includeGlob ?? ""}
               onChange={(event) => onUpdateSearch({ includeGlob: event.target.value })}
               className="h-9 w-full rounded-[6px] border border-slate-200 px-3 text-sm outline-none focus:border-teal-500 focus:ring-2 focus:ring-teal-100"
               placeholder="*.ts"
@@ -287,22 +289,128 @@ export function CodingSearchPanel({ state, onOpenFile, onRunSearch, onUpdateSear
   );
 }
 
-export function CodingDiffPanel({ state, onRefreshGit }: CodingDiffPanelProps) {
+export function CodingDiffPanel({
+  state,
+  onApproveAndApplyToolCall,
+  onRefreshGit
+}: CodingDiffPanelProps) {
+  const fileChangePlans = state.pendingWriteOrCommandToolCalls.filter(
+    (toolCall) =>
+      toolCall.name === "coding.write_file" || toolCall.name === "coding.edit_file"
+  );
+
   return (
     <CodingPanelFrame
       title="Diff"
-      description="查看当前仓库状态和未暂存 diff；不执行 git 写操作。"
+      description="查看当前仓库状态、未暂存 diff，并审查 Agent 生成的文件修改计划。"
       icon={<GitCompare className="size-4" aria-hidden="true" />}
       status={state.syncStatus}
       notice={state.notice}
       action={<PanelButton onClick={onRefreshGit} label="刷新" icon={<RefreshCw className="size-4" aria-hidden="true" />} />}
       dataAttr="diff"
     >
-      <div className="grid gap-3 xl:grid-cols-[minmax(0,0.8fr)_minmax(0,1.2fr)]" data-coding-diff-panel>
+      <div className="grid gap-3" data-coding-diff-panel>
+        <div className="rounded-[8px] border border-slate-200 bg-white" data-coding-diff-approval-count={fileChangePlans.length}>
+          <div className="flex flex-wrap items-center justify-between gap-2 border-b border-slate-200 px-3 py-2">
+            <div className="flex items-center gap-2 text-sm font-semibold text-slate-900">
+              <ShieldCheck className="size-4 text-orange-600" aria-hidden="true" />
+              文件修改审批
+            </div>
+            <span className="rounded-[999px] bg-orange-100 px-2 py-0.5 text-[11px] font-medium text-orange-800">
+              {fileChangePlans.length} 个计划
+            </span>
+          </div>
+          <div className="grid gap-2 p-3">
+            {fileChangePlans.map((toolCall) => (
+              <FileChangePlanCard
+                key={toolCall.id}
+                toolCall={toolCall}
+                onApproveAndApply={() => onApproveAndApplyToolCall(toolCall)}
+              />
+            ))}
+            {fileChangePlans.length === 0 ? (
+              <EmptyState text="暂无待应用的文件修改计划。让 Agent 生成写入或编辑工具计划后，会在这里审查和应用。" />
+            ) : null}
+          </div>
+        </div>
+        <div className="grid gap-3 xl:grid-cols-[minmax(0,0.8fr)_minmax(0,1.2fr)]">
         <CommandOutput title="Git status" command={state.git.statusCommand} output={state.git.statusText || "工作区无 status 输出。"} exitCode={state.git.statusExitCode} />
         <CommandOutput title="Git diff" command={state.git.diffCommand} output={state.git.diffText || "当前没有未暂存 diff。"} exitCode={state.git.diffExitCode} large />
+        </div>
       </div>
     </CodingPanelFrame>
+  );
+}
+
+function FileChangePlanCard({
+  onApproveAndApply,
+  toolCall
+}: {
+  onApproveAndApply: () => void;
+  toolCall: AgentToolCallTraceItem;
+}) {
+  const input = asRecord(toolCall.inputJson);
+  const output = asRecord(toolCall.outputJson);
+  const targetPath =
+    stringValue(input?.path) ||
+    stringValue(input?.filePath) ||
+    stringValue(output?.writtenPath) ||
+    stringValue(output?.editedPath) ||
+    "未指定文件";
+  const nextContent = stringValue(input?.content);
+  const patch = stringValue(input?.patch);
+  const canApply =
+    toolCall.status === "requested" ||
+    toolCall.status === "permission_required" ||
+    toolCall.status === "failed";
+
+  return (
+    <article
+      className="rounded-[8px] border border-orange-200 bg-orange-50/60 p-3"
+      data-coding-diff-approval-tool={toolCall.id}
+    >
+      <div className="flex flex-col gap-3 md:flex-row md:items-start md:justify-between">
+        <div className="min-w-0">
+          <div className="flex flex-wrap items-center gap-2">
+            <span className="rounded-[999px] bg-white px-2 py-0.5 font-mono text-[11px] text-slate-700">
+              {toolCall.name}
+            </span>
+            <span className={cn("rounded-[999px] px-2 py-0.5 text-[11px] font-medium", toolStatusClass(toolCall.status))}>
+              {toolCall.status}
+            </span>
+          </div>
+          <div className="mt-2 break-all font-mono text-xs font-semibold text-slate-900">
+            {targetPath}
+          </div>
+          <p className="mt-1 text-xs leading-5 text-slate-600">
+            审查目标文件和输入内容；批准后由本机 daemon 在当前 workspace 内执行。
+          </p>
+        </div>
+        <Button
+          type="button"
+          size="sm"
+          disabled={!canApply}
+          onClick={onApproveAndApply}
+          data-coding-diff-approve-apply={toolCall.id}
+        >
+          <Play className="size-4" aria-hidden="true" />
+          批准并应用
+        </Button>
+      </div>
+
+      <pre className="mt-3 max-h-56 overflow-auto rounded-[8px] bg-slate-950 p-3 text-xs leading-5 text-slate-100">
+        <code>
+          {nextContent ||
+            patch ||
+            JSON.stringify(toolCall.inputJson, null, 2)}
+        </code>
+      </pre>
+      {toolCall.outputJson || toolCall.error ? (
+        <div className="mt-3 rounded-[8px] border border-slate-200 bg-white p-3 text-xs leading-5 text-slate-700">
+          {toolCall.error ? toolCall.error : JSON.stringify(toolCall.outputJson, null, 2)}
+        </div>
+      ) : null}
+    </article>
   );
 }
 
@@ -453,6 +561,23 @@ function statusLabel(status: string) {
       return "异常";
     default:
       return "待同步";
+  }
+}
+
+function toolStatusClass(status: string) {
+  switch (status) {
+    case "completed":
+      return "bg-emerald-100 text-emerald-800";
+    case "requested":
+    case "running":
+      return "bg-sky-100 text-sky-800";
+    case "permission_required":
+      return "bg-orange-100 text-orange-800";
+    case "failed":
+    case "cancelled":
+      return "bg-red-100 text-red-800";
+    default:
+      return "bg-slate-100 text-slate-700";
   }
 }
 

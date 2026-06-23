@@ -28,6 +28,7 @@ interface ChatRequestContext {
   approvalRequestIds?: string[];
   connectorIds?: string[];
   workflowIds?: string[];
+  workspaceId?: string;
 }
 
 interface UseChatControllerOptions {
@@ -337,7 +338,10 @@ export function useChatController({
         },
         body: JSON.stringify({
           mode: activeMode,
-          sessionId: activeSessionId
+          sessionId: activeSessionId,
+          ...(requestContext?.workspaceId
+            ? { workspaceId: requestContext.workspaceId }
+            : {})
         })
       }
     );
@@ -348,7 +352,7 @@ export function useChatController({
 
     await refreshAgentTrace(activeSessionId, agentTrace.provider);
     await onActivityChanged?.();
-  }, [activeSessionId, agentTrace.provider, apiBaseUrl, onActivityChanged, refreshAgentTrace]);
+  }, [activeSessionId, agentTrace.provider, apiBaseUrl, onActivityChanged, refreshAgentTrace, requestContext?.workspaceId]);
 
   const startCurrentConversation = useCallback(() => {
     abortRef.current?.abort();

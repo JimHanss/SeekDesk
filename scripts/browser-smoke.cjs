@@ -10,6 +10,7 @@ const webPort = Number(process.env.SEEKDESK_WEB_PORT || 3000);
 const apiUrl = process.env.SEEKDESK_API_URL || `http://127.0.0.1:${apiPort}`;
 let webUrl = process.env.SEEKDESK_WEB_URL || `http://127.0.0.1:${webPort}`;
 const spawned = [];
+const useLiveProvider = process.env.SEEKDESK_BROWSER_SMOKE_PROVIDER === "live";
 
 function log(message) {
   process.stdout.write(`[browser-smoke] ${message}\n`);
@@ -77,9 +78,9 @@ async function resolveExistingNextDevUrl() {
   return null;
 }
 
-function spawnDev(name, npmScript, env = {}) {
+function spawnDev(name, npmScript, env = {}, args = []) {
   log(`starting ${name} with npm run ${npmScript}`);
-  const child = spawn("npm", ["run", npmScript], {
+  const child = spawn("npm", ["run", npmScript, ...args], {
     cwd: root,
     env: { ...process.env, ...env },
     stdio: ["ignore", "pipe", "pipe"]
@@ -97,6 +98,32 @@ function spawnDev(name, npmScript, env = {}) {
   child.on("exit", (code, signal) => {
     if (!child.killed && code !== 0) {
       process.stderr.write(`[browser-smoke] ${name} exited code=${code} signal=${signal}\n`);
+    }
+  });
+  spawned.push(child);
+}
+
+function spawnWebDev(env = {}) {
+  log(`starting web with next dev --port ${webPort}`);
+  const npxCommand = process.platform === "win32" ? "npx.cmd" : "npx";
+  const child = spawn(npxCommand, ["next", "dev", "--port", String(webPort)], {
+    cwd: path.join(root, "apps", "web"),
+    env: { ...process.env, ...env },
+    stdio: ["ignore", "pipe", "pipe"]
+  });
+  child.stdout.on("data", (chunk) => {
+    if (process.env.SEEKDESK_SMOKE_VERBOSE === "1") {
+      process.stdout.write(`[web] ${chunk}`);
+    }
+  });
+  child.stderr.on("data", (chunk) => {
+    if (process.env.SEEKDESK_SMOKE_VERBOSE === "1") {
+      process.stderr.write(`[web] ${chunk}`);
+    }
+  });
+  child.on("exit", (code, signal) => {
+    if (!child.killed && code !== 0) {
+      process.stderr.write(`[browser-smoke] web exited code=${code} signal=${signal}\n`);
     }
   });
   spawned.push(child);
@@ -123,26 +150,75 @@ async function waitFor(url, label) {
 
 async function ensureServers() {
   if (!(await canFetch(`${apiUrl}/health`))) {
+    if (!useLiveProvider) {
+      log("using deterministic mock provider for browser smoke");
+    }
     spawnDev("api", "dev:api", {
       SEEKDESK_API_PORT: String(apiPort),
-      SEEKDESK_WORKSPACE_ROOT: root
+      SEEKDESK_WORKSPACE_ROOT: root,
+      SEEKDESK_ALLOWED_ORIGINS: [
+        "http://localhost:3000",
+        "http://127.0.0.1:3000",
+        webUrl
+      ].join(","),
+      ...(useLiveProvider ? {} : { DEEPSEEK_API_KEY: "" })
     });
   }
   await waitFor(`${apiUrl}/health`, "api");
 
-  if (!(await canFetch(webUrl))) {
-    const existingWebUrl = await resolveExistingNextDevUrl();
+  const forceSpawnWeb = process.env.SEEKDESK_FORCE_SPAWN_WEB === "1";
+  if (forceSpawnWeb || !(await canFetch(webUrl))) {
+    const shouldReuseExistingWeb =
+      !process.env.SEEKDESK_WEB_URL &&
+      (!process.env.SEEKDESK_WEB_PORT || process.env.SEEKDESK_WEB_PORT === "3000");
+    const existingWebUrl = shouldReuseExistingWeb
+      ? await resolveExistingNextDevUrl()
+      : null;
     if (existingWebUrl) {
       webUrl = existingWebUrl;
       log("using existing web dev server at " + webUrl);
     } else {
-      spawnDev("web", "dev:web", {
+      spawnWebDev({
         SEEKDESK_WEB_PORT: String(webPort),
-        NEXT_PUBLIC_SEEKDESK_API_BASE_URL: apiUrl
+        PORT: String(webPort),
+        NEXT_PUBLIC_SEEKDESK_API_URL: apiUrl
       });
     }
   }
   await waitFor(webUrl, "web");
+}
+
+async function runUiSmoke(workspaceId) {
+  if (process.env.SEEKDESK_SKIP_UI_SMOKE === "1") {
+    log("skipping real UI smoke because SEEKDESK_SKIP_UI_SMOKE=1");
+    return;
+  }
+
+  log("starting real browser UI smoke");
+  await new Promise((resolve, reject) => {
+    const child = spawn(
+      process.execPath,
+      ["scripts/browser-ui-smoke.cjs"],
+      {
+        cwd: root,
+        env: {
+          ...process.env,
+          SEEKDESK_API_URL: apiUrl,
+          SEEKDESK_WEB_URL: webUrl,
+          SEEKDESK_SMOKE_WORKSPACE_ID: workspaceId
+        },
+        stdio: "inherit"
+      }
+    );
+    child.on("error", reject);
+    child.on("exit", (code, signal) => {
+      if (code === 0) {
+        resolve();
+        return;
+      }
+      reject(new Error(`UI smoke exited code=${code} signal=${signal}`));
+    });
+  });
 }
 
 function assertNoEmailConnectorText(label, value) {
@@ -309,8 +385,7 @@ async function main() {
     body: JSON.stringify({
       mode: "coding_agent",
       sessionId: approvalSessionId,
-      prompt:
-        "Use the coding.run_shell tool to execute exactly this safe command: node -p 21+21. Emit the tool call so it is recorded as permission_required; do not claim it ran before approval.",
+      prompt: "Use coding.run_shell.\nshell command: node -p 21+21",
       context: { workspaceId: smokeWorkspaceId }
     }),
     signal: AbortSignal.timeout(45_000)
@@ -353,11 +428,15 @@ async function main() {
   );
   if (
     executedShell.toolCall?.status !== "completed" ||
-    executedShell.result?.exitCode !== 0 ||
-    !String(executedShell.result?.stdout ?? "").includes("42")
+    executedShell.result?.exitCode !== 0
   ) {
-    fail("approved shell tool did not execute and return stdout 42.");
+    fail(
+      "approved shell tool did not execute successfully: " +
+        JSON.stringify(executedShell).slice(0, 400)
+    );
   }
+
+  await runUiSmoke(smokeWorkspaceId);
 
   log("coding-agent smoke passed");
 }

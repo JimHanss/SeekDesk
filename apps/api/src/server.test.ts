@@ -689,6 +689,34 @@ describe("api server", () => {
     await app.close();
   });
 
+  it("allows configured CORS origins for multi-port browser verification", async () => {
+    const originalAllowedOrigins = process.env.SEEKDESK_ALLOWED_ORIGINS;
+    process.env.SEEKDESK_ALLOWED_ORIGINS = "http://127.0.0.1:3100";
+    const app = await buildServer();
+
+    try {
+      const response = await app.inject({
+        method: "OPTIONS",
+        url: "/api/daily/templates/email-draft/apply-preview",
+        headers: {
+          origin: "http://127.0.0.1:3100"
+        }
+      });
+
+      expect(response.statusCode).toBe(204);
+      expect(response.headers["access-control-allow-origin"]).toBe(
+        "http://127.0.0.1:3100"
+      );
+    } finally {
+      await app.close();
+      if (originalAllowedOrigins === undefined) {
+        delete process.env.SEEKDESK_ALLOWED_ORIGINS;
+      } else {
+        process.env.SEEKDESK_ALLOWED_ORIGINS = originalAllowedOrigins;
+      }
+    }
+  });
+
   it("returns the default daily-work context items when no mode is provided", async () => {
     const app = await buildServer();
     const response = await app.inject({
@@ -2368,6 +2396,101 @@ describe("api server", () => {
         ])
       })
     });
+
+    await app.close();
+  });
+
+  it("persists session rename, pin, archive, delete, and activity events", async () => {
+    const app = await buildServer();
+
+    const updateResponse = await app.inject({
+      method: "PATCH",
+      url: "/api/daily/sessions/customer-follow-up-session",
+      payload: {
+        mode: "daily_work",
+        title: "Renamed customer session",
+        pinned: true
+      }
+    });
+
+    expect(updateResponse.statusCode).toBe(200);
+    expect(updateResponse.json()).toEqual({
+      mode: "daily_work",
+      session: expect.objectContaining({
+        id: "customer-follow-up-session",
+        title: "Renamed customer session",
+        pinned: true
+      })
+    });
+
+    const archiveResponse = await app.inject({
+      method: "PATCH",
+      url: "/api/daily/sessions/customer-follow-up-session",
+      payload: {
+        mode: "daily_work",
+        status: "archived"
+      }
+    });
+
+    expect(archiveResponse.statusCode).toBe(200);
+    expect(archiveResponse.json().session).toEqual(
+      expect.objectContaining({
+        id: "customer-follow-up-session",
+        status: "archived",
+        pinned: true
+      })
+    );
+
+    const eventsResponse = await app.inject({
+      method: "GET",
+      url: "/api/daily/events?mode=daily_work"
+    });
+
+    expect(eventsResponse.statusCode).toBe(200);
+    expect(eventsResponse.json().events).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          eventType: "session.updated",
+          relatedRefs: expect.objectContaining({
+            sessionIds: ["customer-follow-up-session"]
+          })
+        })
+      ])
+    );
+
+    const deleteResponse = await app.inject({
+      method: "DELETE",
+      url: "/api/daily/sessions/customer-follow-up-session?mode=daily_work"
+    });
+
+    expect(deleteResponse.statusCode).toBe(200);
+    expect(deleteResponse.json()).toEqual({
+      mode: "daily_work",
+      deleted: true,
+      sessionId: "customer-follow-up-session"
+    });
+
+    const detailResponse = await app.inject({
+      method: "GET",
+      url: "/api/daily/sessions/customer-follow-up-session?mode=daily_work"
+    });
+
+    expect(detailResponse.statusCode).toBe(404);
+
+    const deleteEventsResponse = await app.inject({
+      method: "GET",
+      url: "/api/daily/events?mode=daily_work"
+    });
+    expect(deleteEventsResponse.json().events).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          eventType: "session.deleted",
+          relatedRefs: expect.objectContaining({
+            sessionIds: ["customer-follow-up-session"]
+          })
+        })
+      ])
+    );
 
     await app.close();
   });

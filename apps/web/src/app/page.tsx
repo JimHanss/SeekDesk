@@ -40,7 +40,7 @@ import {
   useDailyWorkDerivedSelections,
   useDailyWorkSelectionState
 } from "@/features/daily-work/hooks/useDailyWorkSelectionState";
-import type { ChatMessage } from "@/features/daily-work/types";
+import type { AgentToolCallTraceItem, ChatMessage } from "@/features/daily-work/types";
 import { PersistenceStatusPanel } from "@/features/daily-work/components/DailyWorkPrimitives";
 import { ActivityFeedPanel } from "@/features/daily-work/components/panels/ActivityFeedPanel";
 import { ArtifactPanel } from "@/features/daily-work/components/panels/ArtifactPanel";
@@ -73,8 +73,6 @@ export default function Page() {
   const [conversationTitleOverrides, setConversationTitleOverrides] = useState<
     Record<string, string>
   >({});
-  const [hiddenConversationIds, setHiddenConversationIds] = useState<string[]>([]);
-  const [pinnedConversationIds, setPinnedConversationIds] = useState<string[]>([]);
   const [selectedWorkspaceId, setSelectedWorkspaceId] = useState("");
   const [newConversationDialogOpen, setNewConversationDialogOpen] = useState(false);
   const handleSessionTitleChanged = useCallback(
@@ -163,10 +161,12 @@ export default function Page() {
   const { approvalPanel, refreshApprovalLedger, setApprovalPanel } =
     useApprovalLedger(apiBaseUrl);
   const {
+    deleteSession,
     refreshSessionDetail,
     refreshSessionHistory,
     sessionHistoryPanel,
-    setSessionHistoryPanel
+    setSessionHistoryPanel,
+    updateSessionMetadata
   } = useSessionHistory(
     apiBaseUrl,
     selectedSessionHistoryId,
@@ -223,7 +223,7 @@ export default function Page() {
   const setSelectedConnectorId = useCallback(() => undefined, []);
   const { workflowPreviewPanel } = useWorkflowPreview(
     apiBaseUrl,
-    selectedWorkflowAction,
+    selectedWorkflowActionId ? selectedWorkflowAction : null,
     refreshActivityFeed
   );
   const {
@@ -276,6 +276,21 @@ export default function Page() {
       setActiveView("files");
     },
     [codingWorkbench.actions]
+  );
+
+  const approveAndApplyFileToolCall = useCallback(
+    async (toolCall: AgentToolCallTraceItem) => {
+      await authorizeToolCallForSession(toolCall);
+      await executeToolCall(toolCall);
+      await codingWorkbench.actions.refreshGit();
+      await refreshActivityFeed();
+    },
+    [
+      authorizeToolCallForSession,
+      codingWorkbench.actions,
+      executeToolCall,
+      refreshActivityFeed
+    ]
   );
 
   const primaryViews: DailyWorkViewConfig[] = [
@@ -388,7 +403,7 @@ export default function Page() {
       : Math.max(messages.length, activeSessionId ? 1 : 0)
   };
   const sidebarConversationRecords = sessionHistoryPanelItems
-    .filter((item) => !hiddenConversationIds.includes(item.id))
+    .filter((item) => item.status !== "已归档")
     .map((item, sourceIndex) => ({
       workspaceId: item.workspaceId,
       workspaceName: item.workspaceName ?? workspaceLabelFromPath(item.workspaceRoot) ?? item.workspaceId,
@@ -402,7 +417,7 @@ export default function Page() {
         status: item.status,
         updatedAt: item.updatedAt,
         messageCount: item.messageCount,
-        pinned: pinnedConversationIds.includes(item.id)
+        pinned: Boolean(item.pinned)
       }
     }))
     .sort((left, right) => {
@@ -495,7 +510,7 @@ export default function Page() {
     setActiveView("assistant");
   };
 
-  const renameSidebarConversation = (conversationId: string) => {
+  const renameSidebarConversation = async (conversationId: string) => {
     const conversation = sessionHistoryPanelItems.find(
       (item) => item.id === conversationId
     );
@@ -507,45 +522,44 @@ export default function Page() {
       return;
     }
 
+    const nextItem = await updateSessionMetadata(conversationId, {
+      title: nextTitle
+    });
     setConversationTitleOverrides((current) => ({
       ...current,
-      [conversationId]: nextTitle
-    }));
-    setSessionHistoryPanel((current) => ({
-      ...current,
-      items: current.items.map((item) =>
-        item.id === conversationId ? { ...item, title: nextTitle } : item
-      )
+      [conversationId]: nextItem.title
     }));
   };
 
-  const deleteSidebarConversation = (conversationId: string) => {
+  const deleteSidebarConversation = async (conversationId: string) => {
     if (!window.confirm("\u5220\u9664\u8fd9\u4e2a\u5bf9\u8bdd\uff1f")) {
       return;
     }
 
-    setHiddenConversationIds((current) =>
-      current.includes(conversationId) ? current : [...current, conversationId]
-    );
-    setPinnedConversationIds((current) =>
-      current.filter((itemId) => itemId !== conversationId)
-    );
-    setSessionHistoryPanel((current) => ({
-      ...current,
-      items: current.items.filter((item) => item.id !== conversationId)
-    }));
+    await deleteSession(conversationId);
 
     if (selectedSessionHistoryId === conversationId) {
       selectCurrentConversation();
     }
   };
 
-  const toggleSidebarConversationPin = (conversationId: string) => {
-    setPinnedConversationIds((current) =>
-      current.includes(conversationId)
-        ? current.filter((itemId) => itemId !== conversationId)
-        : [conversationId, ...current]
+  const toggleSidebarConversationPin = async (conversationId: string) => {
+    const conversation = sessionHistoryPanelItems.find(
+      (item) => item.id === conversationId
     );
+    await updateSessionMetadata(conversationId, {
+      pinned: !conversation?.pinned
+    });
+  };
+
+  const archiveSidebarConversation = async (conversationId: string) => {
+    await updateSessionMetadata(conversationId, {
+      status: "archived"
+    });
+
+    if (selectedSessionHistoryId === conversationId) {
+      selectCurrentConversation();
+    }
   };
 
   return (
@@ -558,6 +572,7 @@ export default function Page() {
       conversationGroups={sidebarConversationGroups}
       primaryViews={primaryViews}
       settingsViews={settingsViews}
+      onConversationArchive={archiveSidebarConversation}
       onConversationDelete={deleteSidebarConversation}
       onConversationPinToggle={toggleSidebarConversationPin}
       onConversationRename={renameSidebarConversation}
@@ -660,6 +675,9 @@ export default function Page() {
               <DailyWorkModuleStack>
                 <CodingDiffPanel
                   state={codingWorkbench.state}
+                  onApproveAndApplyToolCall={(toolCall) => {
+                    void approveAndApplyFileToolCall(toolCall);
+                  }}
                   onRefreshGit={() => void codingWorkbench.actions.refreshGit()}
                 />
               </DailyWorkModuleStack>
@@ -899,6 +917,7 @@ function NewConversationWorkspaceDialog({
                   <button
                     key={workspace.workspaceId}
                     type="button"
+                    data-coding-dialog-workspace={workspace.workspaceId}
                     onClick={() => onSelectExistingWorkspace(workspace.workspaceId)}
                     className={
                       "w-full rounded-[8px] border px-3 py-2 text-left transition-colors " +
@@ -940,7 +959,7 @@ function NewConversationWorkspaceDialog({
               </button>
             </div>
             <input
-              value={state.workspaceBrowser.manualPath}
+              value={state.workspaceBrowser.manualPath ?? ""}
               onChange={(event) => onUpdateWorkspacePath(event.target.value)}
               placeholder="输入本机工作区路径"
               className="mt-3 h-10 w-full rounded-[6px] border border-slate-200 px-3 text-sm outline-none focus:border-teal-400"
@@ -971,7 +990,7 @@ function NewConversationWorkspaceDialog({
           <button type="button" onClick={onClose} className="h-9 rounded-[6px] border border-slate-200 px-4 text-sm font-semibold text-slate-700 hover:bg-slate-50">
             取消
           </button>
-          <button type="button" onClick={() => void onCreate()} className="h-9 rounded-[6px] border border-orange-500 bg-orange-500 px-4 text-sm font-semibold text-white hover:bg-orange-600">
+          <button type="button" data-coding-dialog-create onClick={() => void onCreate()} className="h-9 rounded-[6px] border border-orange-500 bg-orange-500 px-4 text-sm font-semibold text-white hover:bg-orange-600">
             创建对话
           </button>
         </div>

@@ -194,6 +194,14 @@ export class PostgresDailyWorkRepository implements DailyWorkRepository {
     return cloneJson(parsed);
   }
 
+  async deleteSessionDetail(sessionId: string) {
+    const result = await this.db
+      .delete(schema.dailyWorkSessions)
+      .where(eq(schema.dailyWorkSessions.id, sessionId));
+
+    return (result.rowCount ?? 0) > 0;
+  }
+
   async upsertActivityEvent(event: DailyActivityEvent) {
     const parsed = dailyActivityEventSchema.parse(event);
     await this.upsertPayload(schema.dailyWorkActivityEvents, parsed.id, parsed);
@@ -677,6 +685,7 @@ function mergeChatMessageIntoSessions(
       ...(message.workspaceRuntimeMode ? { workspaceRuntimeMode: message.workspaceRuntimeMode as "local_daemon" | "server_local" | "cloud_workspace" } : {}),
       appMode: message.appMode ?? "daily_work",
       title: createSessionTitle(parsedMessage.content),
+      pinned: false,
       status: "active",
       createdAt: message.createdAt,
       updatedAt: message.createdAt,

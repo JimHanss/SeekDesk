@@ -242,6 +242,7 @@ export function mapSessionDtoToItem(
     createdAt: nonEmptyText(session.createdAt, session.updatedAt ?? ""),
     updatedAt: formatSessionHistoryTimestamp(session.updatedAt),
     summary: nonEmptyText(session.summary, "后端返回了会话快照，但暂未提供摘要。"),
+    pinned: Boolean(session.pinned),
     artifactCount: artifactIds.length,
     approvalCount: approvalRequestIds.length,
     contextCount: contextItemIds.length,

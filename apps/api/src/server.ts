@@ -42,10 +42,10 @@ import { createDailyWorkAgentContext } from "./services/daily-work-agent-context
 import { createCodingToolRuntime } from "./services/coding-tools.js";
 import { createToolActivityEvent } from "./services/daily-work-tool-activity.js";
 
-const allowedOrigins = new Set([
+const defaultAllowedOrigins = [
   "http://localhost:3000",
   "http://127.0.0.1:3000"
-]);
+];
 const defaultToolRegistry = createDefaultToolRegistry();
 
 export async function buildServer(options?: {
@@ -238,7 +238,7 @@ export async function buildServer(options?: {
 
 function applyCorsHeaders(request: FastifyRequest, reply: FastifyReply) {
   const origin = request.headers.origin;
-  if (origin && allowedOrigins.has(origin)) {
+  if (origin && getAllowedOrigins().has(origin)) {
     reply.header("Access-Control-Allow-Origin", origin);
   }
 
@@ -249,6 +249,20 @@ function applyCorsHeaders(request: FastifyRequest, reply: FastifyReply) {
     "Access-Control-Expose-Headers",
     "X-SeekDesk-Chat-Mode,X-SeekDesk-Chat-Provider,X-SeekDesk-Chat-Session-Id,X-SeekDesk-Chat-Session-Title"
   );
+}
+
+function getAllowedOrigins() {
+  const configuredOrigins = [
+    ...(process.env.SEEKDESK_WEB_ORIGIN
+      ? [process.env.SEEKDESK_WEB_ORIGIN]
+      : []),
+    ...(process.env.SEEKDESK_ALLOWED_ORIGINS ?? "")
+      .split(",")
+      .map((origin) => origin.trim())
+      .filter(Boolean)
+  ];
+
+  return new Set([...defaultAllowedOrigins, ...configuredOrigins]);
 }
 
 function createAgentLoopInput(

@@ -256,6 +256,7 @@ export interface WorkflowSnapshotItem {
   createdAt: string;
   updatedAt: string;
   summary: string;
+  pinned?: boolean;
   artifactCount: number;
   approvalCount: number;
   contextCount: number;
@@ -298,6 +299,7 @@ export interface DailyWorkSessionDto {
   workspaceRuntimeMode?: "local_daemon" | "server_local" | "cloud_workspace";
   appMode?: AppMode;
   title?: string;
+  pinned?: boolean;
   status?: string;
   createdAt?: string;
   updatedAt?: string;

@@ -186,7 +186,7 @@ export function DailyWorkAssistantView({
               className="max-h-40 min-h-10 min-w-0 flex-1 resize-none bg-transparent py-2 text-sm leading-5 text-slate-950 outline-none placeholder:text-slate-400"
               placeholder={modelInputPlaceholder}
               aria-label="输入编程请求"
-              value={input}
+              value={input ?? ""}
               onChange={(event) => onInputChange(event.target.value)}
               disabled={isBusy}
               rows={1}

@@ -122,6 +122,7 @@ export interface DailyWorkRepository {
   listWorkflows(): Promise<DailyWorkWorkflow[]>;
   updateApprovalRequest(request: DailyApprovalRequest): Promise<DailyApprovalRequest>;
   updateSessionDetail(session: DailyWorkSessionDetail): Promise<DailyWorkSessionDetail>;
+  deleteSessionDetail(sessionId: string): Promise<boolean>;
   upsertActivityEvent(event: DailyActivityEvent): Promise<DailyActivityEvent>;
   upsertArtifact(artifact: DailyWorkArtifact): Promise<DailyWorkArtifact>;
   recordChatMessage(message: PersistedChatMessage): Promise<PersistedChatMessage>;
@@ -249,8 +250,20 @@ export class SeedDailyWorkRepository implements DailyWorkRepository {
 
   async updateSessionDetail(session: DailyWorkSessionDetail) {
     const parsed = dailyWorkSessionDetailSchema.parse(session);
+    replaceById(this.sessionDetails, parsed);
 
     return cloneJson(parsed);
+  }
+
+  async deleteSessionDetail(sessionId: string) {
+    const before = this.sessionDetails.length;
+    this.sessionDetails.splice(
+      0,
+      this.sessionDetails.length,
+      ...this.sessionDetails.filter((session) => session.id !== sessionId)
+    );
+
+    return this.sessionDetails.length !== before;
   }
 
   async upsertActivityEvent(event: DailyActivityEvent) {
@@ -475,6 +488,25 @@ export class JsonDailyWorkRepository implements DailyWorkRepository {
     );
 
     return cloneJson(parsed);
+  }
+
+  async deleteSessionDetail(sessionId: string) {
+    const sessionDetails = await this.listSessionDetails();
+    const nextSessionDetails = sessionDetails.filter(
+      (session) => session.id !== sessionId
+    );
+
+    if (nextSessionDetails.length === sessionDetails.length) {
+      return false;
+    }
+
+    await this.writeCollection(
+      "sessions",
+      dailyWorkSessionDetailSchema.array(),
+      nextSessionDetails
+    );
+
+    return true;
   }
 
   async upsertActivityEvent(event: DailyActivityEvent) {
@@ -759,6 +791,7 @@ function mergeChatMessageIntoSessions(
       ...(message.workspaceRuntimeMode ? { workspaceRuntimeMode: message.workspaceRuntimeMode as "local_daemon" | "server_local" | "cloud_workspace" } : {}),
       appMode: message.appMode ?? "daily_work",
       title: createSessionTitle(parsedMessage.content),
+      pinned: false,
       status: "active",
       createdAt: message.createdAt,
       updatedAt: message.createdAt,

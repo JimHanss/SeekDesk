@@ -154,6 +154,20 @@ function createCodingToolCall(prompt: string, request: ModelChatRequest) {
     });
   }
 
+  if (
+    hasModelTool(request, "coding_write_file") &&
+    /\b(coding\.write_file|write file|create .*file)\b/i.test(prompt)
+  ) {
+    const inputJson = extractWriteFileInput(prompt);
+
+    return createMockToolCall({
+      name: "coding_write_file",
+      inputJson,
+      prompt,
+      planText: "Planning a workspace file write that requires approval. "
+    });
+  }
+
   if (hasModelTool(request, "coding_git_status") && /\bgit status\b|status|changes/i.test(prompt)) {
     return createMockToolCall({
       name: "coding_git_status",
@@ -163,7 +177,7 @@ function createCodingToolCall(prompt: string, request: ModelChatRequest) {
     });
   }
 
-  if (hasModelTool(request, "coding_git_diff") && /\bgit diff\b|diff/i.test(prompt)) {
+  if (hasModelTool(request, "coding_git_diff") && shouldInspectGitDiff(prompt)) {
     return createMockToolCall({
       name: "coding_git_diff",
       inputJson: {
@@ -252,6 +266,14 @@ function shouldSearchWorkspace(prompt: string) {
   return /\b(search|grep|find)\b/i.test(prompt);
 }
 
+function shouldInspectGitDiff(prompt: string) {
+  return (
+    /\bgit\s+diff\b/i.test(prompt) ||
+    /\b(show|view|check|inspect)\s+(?:the\s+)?diff\b/i.test(prompt) ||
+    /\bdiff\s+(?:for|of)\b/i.test(prompt)
+  );
+}
+
 function extractWorkspacePath(prompt: string) {
   const match = prompt.match(/[\w./-]*package\.json/i);
   return match?.[0] ?? null;
@@ -270,6 +292,21 @@ function extractSearchQuery(prompt: string) {
 function extractCommand(prompt: string) {
   const match = prompt.match(/(?:shell command|command|shell)\s*:\s*([\s\S]{1,500})/i);
   return match?.[1]?.trim().replace(/^`+|`+$/g, "") || null;
+}
+
+function extractWriteFileInput(prompt: string) {
+  const pathMatch =
+    prompt.match(/(?:create|write)(?:\s+a)?(?:\s+file)?(?:\s+named)?\s+`?([A-Za-z0-9._/\\-]+)`?/i) ??
+    prompt.match(/path\s*:\s*`?([A-Za-z0-9._/\\-]+)`?/i);
+  const contentMatch =
+    prompt.match(/content\s*[:=]\s*["“]([^"”]{1,1000})["”]/i) ??
+    prompt.match(/with content\s*["“]([^"”]{1,1000})["”]/i);
+
+  return {
+    path: pathMatch?.[1] ?? ".firecrawl/seekdesk-ui-diff-smoke.txt",
+    content: contentMatch?.[1] ?? "seekdesk ui diff approval smoke",
+    createDirs: true
+  };
 }
 
 function createCodingToolResultResponse(toolMessageContent: string) {

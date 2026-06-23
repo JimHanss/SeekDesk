@@ -2,7 +2,7 @@
 
 import Link from "next/link";
 import { useState, type ReactNode } from "react";
-import { MoreHorizontal, Pencil, Pin, Plus, Settings2, Sparkles, Trash2, Wand2 } from "lucide-react";
+import { Archive, MoreHorizontal, Pencil, Pin, Plus, Settings2, Sparkles, Trash2, Wand2 } from "lucide-react";
 
 import { Button } from "@/components/ui/button";
 import { cn } from "@/lib/utils";
@@ -59,9 +59,10 @@ interface DailyWorkDashboardShellProps {
   conversationGroups?: DailyWorkConversationGroup[];
   primaryViews: DailyWorkViewConfig[];
   settingsViews: DailyWorkViewConfig[];
-  onConversationDelete?: (conversationId: string) => void;
-  onConversationPinToggle?: (conversationId: string) => void;
-  onConversationRename?: (conversationId: string) => void;
+  onConversationArchive?: (conversationId: string) => void | Promise<void>;
+  onConversationDelete?: (conversationId: string) => void | Promise<void>;
+  onConversationPinToggle?: (conversationId: string) => void | Promise<void>;
+  onConversationRename?: (conversationId: string) => void | Promise<void>;
   onConversationSelect?: (conversationId: string) => void;
   onCurrentConversationSelect?: () => void;
   onNewConversationSelect?: () => void;
@@ -77,6 +78,7 @@ export function DailyWorkDashboardShell({
   conversationGroups,
   primaryViews,
   settingsViews,
+  onConversationArchive,
   onConversationDelete,
   onConversationPinToggle,
   onConversationRename,
@@ -232,17 +234,22 @@ export function DailyWorkDashboardShell({
                           }
                           onRename={() =>
                             handleConversationMenuAction(() =>
-                              onConversationRename?.(conversation.id)
+                              void onConversationRename?.(conversation.id)
+                            )
+                          }
+                          onArchive={() =>
+                            handleConversationMenuAction(() =>
+                              void onConversationArchive?.(conversation.id)
                             )
                           }
                           onDelete={() =>
                             handleConversationMenuAction(() =>
-                              onConversationDelete?.(conversation.id)
+                              void onConversationDelete?.(conversation.id)
                             )
                           }
                           onPinToggle={() =>
                             handleConversationMenuAction(() =>
-                              onConversationPinToggle?.(conversation.id)
+                              void onConversationPinToggle?.(conversation.id)
                             )
                           }
                           onSelect={() => onConversationSelect?.(conversation.id)}
@@ -294,6 +301,7 @@ function ConversationRow({
   conversation,
   isActive,
   menuOpen = false,
+  onArchive,
   onDelete,
   onMenuToggle,
   onPinToggle,
@@ -304,6 +312,7 @@ function ConversationRow({
   conversation: DailyWorkConversationItem;
   isActive: boolean;
   menuOpen?: boolean;
+  onArchive?: () => void;
   onDelete?: () => void;
   onMenuToggle?: () => void;
   onPinToggle?: () => void;
@@ -385,6 +394,7 @@ function ConversationRow({
             <div className="absolute right-0 z-40 mt-1 w-32 overflow-hidden rounded-[8px] border border-slate-200 bg-white py-1 text-slate-800 shadow-xl">
               <ConversationMenuButton icon={<Pencil className="size-3.5" aria-hidden="true" />} label="\u6539\u540d" onClick={onRename} />
               <ConversationMenuButton icon={<Pin className="size-3.5" aria-hidden="true" />} label={conversation.pinned ? "\u53d6\u6d88\u7f6e\u9876" : "\u7f6e\u9876"} onClick={onPinToggle} />
+              <ConversationMenuButton icon={<Archive className="size-3.5" aria-hidden="true" />} label="\u5f52\u6863" onClick={onArchive} />
               <ConversationMenuButton destructive icon={<Trash2 className="size-3.5" aria-hidden="true" />} label="\u5220\u9664" onClick={onDelete} />
             </div>
           ) : null}
