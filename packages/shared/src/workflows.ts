@@ -38,6 +38,7 @@ export const workflowPermissionStateSchema = z.enum([
   "workspace_shared",
   "requires_review",
   "requires_explicit_approval",
+  "authorized_external_write",
   "restricted"
 ]);
 
@@ -46,7 +47,12 @@ export const workflowExternalEffectSchema = z.enum([
   "send_email",
   "write_document",
   "schedule_calendar_event",
-  "create_task"
+  "create_task",
+  "workspace.file.write",
+  "workspace.command.run",
+  "workspace.artifact.preview",
+  "workspace.command.run",
+  "workspace.file.write"
 ]);
 
 export const workflowLinkedConnectorSchema = z.object({
@@ -80,7 +86,7 @@ export const workflowLinkedApprovalSchema = z.object({
 });
 
 export const workflowSafetyBoundarySchema = z.object({
-  previewOnly: z.literal(true).default(true),
+  previewOnly: z.boolean().default(true),
   externalEffects: z.array(workflowExternalEffectSchema).default(["none"]),
   prohibitedExternalActions: z
     .array(workflowExternalEffectSchema)

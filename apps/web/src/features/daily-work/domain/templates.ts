@@ -125,7 +125,7 @@ export function createLocalTemplatePreviewState(
 
 export function mapTemplatesResponse(payload: DailyWorkTemplatesResponseDto): TemplateItem[] {
   if (payload.mode !== activeMode || !Array.isArray(payload.templates)) {
-    throw new Error("Templates response did not include daily_work templates.");
+    throw new Error("Templates response did not include coding_agent templates.");
   }
 
   return payload.templates.map(mapTemplateDtoToItem);

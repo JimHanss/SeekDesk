@@ -1461,11 +1461,9 @@ export async function filterDailyWorkSessionSummaries(
   repository: DailyWorkRepository,
   mode: AppMode
 ) {
-  if (mode !== "daily_work") {
-    return [];
-  }
-
-  return repository.listSessionSummaries();
+  return (await repository.listSessionSummaries()).filter(
+    (session) => (session.appMode ?? "daily_work") === mode
+  );
 }
 
 export async function filterDailyWorkSessionDetail(
@@ -1473,12 +1471,9 @@ export async function filterDailyWorkSessionDetail(
   mode: AppMode,
   sessionId: string
 ) {
-  if (mode !== "daily_work") {
-    return undefined;
-  }
-
   return (await repository.listSessionDetails()).find(
-    (session) => session.id === sessionId
+    (session) =>
+      session.id === sessionId && (session.appMode ?? "daily_work") === mode
   );
 }
 

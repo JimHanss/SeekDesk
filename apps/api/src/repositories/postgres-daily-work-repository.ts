@@ -14,6 +14,7 @@ import {
   dailyWorkSessionSummarySchema,
   dailyWorkTemplateSchema,
   dailyWorkWorkflowSchema,
+  dailyWorkPermissionGrantSchema,
   toolCallRecordSchema,
   toolModelUsageRecordSchema,
   defaultDailyActivityEvents,
@@ -30,6 +31,7 @@ import {
   type DailyContextDocument,
   type DailyContextItem,
   type DailyWorkArtifact,
+  type DailyWorkPermissionGrant,
   type DailyWorkSessionDetail,
   type DailyWorkTemplate,
   type DailyWorkSessionMessage,
@@ -41,6 +43,7 @@ import * as schema from "../db/schema.js";
 import type {
   DailyWorkConnectorAccount,
   DailyWorkDataLayerStatus,
+  DailyWorkPermissionGrantQuery,
   DailyWorkTraceQuery,
   DailyWorkRepository,
   PersistedChatMessage
@@ -166,34 +169,7 @@ export class PostgresDailyWorkRepository implements DailyWorkRepository {
       dailyWorkConnectorSchema.array(),
       async () => cloneJson(defaultDailyWorkConnectors)
     );
-    const googleAccount = await this.getConnectorAccount("google");
-    const microsoftAccount = await this.getConnectorAccount("microsoft");
-
-    if (!googleAccount && !microsoftAccount) {
-      return connectors;
-    }
-
-    return connectors.map((connector) => {
-      if (connector.provider !== "gmail" && connector.provider !== "google_calendar") {
-        return connector;
-      }
-
-      const lastSyncAt = newestTimestamp([
-        googleAccount?.updatedAt,
-        microsoftAccount?.updatedAt
-      ]);
-
-      return {
-        ...connector,
-        status: "available" as const,
-        ...(lastSyncAt ? { lastSyncAt } : {}),
-        notes: [
-          ...formatConnectedConnectorAccountNotes("Google", googleAccount),
-          ...formatConnectedConnectorAccountNotes("Microsoft", microsoftAccount),
-          "Real reads are enabled for approved preview-only daily_work tools; sending email and creating calendar events remain disabled."
-        ]
-      };
-    });
+    return connectors;
   }
 
   async listWorkflows() {
@@ -216,6 +192,14 @@ export class PostgresDailyWorkRepository implements DailyWorkRepository {
     await this.upsertPayload(schema.dailyWorkSessions, parsed.id, parsed);
 
     return cloneJson(parsed);
+  }
+
+  async deleteSessionDetail(sessionId: string) {
+    const result = await this.db
+      .delete(schema.dailyWorkSessions)
+      .where(eq(schema.dailyWorkSessions.id, sessionId));
+
+    return (result.rowCount ?? 0) > 0;
   }
 
   async upsertActivityEvent(event: DailyActivityEvent) {
@@ -274,7 +258,7 @@ export class PostgresDailyWorkRepository implements DailyWorkRepository {
       .values({
         id: parsed.id,
         sessionId: parsed.sessionId ?? null,
-        mode: "daily_work",
+        mode: inferToolCallMode(parsed.name),
         name: parsed.name,
         status: parsed.status,
         inputJson: parsed.inputJson,
@@ -341,6 +325,47 @@ export class PostgresDailyWorkRepository implements DailyWorkRepository {
     const rows = await this.selectModelUsageRows(query);
 
     return rows.map(mapModelUsageRow);
+  }
+
+  async upsertPermissionGrant(grant: DailyWorkPermissionGrant) {
+    const parsed = dailyWorkPermissionGrantSchema.parse(grant);
+
+    await this.db
+      .insert(schema.dailyWorkPermissionGrants)
+      .values({
+        id: parsed.id,
+        mode: parsed.mode,
+        provider: parsed.provider,
+        sessionId: parsed.sessionId,
+        action: parsed.action,
+        decision: parsed.decision,
+        status: parsed.status,
+        reason: parsed.reason ?? null,
+        payload: parsed,
+        createdAt: new Date(parsed.createdAt),
+        expiresAt: new Date(parsed.expiresAt),
+        revokedAt: parsed.revokedAt ? new Date(parsed.revokedAt) : null,
+        updatedAt: new Date()
+      })
+      .onConflictDoUpdate({
+        target: schema.dailyWorkPermissionGrants.id,
+        set: {
+          status: parsed.status,
+          reason: parsed.reason ?? null,
+          payload: parsed,
+          expiresAt: new Date(parsed.expiresAt),
+          revokedAt: parsed.revokedAt ? new Date(parsed.revokedAt) : null,
+          updatedAt: new Date()
+        }
+      });
+
+    return cloneJson(parsed);
+  }
+
+  async listPermissionGrants(query: DailyWorkPermissionGrantQuery = {}) {
+    const rows = await this.selectPermissionGrantRows(query);
+
+    return rows.map(mapPermissionGrantRow).filter((grant) => filterPermissionGrant(grant, query));
   }
 
   async getConnectorAccount(provider: string) {
@@ -512,6 +537,29 @@ export class PostgresDailyWorkRepository implements DailyWorkRepository {
       .orderBy(asc(schema.modelUsageRecords.createdAt))
       .limit(limit);
   }
+
+  private async selectPermissionGrantRows(query: DailyWorkPermissionGrantQuery) {
+    const limit = normalizeTraceLimit(query.limit);
+
+    if (query.sessionId) {
+      return this.db
+        .select()
+        .from(schema.dailyWorkPermissionGrants)
+        .where(eq(schema.dailyWorkPermissionGrants.sessionId, query.sessionId))
+        .orderBy(asc(schema.dailyWorkPermissionGrants.createdAt))
+        .limit(limit);
+    }
+
+    return this.db
+      .select()
+      .from(schema.dailyWorkPermissionGrants)
+      .orderBy(asc(schema.dailyWorkPermissionGrants.createdAt))
+      .limit(limit);
+  }
+}
+
+function inferToolCallMode(name: string) {
+  return name.startsWith("coding.") ? "coding_agent" : "daily_work";
 }
 
 function mapToolCallRow(row: typeof schema.toolCalls.$inferSelect): ToolCallRecord {
@@ -528,6 +576,43 @@ function mapToolCallRow(row: typeof schema.toolCalls.$inferSelect): ToolCallReco
     createdAt: row.createdAt.toISOString(),
     ...(row.completedAt ? { completedAt: row.completedAt.toISOString() } : {})
   });
+}
+
+function mapPermissionGrantRow(
+  row: typeof schema.dailyWorkPermissionGrants.$inferSelect
+): DailyWorkPermissionGrant {
+  return dailyWorkPermissionGrantSchema.parse({
+    id: row.id,
+    mode: row.mode,
+    provider: row.provider,
+    sessionId: row.sessionId,
+    action: row.action,
+    decision: row.decision,
+    status: row.status,
+    ...(row.reason ? { reason: row.reason } : {}),
+    createdAt: row.createdAt.toISOString(),
+    expiresAt: row.expiresAt.toISOString(),
+    ...(row.revokedAt ? { revokedAt: row.revokedAt.toISOString() } : {})
+  });
+}
+
+function filterPermissionGrant(
+  grant: DailyWorkPermissionGrant,
+  query: DailyWorkPermissionGrantQuery
+) {
+  if (query.provider && grant.provider !== query.provider) {
+    return false;
+  }
+
+  if (query.action && grant.action !== query.action) {
+    return false;
+  }
+
+  if (!query.activeOnly) {
+    return true;
+  }
+
+  return grant.status === "active" && new Date(grant.expiresAt).getTime() > Date.now();
 }
 
 function mapModelUsageRow(
@@ -594,13 +679,20 @@ function mergeChatMessageIntoSessions(
   if (!existing) {
     sessions.unshift({
       id: message.sessionId,
-      workspaceId: "workspace-seekdesk",
-      appMode: "daily_work",
+      workspaceId: message.workspaceId ?? "workspace-seekdesk",
+      ...(message.workspaceName ? { workspaceName: message.workspaceName } : {}),
+      ...(message.workspaceRoot ? { workspaceRoot: message.workspaceRoot } : {}),
+      ...(message.workspaceRuntimeMode ? { workspaceRuntimeMode: message.workspaceRuntimeMode as "local_daemon" | "server_local" | "cloud_workspace" } : {}),
+      appMode: message.appMode ?? "daily_work",
       title: createSessionTitle(parsedMessage.content),
+      pinned: false,
       status: "active",
       createdAt: message.createdAt,
       updatedAt: message.createdAt,
-      summary: "AI daily-work chat session.",
+      summary:
+        (message.appMode ?? "daily_work") === "coding_agent"
+          ? "AI coding-agent chat session."
+          : "AI daily-work chat session.",
       lastAction: {
         at: message.createdAt,
         actor: message.role === "assistant" ? "daily-work-agent" : "user",
@@ -613,12 +705,24 @@ function mergeChatMessageIntoSessions(
       contextItemIds: parsedMessage.contextItemIds,
       approvalRequestIds: parsedMessage.approvalRequestIds,
       messageCount: 1,
-      tags: ["chat", "daily-work"],
+      tags:
+        (message.appMode ?? "daily_work") === "coding_agent"
+          ? ["chat", "coding-agent"]
+          : ["chat", "daily-work"],
       recentMessages: [parsedMessage]
     });
     return;
   }
 
+  if (message.workspaceName && !existing.workspaceName) {
+    existing.workspaceName = message.workspaceName;
+  }
+  if (message.workspaceRoot && !existing.workspaceRoot) {
+    existing.workspaceRoot = message.workspaceRoot;
+  }
+  if (message.workspaceRuntimeMode && !existing.workspaceRuntimeMode) {
+    existing.workspaceRuntimeMode = message.workspaceRuntimeMode as "local_daemon" | "server_local" | "cloud_workspace";
+  }
   existing.recentMessages = [...existing.recentMessages, parsedMessage].slice(-20);
   existing.messageCount = Math.max(
     existing.messageCount + 1,
@@ -662,22 +766,6 @@ function parseConnectorAccount(
   };
 }
 
-function formatConnectedConnectorAccountNotes(
-  label: string,
-  account: DailyWorkConnectorAccount | null
-) {
-  if (!account) {
-    return [];
-  }
-
-  return [
-    `${label} account connected: ${account.accountEmail ?? "unknown account"}.`
-  ];
-}
-
-function newestTimestamp(values: Array<string | undefined>) {
-  return values.filter((value): value is string => Boolean(value)).sort().at(-1);
-}
 
 function parseStringArray(value: unknown): string[] {
   if (!Array.isArray(value)) {

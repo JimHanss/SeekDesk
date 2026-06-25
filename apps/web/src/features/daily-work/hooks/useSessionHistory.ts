@@ -116,6 +116,109 @@ export function useSessionHistory(
     [apiBaseUrl]
   );
 
+  const updateSessionMetadata = React.useCallback(
+    async (
+      sessionId: string,
+      input: {
+        title?: string;
+        pinned?: boolean;
+        status?: "active" | "waiting_for_approval" | "completed" | "archived";
+      }
+    ) => {
+      try {
+        const response = await fetch(
+          `${apiBaseUrl}/api/daily/sessions/${encodeURIComponent(sessionId)}`,
+          {
+            method: "PATCH",
+            headers: {
+              "Content-Type": "application/json"
+            },
+            body: JSON.stringify({
+              mode: domain.activeMode,
+              ...input
+            })
+          }
+        );
+
+        if (!response.ok) {
+          throw new Error(`Session update request failed: ${response.status}`);
+        }
+
+        const nextItem = domain.mapSessionResponse(
+          (await response.json()) as DailyWorkTypes.DailyWorkSessionResponseDto
+        );
+
+        setSessionHistoryPanel((current) => ({
+          ...current,
+          source: "api",
+          syncStatus: "live",
+          items: domain.replaceSessionHistoryItem(current.items, nextItem),
+          notice: "会话操作已写入后端持久化。",
+          restorePreview:
+            current.restorePreview.sessionId === nextItem.id
+              ? current.restorePreview
+              : domain.createLocalSessionRestorePreviewState(nextItem)
+        }));
+
+        return nextItem;
+      } catch (error) {
+        setSessionHistoryPanel((current) => ({
+          ...current,
+          source: "degraded",
+          syncStatus: "degraded",
+          notice:
+            "会话操作写入失败：" +
+            (error instanceof Error ? error.message : String(error))
+        }));
+        throw error;
+      }
+    },
+    [apiBaseUrl]
+  );
+
+  const deleteSession = React.useCallback(
+    async (sessionId: string) => {
+      try {
+        const response = await fetch(
+          `${apiBaseUrl}/api/daily/sessions/${encodeURIComponent(sessionId)}?mode=${domain.activeMode}`,
+          {
+            method: "DELETE"
+          }
+        );
+
+        if (!response.ok) {
+          throw new Error(`Session delete request failed: ${response.status}`);
+        }
+
+        setSessionHistoryPanel((current) => ({
+          ...current,
+          source: "api",
+          syncStatus: "live",
+          items: current.items.filter((item) => item.id !== sessionId),
+          notice: "会话已从后端删除。",
+          restorePreview:
+            current.restorePreview.sessionId === sessionId
+              ? domain.createLocalSessionRestorePreviewState(null)
+              : current.restorePreview
+        }));
+        setSelectedSessionHistoryId((current) =>
+          current === sessionId ? null : current
+        );
+      } catch (error) {
+        setSessionHistoryPanel((current) => ({
+          ...current,
+          source: "degraded",
+          syncStatus: "degraded",
+          notice:
+            "会话删除失败：" +
+            (error instanceof Error ? error.message : String(error))
+        }));
+        throw error;
+      }
+    },
+    [apiBaseUrl, setSelectedSessionHistoryId]
+  );
+
   React.useEffect(() => {
     const controller = new AbortController();
 
@@ -141,9 +244,11 @@ export function useSessionHistory(
   }, [refreshSessionDetail, selectedSessionHistoryId]);
 
   return {
+    deleteSession,
     refreshSessionDetail,
     refreshSessionHistory,
     sessionHistoryPanel,
-    setSessionHistoryPanel
+    setSessionHistoryPanel,
+    updateSessionMetadata
   };
 }

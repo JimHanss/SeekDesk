@@ -1,7 +1,5 @@
 export { useTemplatePanel } from "./useTemplatePanel";
 export { useDailyContext } from "./useDailyContext";
-export { useConnectorPreview } from "./useConnectorPreview";
-export { useGoogleConnectorStatus } from "./useGoogleConnectorStatus";
 export { useWorkflowPreview } from "./useWorkflowPreview";
 export { useApprovalLedger } from "./useApprovalLedger";
 export { useSessionHistory } from "./useSessionHistory";

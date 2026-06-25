@@ -27,6 +27,7 @@ import {
   type DailyContextItem,
   type DailyWorkArtifact,
   type DailyWorkConnector,
+  type DailyWorkPermissionGrant,
   type DailyWorkSessionDetail,
   type DailyWorkSessionMessage,
   type DailyWorkSessionSummary,
@@ -64,12 +65,23 @@ export type DailyWorkDataLayerStatus = {
 export interface PersistedChatMessage {
   id: string;
   sessionId: string;
+  appMode?: DailyWorkSessionDetail["appMode"];
   role: DailyWorkSessionMessage["role"];
   content: string;
   createdAt: string;
   artifactIds?: string[];
   contextItemIds?: string[];
   approvalRequestIds?: string[];
+  workspaceId?: string;
+  workspaceName?: string;
+  workspaceRoot?: string;
+  workspaceRuntimeMode?: string;
+}
+
+export interface DailyWorkPermissionGrantQuery extends DailyWorkTraceQuery {
+  provider?: string;
+  action?: string;
+  activeOnly?: boolean;
 }
 
 export interface DailyWorkConnectorAccount {
@@ -110,6 +122,7 @@ export interface DailyWorkRepository {
   listWorkflows(): Promise<DailyWorkWorkflow[]>;
   updateApprovalRequest(request: DailyApprovalRequest): Promise<DailyApprovalRequest>;
   updateSessionDetail(session: DailyWorkSessionDetail): Promise<DailyWorkSessionDetail>;
+  deleteSessionDetail(sessionId: string): Promise<boolean>;
   upsertActivityEvent(event: DailyActivityEvent): Promise<DailyActivityEvent>;
   upsertArtifact(artifact: DailyWorkArtifact): Promise<DailyWorkArtifact>;
   recordChatMessage(message: PersistedChatMessage): Promise<PersistedChatMessage>;
@@ -119,6 +132,12 @@ export interface DailyWorkRepository {
   listModelUsageRecords(
     query?: DailyWorkTraceQuery
   ): Promise<ToolModelUsageRecord[]>;
+  upsertPermissionGrant(
+    grant: DailyWorkPermissionGrant
+  ): Promise<DailyWorkPermissionGrant>;
+  listPermissionGrants(
+    query?: DailyWorkPermissionGrantQuery
+  ): Promise<DailyWorkPermissionGrant[]>;
   getConnectorAccount(provider: string): Promise<DailyWorkConnectorAccount | null>;
   upsertConnectorAccount(
     account: DailyWorkConnectorAccount
@@ -153,6 +172,7 @@ export class SeedDailyWorkRepository implements DailyWorkRepository {
   private readonly connectors = cloneJson(defaultDailyWorkConnectors);
   private readonly workflows = cloneJson(defaultDailyWorkflows);
   private readonly connectorAccounts = new Map<string, DailyWorkConnectorAccount>();
+  private readonly permissionGrants: DailyWorkPermissionGrant[] = [];
   private readonly toolCalls: ToolCallRecord[] = [];
   private readonly modelUsageRecords: ToolModelUsageRecord[] = [];
 
@@ -230,8 +250,20 @@ export class SeedDailyWorkRepository implements DailyWorkRepository {
 
   async updateSessionDetail(session: DailyWorkSessionDetail) {
     const parsed = dailyWorkSessionDetailSchema.parse(session);
+    replaceById(this.sessionDetails, parsed);
 
     return cloneJson(parsed);
+  }
+
+  async deleteSessionDetail(sessionId: string) {
+    const before = this.sessionDetails.length;
+    this.sessionDetails.splice(
+      0,
+      this.sessionDetails.length,
+      ...this.sessionDetails.filter((session) => session.id !== sessionId)
+    );
+
+    return this.sessionDetails.length !== before;
   }
 
   async upsertActivityEvent(event: DailyActivityEvent) {
@@ -274,6 +306,16 @@ export class SeedDailyWorkRepository implements DailyWorkRepository {
     return cloneJson(filterTraceRecords(this.modelUsageRecords, query));
   }
 
+  async upsertPermissionGrant(grant: DailyWorkPermissionGrant) {
+    upsertFirstById(this.permissionGrants, grant);
+
+    return cloneJson(grant);
+  }
+
+  async listPermissionGrants(query: DailyWorkPermissionGrantQuery = {}) {
+    return cloneJson(filterPermissionGrants(this.permissionGrants, query));
+  }
+
   async getConnectorAccount(provider: string) {
     const account = this.connectorAccounts.get(provider);
 
@@ -299,6 +341,7 @@ export class SeedDailyWorkRepository implements DailyWorkRepository {
 }
 
 export class JsonDailyWorkRepository implements DailyWorkRepository {
+  private readonly permissionGrants: DailyWorkPermissionGrant[] = [];
   private readonly toolCalls: ToolCallRecord[] = [];
   private readonly modelUsageRecords: ToolModelUsageRecord[] = [];
 
@@ -447,6 +490,25 @@ export class JsonDailyWorkRepository implements DailyWorkRepository {
     return cloneJson(parsed);
   }
 
+  async deleteSessionDetail(sessionId: string) {
+    const sessionDetails = await this.listSessionDetails();
+    const nextSessionDetails = sessionDetails.filter(
+      (session) => session.id !== sessionId
+    );
+
+    if (nextSessionDetails.length === sessionDetails.length) {
+      return false;
+    }
+
+    await this.writeCollection(
+      "sessions",
+      dailyWorkSessionDetailSchema.array(),
+      nextSessionDetails
+    );
+
+    return true;
+  }
+
   async upsertActivityEvent(event: DailyActivityEvent) {
     const parsed = dailyActivityEventSchema.parse(event);
     const events = await this.listEvents();
@@ -499,6 +561,16 @@ export class JsonDailyWorkRepository implements DailyWorkRepository {
 
   async listModelUsageRecords(query: DailyWorkTraceQuery = {}) {
     return cloneJson(filterTraceRecords(this.modelUsageRecords, query));
+  }
+
+  async upsertPermissionGrant(grant: DailyWorkPermissionGrant) {
+    upsertFirstById(this.permissionGrants, grant);
+
+    return cloneJson(grant);
+  }
+
+  async listPermissionGrants(query: DailyWorkPermissionGrantQuery = {}) {
+    return cloneJson(filterPermissionGrants(this.permissionGrants, query));
   }
 
   async getConnectorAccount(_provider: string) {
@@ -713,13 +785,20 @@ function mergeChatMessageIntoSessions(
   if (!existing) {
     sessions.unshift({
       id: message.sessionId,
-      workspaceId: "workspace-seekdesk",
-      appMode: "daily_work",
+      workspaceId: message.workspaceId ?? "workspace-seekdesk",
+      ...(message.workspaceName ? { workspaceName: message.workspaceName } : {}),
+      ...(message.workspaceRoot ? { workspaceRoot: message.workspaceRoot } : {}),
+      ...(message.workspaceRuntimeMode ? { workspaceRuntimeMode: message.workspaceRuntimeMode as "local_daemon" | "server_local" | "cloud_workspace" } : {}),
+      appMode: message.appMode ?? "daily_work",
       title: createSessionTitle(parsedMessage.content),
+      pinned: false,
       status: "active",
       createdAt: message.createdAt,
       updatedAt: message.createdAt,
-      summary: "AI daily-work chat session.",
+      summary:
+        (message.appMode ?? "daily_work") === "coding_agent"
+          ? "AI coding-agent chat session."
+          : "AI daily-work chat session.",
       lastAction: {
         at: message.createdAt,
         actor: message.role === "assistant" ? "daily-work-agent" : "user",
@@ -729,12 +808,24 @@ function mergeChatMessageIntoSessions(
       contextItemIds: parsedMessage.contextItemIds,
       approvalRequestIds: parsedMessage.approvalRequestIds,
       messageCount: 1,
-      tags: ["chat", "daily-work"],
+      tags:
+        (message.appMode ?? "daily_work") === "coding_agent"
+          ? ["chat", "coding-agent"]
+          : ["chat", "daily-work"],
       recentMessages: [parsedMessage]
     });
     return;
   }
 
+  if (message.workspaceName && !existing.workspaceName) {
+    existing.workspaceName = message.workspaceName;
+  }
+  if (message.workspaceRoot && !existing.workspaceRoot) {
+    existing.workspaceRoot = message.workspaceRoot;
+  }
+  if (message.workspaceRuntimeMode && !existing.workspaceRuntimeMode) {
+    existing.workspaceRuntimeMode = message.workspaceRuntimeMode as "local_daemon" | "server_local" | "cloud_workspace";
+  }
   existing.recentMessages = [...existing.recentMessages, parsedMessage].slice(-20);
   existing.messageCount = Math.max(
     existing.messageCount + 1,
@@ -771,6 +862,25 @@ function createSessionTitle(content: string) {
 
 function uniqueStrings(values: string[]) {
   return [...new Set(values)];
+}
+
+function filterPermissionGrants(
+  grants: DailyWorkPermissionGrant[],
+  query: DailyWorkPermissionGrantQuery
+) {
+  const now = Date.now();
+
+  return grants
+    .filter((grant) => !query.sessionId || grant.sessionId === query.sessionId)
+    .filter((grant) => !query.provider || grant.provider === query.provider)
+    .filter((grant) => !query.action || grant.action === query.action)
+    .filter(
+      (grant) =>
+        !query.activeOnly ||
+        (grant.status === "active" && new Date(grant.expiresAt).getTime() > now)
+    )
+    .sort((a, b) => a.createdAt.localeCompare(b.createdAt))
+    .slice(0, normalizeTraceLimit(query.limit));
 }
 
 function filterTraceRecords<T extends { createdAt: string }>(

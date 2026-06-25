@@ -13,6 +13,7 @@ import {
   readAssistantResponse
 } from "../../domain";
 import type {
+  AgentToolCallTraceItem,
   AgentTraceResponseDto,
   AgentTraceState,
   ChatMessage,
@@ -27,6 +28,7 @@ interface ChatRequestContext {
   approvalRequestIds?: string[];
   connectorIds?: string[];
   workflowIds?: string[];
+  workspaceId?: string;
 }
 
 interface UseChatControllerOptions {
@@ -293,6 +295,65 @@ export function useChatController({
     }
   }, [apiBaseUrl]);
 
+  const authorizeToolCallForSession = useCallback(async (
+    toolCall: AgentToolCallTraceItem
+  ) => {
+    if (!activeSessionId) {
+      return;
+    }
+
+    const response = await fetch(apiBaseUrl + "/api/coding/permission-grants", {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json"
+      },
+      body: JSON.stringify({
+        mode: activeMode,
+        provider: "local_daemon",
+        sessionId: activeSessionId,
+        action: toolCall.name,
+        reason: "User allowed this coding tool for the current session."
+      })
+    });
+
+    if (!response.ok) {
+      throw new Error(await formatChatError(response));
+    }
+
+    await refreshAgentTrace(activeSessionId, agentTrace.provider);
+    await onActivityChanged?.();
+  }, [activeSessionId, agentTrace.provider, apiBaseUrl, onActivityChanged, refreshAgentTrace]);
+
+  const executeToolCall = useCallback(async (toolCall: AgentToolCallTraceItem) => {
+    if (!activeSessionId) {
+      return;
+    }
+
+    const response = await fetch(
+      apiBaseUrl + "/api/coding/tool-calls/" + encodeURIComponent(toolCall.id) + "/execute",
+      {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json"
+        },
+        body: JSON.stringify({
+          mode: activeMode,
+          sessionId: activeSessionId,
+          ...(requestContext?.workspaceId
+            ? { workspaceId: requestContext.workspaceId }
+            : {})
+        })
+      }
+    );
+
+    if (!response.ok) {
+      throw new Error(await formatChatError(response));
+    }
+
+    await refreshAgentTrace(activeSessionId, agentTrace.provider);
+    await onActivityChanged?.();
+  }, [activeSessionId, agentTrace.provider, apiBaseUrl, onActivityChanged, refreshAgentTrace, requestContext?.workspaceId]);
+
   const startCurrentConversation = useCallback(() => {
     abortRef.current?.abort();
     setActiveSessionId(null);
@@ -328,6 +389,7 @@ export function useChatController({
     activeSessionId,
     agentTrace,
     applyPrompt,
+    authorizeToolCallForSession,
     cancelRequest,
     endpoint,
     error,
@@ -338,6 +400,7 @@ export function useChatController({
     lastSubmittedPrompt,
     loadSessionMessages,
     messages,
+    executeToolCall,
     messagesEndRef,
     refreshAgentTrace,
     retryLastPrompt,

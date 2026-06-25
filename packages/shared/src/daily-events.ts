@@ -14,10 +14,13 @@ import {
 
 export const dailyActivityEventTypeSchema = z.enum([
   "session.restored",
+  "session.updated",
+  "session.deleted",
   "template.applied",
   "approval.changed",
   "workflow.preview.queued",
   "workflow.preview.completed",
+  "connector.action.completed",
   "artifact.updated",
   "artifact.ready"
 ]);

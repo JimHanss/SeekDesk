@@ -7,29 +7,19 @@ export const dailyWorkToolNames = [
   "organize_knowledge",
   "plan_workflow",
   "connect_context",
-  "gmail.search_threads",
-  "gmail.read_thread",
-  "gmail.create_draft_preview",
-  "calendar.list_events",
-  "calendar.propose_event_preview",
-  "outlook.search_messages",
-  "outlook.read_message",
-  "outlook.create_draft_preview",
-  "outlook.calendar.list_events",
-  "outlook.calendar.propose_event_preview",
   "daily.persist_artifact"
 ] as const;
 
 export const codingToolNames = [
-  "read_file",
-  "write_file",
-  "edit_file",
-  "list_files",
-  "grep",
-  "run_shell",
-  "git_diff",
-  "git_status",
-  "run_tests"
+  "coding.read_file",
+  "coding.write_file",
+  "coding.edit_file",
+  "coding.list_files",
+  "coding.grep",
+  "coding.run_shell",
+  "coding.git_diff",
+  "coding.git_status",
+  "coding.run_tests"
 ] as const;
 
 const toolNames = [...dailyWorkToolNames, ...codingToolNames] as const;
@@ -47,73 +37,70 @@ export const toolCallStatusSchema = z.enum([
   "cancelled"
 ]);
 
-export const gmailSearchThreadsInputSchema = z.object({
+const relativeWorkspacePathSchema = z
+  .string()
+  .trim()
+  .min(1)
+  .max(2000)
+  .refine(
+    (value) => !value.includes(String.fromCharCode(0)),
+    "Path cannot contain null bytes."
+  );
+
+export const codingReadFileInputSchema = z.object({
+  path: relativeWorkspacePathSchema,
+  maxBytes: z.number().int().min(1).max(500_000).default(200_000)
+});
+
+export const codingWriteFileInputSchema = z.object({
+  path: relativeWorkspacePathSchema,
+  content: z.string().max(1_000_000),
+  createDirs: z.boolean().default(false)
+});
+
+export const codingEditFileInputSchema = z.object({
+  path: relativeWorkspacePathSchema,
+  search: z.string().min(1).max(50_000),
+  replace: z.string().max(50_000),
+  expectedReplacements: z.number().int().min(1).max(100).default(1)
+});
+
+export const codingListFilesInputSchema = z.object({
+  path: relativeWorkspacePathSchema.default("."),
+  maxDepth: z.number().int().min(1).max(8).default(3),
+  maxEntries: z.number().int().min(1).max(500).default(200)
+});
+
+export const codingGrepInputSchema = z.object({
   query: z.string().trim().min(1).max(500),
-  maxResults: z.number().int().min(1).max(20).default(10)
+  path: relativeWorkspacePathSchema.default("."),
+  includeGlob: z.string().trim().min(1).max(200).optional(),
+  maxResults: z.number().int().min(1).max(200).default(50)
 });
 
-export const gmailReadThreadInputSchema = z.object({
-  threadId: z.string().trim().min(1)
+export const codingRunShellInputSchema = z.object({
+  command: z.string().trim().min(1).max(2000),
+  timeoutMs: z.number().int().min(1000).max(120_000).default(30_000)
 });
 
-export const gmailCreateDraftPreviewInputSchema = z.object({
-  to: z.array(z.string().email()).min(1).max(20),
-  cc: z.array(z.string().email()).max(20).default([]),
-  subject: z.string().trim().min(1).max(300),
-  bodyText: z.string().trim().min(1).max(10000),
-  threadId: z.string().trim().min(1).optional()
+export const codingGitDiffInputSchema = z.object({
+  path: relativeWorkspacePathSchema.optional(),
+  staged: z.boolean().default(false)
 });
 
-export const calendarListEventsInputSchema = z.object({
-  calendarId: z.string().trim().min(1).default("primary"),
-  timeMin: z.string().datetime().optional(),
-  timeMax: z.string().datetime().optional(),
-  maxResults: z.number().int().min(1).max(50).default(10)
+export const codingGitStatusInputSchema = z.object({});
+
+export const codingWorkspaceBrowseInputSchema = z.object({
+  path: z.string().trim().min(1).max(4000).optional()
 });
 
-export const calendarProposeEventPreviewInputSchema = z.object({
-  calendarId: z.string().trim().min(1).default("primary"),
-  summary: z.string().trim().min(1).max(300),
-  description: z.string().trim().max(2000).optional(),
-  startDateTime: z.string().datetime(),
-  endDateTime: z.string().datetime(),
-  attendeeEmails: z.array(z.string().email()).max(50).default([])
+export const codingWorkspaceSelectInputSchema = z.object({
+  path: z.string().trim().min(1).max(4000)
 });
 
-export const outlookSearchMessagesInputSchema = z.object({
-  query: z.string().trim().min(1).max(500).optional(),
-  maxResults: z.number().int().min(1).max(20).default(10)
-});
-
-export const outlookReadMessageInputSchema = z.object({
-  messageId: z.string().trim().min(1)
-});
-
-export const outlookCreateDraftPreviewInputSchema = z.object({
-  to: z.array(z.string().email()).min(1).max(20),
-  cc: z.array(z.string().email()).max(20).default([]),
-  subject: z.string().trim().min(1).max(300),
-  bodyText: z.string().trim().min(1).max(10000),
-  conversationId: z.string().trim().min(1).optional()
-});
-
-export const outlookCalendarListEventsInputSchema = z.object({
-  calendarId: z.string().trim().min(1).default("primary"),
-  timeMin: z.string().datetime().optional(),
-  timeMax: z.string().datetime().optional(),
-  maxResults: z.number().int().min(1).max(50).default(10),
-  timeZone: z.string().trim().min(1).max(80).optional()
-});
-
-export const outlookCalendarProposeEventPreviewInputSchema = z.object({
-  calendarId: z.string().trim().min(1).default("primary"),
-  summary: z.string().trim().min(1).max(300),
-  description: z.string().trim().max(2000).optional(),
-  startDateTime: z.string().datetime(),
-  endDateTime: z.string().datetime(),
-  attendeeEmails: z.array(z.string().email()).max(50).default([]),
-  timeZone: z.string().trim().min(1).max(80).default("UTC"),
-  location: z.string().trim().max(300).optional()
+export const codingRunTestsInputSchema = z.object({
+  command: z.string().trim().min(1).max(500).default("npm test"),
+  timeoutMs: z.number().int().min(1000).max(300_000).default(120_000)
 });
 
 export const dailyPersistArtifactInputSchema = z.object({
@@ -124,18 +111,19 @@ export const dailyPersistArtifactInputSchema = z.object({
 });
 
 export const dailyWorkToolInputSchemas = {
-  "gmail.search_threads": gmailSearchThreadsInputSchema,
-  "gmail.read_thread": gmailReadThreadInputSchema,
-  "gmail.create_draft_preview": gmailCreateDraftPreviewInputSchema,
-  "calendar.list_events": calendarListEventsInputSchema,
-  "calendar.propose_event_preview": calendarProposeEventPreviewInputSchema,
-  "outlook.search_messages": outlookSearchMessagesInputSchema,
-  "outlook.read_message": outlookReadMessageInputSchema,
-  "outlook.create_draft_preview": outlookCreateDraftPreviewInputSchema,
-  "outlook.calendar.list_events": outlookCalendarListEventsInputSchema,
-  "outlook.calendar.propose_event_preview":
-    outlookCalendarProposeEventPreviewInputSchema,
   "daily.persist_artifact": dailyPersistArtifactInputSchema
+} as const;
+
+export const codingToolInputSchemas = {
+  "coding.read_file": codingReadFileInputSchema,
+  "coding.write_file": codingWriteFileInputSchema,
+  "coding.edit_file": codingEditFileInputSchema,
+  "coding.list_files": codingListFilesInputSchema,
+  "coding.grep": codingGrepInputSchema,
+  "coding.run_shell": codingRunShellInputSchema,
+  "coding.git_diff": codingGitDiffInputSchema,
+  "coding.git_status": codingGitStatusInputSchema,
+  "coding.run_tests": codingRunTestsInputSchema
 } as const;
 
 export const toolCallRecordSchema = z.object({
@@ -169,28 +157,21 @@ export type DailyWorkToolName = z.infer<typeof dailyWorkToolNameSchema>;
 export type CodingToolName = z.infer<typeof codingToolNameSchema>;
 export type ToolCallStatus = z.infer<typeof toolCallStatusSchema>;
 export type ToolCallRecord = z.infer<typeof toolCallRecordSchema>;
-export type GmailSearchThreadsInput = z.infer<typeof gmailSearchThreadsInputSchema>;
-export type GmailReadThreadInput = z.infer<typeof gmailReadThreadInputSchema>;
-export type GmailCreateDraftPreviewInput = z.infer<
-  typeof gmailCreateDraftPreviewInputSchema
+export type CodingReadFileInput = z.infer<typeof codingReadFileInputSchema>;
+export type CodingWriteFileInput = z.infer<typeof codingWriteFileInputSchema>;
+export type CodingEditFileInput = z.infer<typeof codingEditFileInputSchema>;
+export type CodingListFilesInput = z.infer<typeof codingListFilesInputSchema>;
+export type CodingGrepInput = z.infer<typeof codingGrepInputSchema>;
+export type CodingRunShellInput = z.infer<typeof codingRunShellInputSchema>;
+export type CodingGitDiffInput = z.infer<typeof codingGitDiffInputSchema>;
+export type CodingGitStatusInput = z.infer<typeof codingGitStatusInputSchema>;
+export type CodingWorkspaceBrowseInput = z.infer<
+  typeof codingWorkspaceBrowseInputSchema
 >;
-export type CalendarListEventsInput = z.infer<typeof calendarListEventsInputSchema>;
-export type CalendarProposeEventPreviewInput = z.infer<
-  typeof calendarProposeEventPreviewInputSchema
+export type CodingWorkspaceSelectInput = z.infer<
+  typeof codingWorkspaceSelectInputSchema
 >;
-export type OutlookSearchMessagesInput = z.infer<
-  typeof outlookSearchMessagesInputSchema
->;
-export type OutlookReadMessageInput = z.infer<typeof outlookReadMessageInputSchema>;
-export type OutlookCreateDraftPreviewInput = z.infer<
-  typeof outlookCreateDraftPreviewInputSchema
->;
-export type OutlookCalendarListEventsInput = z.infer<
-  typeof outlookCalendarListEventsInputSchema
->;
-export type OutlookCalendarProposeEventPreviewInput = z.infer<
-  typeof outlookCalendarProposeEventPreviewInputSchema
->;
+export type CodingRunTestsInput = z.infer<typeof codingRunTestsInputSchema>;
 export type DailyPersistArtifactInput = z.infer<
   typeof dailyPersistArtifactInputSchema
 >;

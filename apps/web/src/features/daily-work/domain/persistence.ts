@@ -35,7 +35,7 @@ export function createFallbackPersistencePanelState(): PersistencePanelState {
       {
         id: "postgres",
         label: "Postgres / Drizzle",
-        description: "Postgres-backed daily_work persistence with Drizzle migrations.",
+        description: "Postgres-backed workspace persistence with Drizzle migrations.",
         status: "planned",
         detail: "DATABASE_URL is not active in this fallback snapshot.",
         icon: Database
@@ -92,7 +92,7 @@ export function mapHealthPersistenceResponse(payload: unknown): PersistencePanel
         status: currentLayer === "seed_mock" ? "active" : "available",
         detail:
           currentLayer === "seed_mock"
-            ? "当前工作台仍以本地示例作为日常工作数据来源。"
+            ? "当前工作台仍以本地示例作为数据来源。"
             : "保留为离线与冒烟测试回退，不阻塞主流程。",
         icon: Sparkles
       },
@@ -114,7 +114,7 @@ export function mapHealthPersistenceResponse(payload: unknown): PersistencePanel
       {
         id: "postgres",
         label: "Postgres / Drizzle",
-        description: "DATABASE_URL powered persistence for daily_work data.",
+        description: "DATABASE_URL powered persistence for sessions, tools, traces and artifacts.",
         status:
           currentLayer === "postgres"
             ? "active"
@@ -125,7 +125,7 @@ export function mapHealthPersistenceResponse(payload: unknown): PersistencePanel
           currentLayer === "postgres"
             ? snapshot?.postgresReady === false
               ? "Postgres is configured, but the health check is not connected."
-              : "Postgres repository is active; daily_work data writes prefer the database."
+              : "Postgres repository is active; workspace data writes prefer the database."
             : snapshot?.postgresConfigured === true
               ? "Postgres is configured but is not the active data layer."
               : "Set DATABASE_URL and run Drizzle migrations to enable Postgres.",

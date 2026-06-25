@@ -1,6 +1,7 @@
 import type {
   AgentModelUsageSummary,
   AgentModelUsageTraceItem,
+  AgentPermissionGrantTraceItem,
   AgentPermissionBoundary,
   AgentToolActivityTraceItem,
   AgentToolCallTraceItem,
@@ -13,7 +14,7 @@ const defaultPermissionBoundary: AgentPermissionBoundary = {
   previewOnly: true,
   externalEffects: ["none"],
   statement:
-    "Daily-work agent tools may read authorized connector data and create local previews only. SeekDesk will not send email, create calendar events, write external documents, or run coding-agent tools in this mode."
+    "Coding tools can inspect the workspace. File writes, shell commands, git writes, and tests require same-session authorization and are audited in trace/activity/artifacts."
 };
 
 const emptyUsageSummary: AgentModelUsageSummary = {
@@ -36,8 +37,9 @@ export function createEmptyAgentTraceState(
     toolActivityEvents: [],
     modelUsageRecords: [],
     modelUsageSummary: emptyUsageSummary,
+    permissionGrants: [],
     permissionBoundary: defaultPermissionBoundary,
-    notice: "Agent trace is ready for the next daily-work request.",
+    notice: "Agent trace is ready for the next coding request.",
     ...overrides
   };
 }
@@ -70,6 +72,9 @@ export function mapAgentTraceResponse(
       .filter((item): item is AgentToolActivityTraceItem => Boolean(item)),
     modelUsageRecords,
     modelUsageSummary: summary,
+    permissionGrants: (payload.permissionGrants ?? [])
+      .map(mapPermissionGrant)
+      .filter((item): item is AgentPermissionGrantTraceItem => Boolean(item)),
     permissionBoundary: mapPermissionBoundary(payload.permissionBoundary),
     notice: "Agent trace synced from the API."
   });
@@ -130,6 +135,25 @@ function mapToolActivityEvent(
     provider: audit.provider,
     previewOnly: audit.previewOnly,
     externalEffects: audit.externalEffects
+  };
+}
+
+function mapPermissionGrant(value: unknown): AgentPermissionGrantTraceItem | null {
+  if (!isRecord(value)) {
+    return null;
+  }
+
+  return {
+    id: stringValue(value.id, "permission-grant"),
+    provider: stringValue(value.provider, "microsoft"),
+    sessionId: stringValue(value.sessionId, ""),
+    action: stringValue(value.action, "unknown_action"),
+    decision: stringValue(value.decision, "allow_for_session"),
+    status: stringValue(value.status, "unknown"),
+    reason: typeof value.reason === "string" ? value.reason : null,
+    createdAt: stringValue(value.createdAt, ""),
+    expiresAt: stringValue(value.expiresAt, ""),
+    revokedAt: typeof value.revokedAt === "string" ? value.revokedAt : null
   };
 }
 

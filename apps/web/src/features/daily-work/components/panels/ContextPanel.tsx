@@ -81,7 +81,7 @@ export function ContextPanel({
       <div className="mb-3 rounded-[8px] border border-teal-100 bg-white p-2.5">
         <div className="flex flex-col gap-2 md:flex-row md:items-center md:justify-between">
           <div className="min-w-0">
-            <div className="text-xs font-medium text-teal-950">?????</div>
+            <div className="text-xs font-medium text-teal-950">上传上下文</div>
             <div
               className="mt-1 break-words text-[11px] leading-5 text-teal-700"
               data-context-upload-notice
@@ -91,7 +91,7 @@ export function ContextPanel({
           </div>
           <label className="inline-flex cursor-pointer items-center justify-center gap-2 rounded-[8px] bg-teal-600 px-3 py-2 text-xs font-medium text-white transition-colors duration-200 hover:bg-teal-700 focus-within:outline focus-within:outline-2 focus-within:outline-teal-600">
             <FileUp className="size-4" aria-hidden="true" />
-            ????
+            上传文件
             <input
               type="file"
               className="sr-only"

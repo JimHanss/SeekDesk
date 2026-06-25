@@ -32,20 +32,20 @@ import {
   type DailyWorkRepository
 } from "./repositories/daily-work-repository.js";
 import { registerDailyWorkRoutes } from "./routes/daily-work-routes.js";
-import { registerGoogleConnectorRoutes } from "./routes/google-connector-routes.js";
-import { registerMicrosoftConnectorRoutes } from "./routes/microsoft-connector-routes.js";
+import { registerCodingRoutes } from "./routes/coding-routes.js";
+import { DaemonRegistry } from "./services/daemon-registry.js";
 import {
   createDailyModelUsageSnapshot,
   filterDailyActivityEvents
 } from "./services/daily-work-service.js";
 import { createDailyWorkAgentContext } from "./services/daily-work-agent-context.js";
-import { createDailyWorkToolRuntime } from "./services/daily-work-tools.js";
+import { createCodingToolRuntime } from "./services/coding-tools.js";
 import { createToolActivityEvent } from "./services/daily-work-tool-activity.js";
 
-const allowedOrigins = new Set([
+const defaultAllowedOrigins = [
   "http://localhost:3000",
   "http://127.0.0.1:3000"
-]);
+];
 const defaultToolRegistry = createDefaultToolRegistry();
 
 export async function buildServer(options?: {
@@ -56,6 +56,7 @@ export async function buildServer(options?: {
   const app = Fastify({
     logger: true
   });
+  const daemonRegistry = new DaemonRegistry();
 
   await app.register(websocket);
   await app.register(multipart);
@@ -67,8 +68,7 @@ export async function buildServer(options?: {
   app.options("/api/chat", async (_request, reply) => reply.code(204).send());
 
   await registerDailyWorkRoutes(app, dailyWorkRepository);
-  await registerGoogleConnectorRoutes(app, dailyWorkRepository);
-  await registerMicrosoftConnectorRoutes(app, dailyWorkRepository);
+  await registerCodingRoutes(app, dailyWorkRepository, daemonRegistry);
 
   app.get("/health", async () => ({
     status: "ok",
@@ -105,20 +105,21 @@ export async function buildServer(options?: {
           })
         : undefined;
     const providerSelection = createModelProvider({
+      mode: chatRequest.mode,
       ...(agentContext?.modelRoute ? { modelRoute: agentContext.modelRoute } : {})
     });
+    const chatWorkspace = daemonRegistry.getWorkspace(chatRequest.context?.workspaceId) ?? undefined;
     const toolRuntime =
-      chatRequest.mode === "daily_work"
-        ? createDailyWorkToolRuntime(dailyWorkRepository, {
-            ...(agentContext?.allowedToolNames
-              ? { allowedToolNames: agentContext.allowedToolNames }
-              : {})
+      chatRequest.mode === "coding_agent"
+        ? createCodingToolRuntime({
+            ...(chatWorkspace ? { runtime: daemonRegistry.createRuntime(chatWorkspace.workspaceId) } : {})
           })
         : undefined;
     await recordIncomingChatMessage({
       dailyWorkRepository,
       chatRequest,
-      sessionId
+      sessionId,
+      ...(chatWorkspace ? { workspace: chatWorkspace } : {})
     });
     const generatedSessionTitle = shouldGenerateSessionTitle && incomingUserMessage
       ? await generateSessionTitle({
@@ -170,14 +171,20 @@ export async function buildServer(options?: {
     "/api/chat/sessions/:sessionId/trace",
     async (request) => {
       const sessionId = request.params.sessionId.trim();
-      const [toolCalls, modelUsageRecords, activityEvents] = await Promise.all([
+      const [
+        toolCalls,
+        modelUsageRecords,
+        activityEvents,
+        permissionGrants
+      ] = await Promise.all([
         dailyWorkRepository.listToolCalls({ sessionId, limit: 100 }),
         dailyWorkRepository.listModelUsageRecords({ sessionId, limit: 100 }),
-        dailyWorkRepository.listEvents()
+        dailyWorkRepository.listEvents(),
+        dailyWorkRepository.listPermissionGrants({ sessionId, limit: 100 })
       ]);
 
       return {
-        mode: "daily_work",
+        mode: "coding_agent",
         sessionId,
         toolCalls,
         toolActivityEvents: filterSessionToolActivityEvents(
@@ -186,12 +193,16 @@ export async function buildServer(options?: {
         ),
         modelUsageRecords,
         modelUsageSummary: summarizeModelUsageRecords(modelUsageRecords),
+        permissionGrants,
         permissionBoundary: createAgentPermissionBoundary(),
         generatedAt: new Date().toISOString()
       };
     }
   );
 
+  app.get("/ws/daemon", { websocket: true }, async (socket) => {
+    daemonRegistry.handleConnection(socket);
+  });
   app.get("/ws", { websocket: true }, async (socket) => {
     socket.send(
       JSON.stringify({
@@ -227,7 +238,7 @@ export async function buildServer(options?: {
 
 function applyCorsHeaders(request: FastifyRequest, reply: FastifyReply) {
   const origin = request.headers.origin;
-  if (origin && allowedOrigins.has(origin)) {
+  if (origin && getAllowedOrigins().has(origin)) {
     reply.header("Access-Control-Allow-Origin", origin);
   }
 
@@ -240,13 +251,27 @@ function applyCorsHeaders(request: FastifyRequest, reply: FastifyReply) {
   );
 }
 
+function getAllowedOrigins() {
+  const configuredOrigins = [
+    ...(process.env.SEEKDESK_WEB_ORIGIN
+      ? [process.env.SEEKDESK_WEB_ORIGIN]
+      : []),
+    ...(process.env.SEEKDESK_ALLOWED_ORIGINS ?? "")
+      .split(",")
+      .map((origin) => origin.trim())
+      .filter(Boolean)
+  ];
+
+  return new Set([...defaultAllowedOrigins, ...configuredOrigins]);
+}
+
 function createAgentLoopInput(
   chatRequest: ChatRequest,
   provider: ModelProvider,
   options: {
     sessionId: string;
     agentContext?: Awaited<ReturnType<typeof createDailyWorkAgentContext>>;
-    toolRuntime?: ReturnType<typeof createDailyWorkToolRuntime>;
+    toolRuntime?: ReturnType<typeof createCodingToolRuntime>;
   }
 ) {
   return {
@@ -273,7 +298,10 @@ function createAgentLoopInput(
   };
 }
 
-function createModelProvider(options: { modelRoute?: ModelRoute } = {}): {
+function createModelProvider(options: {
+  mode?: ChatRequest["mode"];
+  modelRoute?: ModelRoute;
+} = {}): {
   provider: ModelProvider;
   providerName: ChatProvider;
   modelName: string;
@@ -284,12 +312,12 @@ function createModelProvider(options: { modelRoute?: ModelRoute } = {}): {
     return {
       provider: new MockModelProvider(),
       providerName: "mock",
-      modelName: "mock-daily-work"
+      modelName: options.mode === "daily_work" ? "mock-daily-work" : "mock-coding-agent"
     };
   }
 
   const modelConfig = createDailyModelUsageSnapshot(
-    "daily_work",
+    options.mode ?? "coding_agent",
     [],
     undefined,
     options.modelRoute ? { selectedRoute: options.modelRoute } : {}
@@ -312,6 +340,7 @@ async function recordIncomingChatMessage(input: {
   dailyWorkRepository: DailyWorkRepository;
   chatRequest: ChatRequest;
   sessionId: string;
+  workspace?: { workspaceId: string; name: string; rootPath: string; runtimeMode: string };
 }) {
   const message = findIncomingUserMessage(input.chatRequest);
 
@@ -319,15 +348,22 @@ async function recordIncomingChatMessage(input: {
     return;
   }
 
+  const workspaceId = input.workspace?.workspaceId ?? input.chatRequest.context?.workspaceId;
+
   await input.dailyWorkRepository.recordChatMessage({
     id: `message-${randomUUID()}`,
     sessionId: input.sessionId,
+    appMode: input.chatRequest.mode,
     role: message.role,
     content: message.content,
     createdAt: new Date().toISOString(),
     artifactIds: input.chatRequest.context?.artifactIds ?? [],
     contextItemIds: input.chatRequest.context?.contextItemIds ?? [],
-    approvalRequestIds: input.chatRequest.context?.approvalRequestIds ?? []
+    approvalRequestIds: input.chatRequest.context?.approvalRequestIds ?? [],
+    ...(workspaceId ? { workspaceId } : {}),
+    ...(input.workspace?.name ? { workspaceName: input.workspace.name } : {}),
+    ...(input.workspace?.rootPath ? { workspaceRoot: input.workspace.rootPath } : {}),
+    ...(input.workspace?.runtimeMode ? { workspaceRuntimeMode: input.workspace.runtimeMode } : {})
   });
 }
 
@@ -359,7 +395,7 @@ async function generateSessionTitle(input: {
 
   try {
     for await (const chunk of input.provider.streamChat({
-      mode: "daily_work",
+      mode: "coding_agent",
       maxTurns: 1,
       toolChoice: "none",
       messages: [
@@ -412,7 +448,7 @@ function normalizeSessionTitle(value: string) {
   const title = value
     .replace(/[\r\n]+/g, " ")
     .replace(/^title\s*[:?]\s*/i, "")
-    .replace(/^["'????]+|["'?????.?,]+$/g, "")
+    .replace(/^["'“”‘’]+|["'“”‘’.,，。]+$/g, "")
     .replace(/\s+/g, " ")
     .trim();
 
@@ -420,7 +456,7 @@ function normalizeSessionTitle(value: string) {
     return null;
   }
 
-  return title.length > 32 ? `${title.slice(0, 31)}?` : title;
+  return title.length > 32 ? `${title.slice(0, 31)}...` : title;
 }
 
 async function recordToolCallChunk(
@@ -590,10 +626,10 @@ function summarizeModelUsageRecords(records: ToolModelUsageRecord[]) {
 
 function createAgentPermissionBoundary() {
   return {
-    previewOnly: true,
-    externalEffects: ["none"],
+    previewOnly: false,
+    externalEffects: ["none", "workspace.file.write", "workspace.command.run"],
     statement:
-      "Daily-work agent tools may read authorized connector data and create local previews only. SeekDesk does not send email, create calendar events, write external documents, or run coding-agent tools in this mode."
+      "Coding-agent tools are scoped to the configured workspace root. Reads and git inspection may run directly; file writes, shell commands, and test commands require same-session authorization and are recorded in tool calls and activity events."
   };
 }
 
@@ -604,7 +640,6 @@ function filterSessionToolActivityEvents(
   return events
     .filter(
       (event) =>
-        event.mode === "daily_work" &&
         event.relatedRefs.sessionIds.includes(sessionId) &&
         Boolean(event.metadata.toolName)
     )

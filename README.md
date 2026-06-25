@@ -1,14 +1,14 @@
 # SeekDesk
 
-SeekDesk is an AI ecosystem workspace for everyday work. It helps people draft, research, summarize meetings, organize knowledge, plan tasks, and connect practical AI workflows around daily productivity.
+SeekDesk is an AI coding workbench backed by DeepSeek, Postgres, and a local daemon runtime. The current product path is `coding_agent`: chat stays in the browser, while file reads, search, Git inspection, shell commands, and test execution are routed through a daemon connected to the user's selected workspace.
 
-The product keeps a dual-mode architecture: `daily_work` and `coding_agent`. The current build only develops and exposes `daily_work`; coding-agent capabilities remain compatible at the contract level for later milestones.
+The older `daily_work` contracts remain in the repository for compatibility, but the active UI and API flow focus on coding-agent workflows.
 
 ## Stack
 
 - Frontend: Next.js, React, TypeScript, Tailwind CSS, shadcn-style components, Lucide icons
 - API: Fastify, WebSocket, TypeScript
-- Workflow runtime: Node.js services for future connectors and automations
+- Runtime: local Node.js daemon that connects to the API over WebSocket
 - Shared contracts: Zod schemas, app modes, realtime events, permissions, and tool types
 - Agent core: DeepSeek streaming provider, mode context, mock fallback, and provider tests
 
@@ -16,9 +16,9 @@ The product keeps a dual-mode architecture: `daily_work` and `coding_agent`. The
 
 ```text
 apps/
-  web/       Next.js everyday AI workspace UI
-  api/       Fastify API, WebSocket activity snapshots, AI orchestration shell
-  daemon/    Local runtime shell reserved for future connectors
+  web/       Next.js coding-agent workbench UI
+  api/       Fastify API, WebSocket daemon routing, AI orchestration shell
+  daemon/    Local runtime for workspace file, search, Git, shell, and test tools
 packages/
   shared/    Shared schemas, app modes, realtime events, permissions, tool types
   agent/     DeepSeek provider, mock fallback, and mode-aware agent loop
@@ -49,6 +49,15 @@ npm run test:browser-smoke
 npm run build
 ```
 
+Local daemon:
+
+```bash
+npm run build
+npm --workspace @seekdesk/daemon run start -- start --api http://127.0.0.1:4000 --token seekdesk-local-dev --workspace /path/to/project
+```
+
+On Windows, run the same command from the SeekDesk checkout and pass a Windows workspace path, for example `--workspace "E:\\Project\\MyApp"`. The daemon registers with `/ws/daemon`; the web app then shows that workspace in the new-conversation dialog.
+
 Browser smoke:
 
 ```bash
@@ -71,6 +80,7 @@ Default local endpoints:
 - Daily activity events: `http://localhost:4000/api/daily/events`
 - Daily model usage: `http://localhost:4000/api/daily/model-usage`
 - API WebSocket activity snapshot: `ws://localhost:4000/ws`
+- Local daemon WebSocket: `ws://localhost:4000/ws/daemon`
 
 ## Environment
 
@@ -83,6 +93,4 @@ stay server-side and are not returned to the browser.
 
 ## Current Boundaries
 
-This milestone implements the `daily_work` workspace. External connectors,
-document/calendar/email reads, sends, writes, shell commands, Git operations,
-and coding-agent tool execution remain preview-only or reserved surfaces.
+This milestone implements the coding-agent workspace with a local daemon. Read-only tools can inspect files, search, and Git state inside the selected workspace. File writes, shell commands, and test execution require same-session approval and are recorded through tool calls and activity events. Production-grade user accounts, one-time pairing tokens, and multi-tenant isolation are future hardening work.

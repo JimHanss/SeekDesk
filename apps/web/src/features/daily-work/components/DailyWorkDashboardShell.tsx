@@ -2,13 +2,19 @@
 
 import Link from "next/link";
 import { useState, type ReactNode } from "react";
-import { MoreHorizontal, Pencil, Pin, Plus, Settings2, Sparkles, Trash2, Wand2 } from "lucide-react";
+import { Archive, MoreHorizontal, Pencil, Pin, Plus, Settings2, Sparkles, Trash2, Wand2 } from "lucide-react";
 
 import { Button } from "@/components/ui/button";
 import { cn } from "@/lib/utils";
 
 export type DailyWorkView =
   | "assistant"
+  | "files"
+  | "search"
+  | "diff"
+  | "terminal"
+  | "trace"
+  | "workspace"
   | "templates"
   | "knowledge"
   | "workflows"
@@ -37,17 +43,26 @@ export interface DailyWorkConversationItem {
   pinned?: boolean;
 }
 
+export interface DailyWorkConversationGroup {
+  id: string;
+  label: string;
+  description?: string;
+  items: DailyWorkConversationItem[];
+}
+
 interface DailyWorkDashboardShellProps {
   activeConversationId?: string | null;
   activeView: DailyWorkView;
   children: ReactNode;
   currentConversation: DailyWorkConversationItem;
   conversationItems?: DailyWorkConversationItem[];
+  conversationGroups?: DailyWorkConversationGroup[];
   primaryViews: DailyWorkViewConfig[];
   settingsViews: DailyWorkViewConfig[];
-  onConversationDelete?: (conversationId: string) => void;
-  onConversationPinToggle?: (conversationId: string) => void;
-  onConversationRename?: (conversationId: string) => void;
+  onConversationArchive?: (conversationId: string) => void | Promise<void>;
+  onConversationDelete?: (conversationId: string) => void | Promise<void>;
+  onConversationPinToggle?: (conversationId: string) => void | Promise<void>;
+  onConversationRename?: (conversationId: string) => void | Promise<void>;
   onConversationSelect?: (conversationId: string) => void;
   onCurrentConversationSelect?: () => void;
   onNewConversationSelect?: () => void;
@@ -60,8 +75,10 @@ export function DailyWorkDashboardShell({
   children,
   currentConversation,
   conversationItems = [],
+  conversationGroups,
   primaryViews,
   settingsViews,
+  onConversationArchive,
   onConversationDelete,
   onConversationPinToggle,
   onConversationRename,
@@ -73,11 +90,18 @@ export function DailyWorkDashboardShell({
   const views = [...primaryViews, ...settingsViews];
   const currentView = views.find((view) => view.id === activeView) ?? views[0]!;
   const headerViews = primaryViews.filter((view) => view.id !== "assistant");
+  const groupedConversationItems = conversationGroups?.length
+    ? conversationGroups
+    : [{ id: "default", label: "当前工作区", items: conversationItems }];
+  const historyConversationCount = groupedConversationItems.reduce(
+    (total, group) => total + group.items.length,
+    0
+  );
   const isSettingsActive = settingsViews.some((view) => view.id === activeView);
   const settingsEntry: DailyWorkViewConfig = {
     id: "models",
     label: "\u8bbe\u7f6e",
-    description: "\u6a21\u578b\u3001\u8fde\u63a5\u5668\u3001\u5ba1\u6279\u548c\u5ba1\u8ba1\u3002",
+    description: "模型、运行时、审批和审计。",
     icon: <Settings2 className="size-4" aria-hidden="true" />
   };
 
@@ -137,7 +161,7 @@ export function DailyWorkDashboardShell({
                 SeekDesk
               </h1>
               <div className="truncate text-[11px] font-medium text-slate-400">
-                daily_work
+                coding agent
               </div>
             </div>
           </div>
@@ -145,7 +169,7 @@ export function DailyWorkDashboardShell({
           <div className="flex min-h-0 flex-1 flex-col border-t border-white/10 px-3 py-3">
             <div className="mb-2 flex items-center justify-between px-1 text-[11px] font-semibold uppercase tracking-[0.14em] text-slate-500">
               <span>{"\u5bf9\u8bdd"}</span>
-              <span>{conversationItems.length + 1}</span>
+              <span>{historyConversationCount + 1}</span>
             </div>
 
             <button
@@ -181,40 +205,60 @@ export function DailyWorkDashboardShell({
                 }}
               />
 
-              {conversationItems.map((conversation) => {
-                const isActive = activeView === "assistant" && activeConversationId === conversation.id;
-                const menuOpen = openConversationMenuId === conversation.id;
+              {groupedConversationItems.map((group) => (
+                <div key={group.id} className="mt-2 first:mt-1">
+                  <div className="mb-1 flex items-center justify-between px-2 text-[11px] font-semibold text-slate-500">
+                    <span className="truncate">{group.label}</span>
+                    <span>{group.items.length}</span>
+                  </div>
+                  {group.description ? (
+                    <div className="mb-1 truncate px-2 text-[10px] text-slate-600">
+                      {group.description}
+                    </div>
+                  ) : null}
+                  <div className="flex flex-col gap-1">
+                    {group.items.map((conversation) => {
+                      const isActive = activeView === "assistant" && activeConversationId === conversation.id;
+                      const menuOpen = openConversationMenuId === conversation.id;
 
-                return (
-                  <ConversationRow
-                    key={conversation.id}
-                    conversation={conversation}
-                    isActive={isActive}
-                    menuOpen={menuOpen}
-                    onMenuToggle={() =>
-                      setOpenConversationMenuId((current) =>
-                        current === conversation.id ? null : conversation.id
-                      )
-                    }
-                    onRename={() =>
-                      handleConversationMenuAction(() =>
-                        onConversationRename?.(conversation.id)
-                      )
-                    }
-                    onDelete={() =>
-                      handleConversationMenuAction(() =>
-                        onConversationDelete?.(conversation.id)
-                      )
-                    }
-                    onPinToggle={() =>
-                      handleConversationMenuAction(() =>
-                        onConversationPinToggle?.(conversation.id)
-                      )
-                    }
-                    onSelect={() => onConversationSelect?.(conversation.id)}
-                  />
-                );
-              })}
+                      return (
+                        <ConversationRow
+                          key={conversation.id}
+                          conversation={conversation}
+                          isActive={isActive}
+                          menuOpen={menuOpen}
+                          onMenuToggle={() =>
+                            setOpenConversationMenuId((current) =>
+                              current === conversation.id ? null : conversation.id
+                            )
+                          }
+                          onRename={() =>
+                            handleConversationMenuAction(() =>
+                              void onConversationRename?.(conversation.id)
+                            )
+                          }
+                          onArchive={() =>
+                            handleConversationMenuAction(() =>
+                              void onConversationArchive?.(conversation.id)
+                            )
+                          }
+                          onDelete={() =>
+                            handleConversationMenuAction(() =>
+                              void onConversationDelete?.(conversation.id)
+                            )
+                          }
+                          onPinToggle={() =>
+                            handleConversationMenuAction(() =>
+                              void onConversationPinToggle?.(conversation.id)
+                            )
+                          }
+                          onSelect={() => onConversationSelect?.(conversation.id)}
+                        />
+                      );
+                    })}
+                  </div>
+                </div>
+              ))}
             </div>
           </div>
         </aside>
@@ -257,6 +301,7 @@ function ConversationRow({
   conversation,
   isActive,
   menuOpen = false,
+  onArchive,
   onDelete,
   onMenuToggle,
   onPinToggle,
@@ -267,6 +312,7 @@ function ConversationRow({
   conversation: DailyWorkConversationItem;
   isActive: boolean;
   menuOpen?: boolean;
+  onArchive?: () => void;
   onDelete?: () => void;
   onMenuToggle?: () => void;
   onPinToggle?: () => void;
@@ -348,6 +394,7 @@ function ConversationRow({
             <div className="absolute right-0 z-40 mt-1 w-32 overflow-hidden rounded-[8px] border border-slate-200 bg-white py-1 text-slate-800 shadow-xl">
               <ConversationMenuButton icon={<Pencil className="size-3.5" aria-hidden="true" />} label="\u6539\u540d" onClick={onRename} />
               <ConversationMenuButton icon={<Pin className="size-3.5" aria-hidden="true" />} label={conversation.pinned ? "\u53d6\u6d88\u7f6e\u9876" : "\u7f6e\u9876"} onClick={onPinToggle} />
+              <ConversationMenuButton icon={<Archive className="size-3.5" aria-hidden="true" />} label="\u5f52\u6863" onClick={onArchive} />
               <ConversationMenuButton destructive icon={<Trash2 className="size-3.5" aria-hidden="true" />} label="\u5220\u9664" onClick={onDelete} />
             </div>
           ) : null}

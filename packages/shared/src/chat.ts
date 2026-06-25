@@ -24,7 +24,7 @@ export const chatContextSchema = z
 
 export const chatRequestSchema = z
   .object({
-    mode: appModeSchema.default("daily_work"),
+    mode: appModeSchema.default("coding_agent"),
     sessionId: z.string().trim().min(1).optional(),
     templateId: z.string().trim().min(1).optional(),
     prompt: z.string().trim().min(1).optional(),
@@ -55,7 +55,7 @@ export const chatEventTypeSchema = z.enum([
 
 export const chatEventSchema = z.object({
   type: chatEventTypeSchema,
-  mode: appModeSchema.default("daily_work"),
+  mode: appModeSchema.default("coding_agent"),
   sessionId: z.string().trim().min(1).optional(),
   provider: chatProviderSchema.optional(),
   delta: z.string().optional(),
@@ -65,7 +65,7 @@ export const chatEventSchema = z.object({
 });
 
 export const chatResponseSchema = z.object({
-  mode: appModeSchema.default("daily_work"),
+  mode: appModeSchema.default("coding_agent"),
   sessionId: z.string().trim().min(1).optional(),
   provider: chatProviderSchema,
   content: z.string(),

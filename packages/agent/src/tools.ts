@@ -1,4 +1,5 @@
 import {
+  codingToolInputSchemas,
   dailyWorkToolInputSchemas,
   type AppMode
 } from "@seekdesk/shared";
@@ -102,21 +103,11 @@ export class ToolOrchestrator {
     if (!definition) {
       return createToolResult(request, {
         status: "failed",
-        mode: request.mode ?? "daily_work",
+        mode: request.mode ?? "coding_agent",
         previewOnly: false,
         permissionRequired: false,
         message: `Unknown tool "${request.name}".`,
         error: "unknown_tool"
-      });
-    }
-
-    if (definition.permissionPolicy === "permission_required") {
-      return createToolResult(normalizedRequest, {
-        status: "permission_required",
-        mode: definition.mode,
-        previewOnly: false,
-        permissionRequired: true,
-        message: `Tool "${definition.name}" requires permission before it can run.`
       });
     }
 
@@ -135,6 +126,16 @@ export class ToolOrchestrator {
       });
     }
 
+    if (definition.permissionPolicy === "permission_required") {
+      return createToolResult(normalizedRequest, {
+        status: "permission_required",
+        mode: definition.mode,
+        previewOnly: false,
+        permissionRequired: true,
+        message: `Tool "${definition.name}" requires same-session authorization before it can run.`
+      });
+    }
+
     const status = request.planOnly
       ? "planned"
       : (definition.defaultResultStatus ?? "completed");
@@ -150,18 +151,18 @@ export class ToolOrchestrator {
         return createToolResult(normalizedRequest, {
           status: "completed",
           mode: definition.mode,
-          previewOnly: true,
+          previewOnly: false,
           permissionRequired: false,
-          message: `Tool "${definition.name}" completed in preview-only mode.`,
+          message: `Tool "${definition.name}" completed.`,
           outputJson
         });
       } catch (error) {
         return createToolResult(normalizedRequest, {
           status: "failed",
           mode: definition.mode,
-          previewOnly: true,
+          previewOnly: definition.permissionPolicy === "preview_only",
           permissionRequired: false,
-          message: `Tool "${definition.name}" failed in preview-only mode.`,
+          message: `Tool "${definition.name}" failed.`,
           error: formatToolErrorCode(error),
           outputJson: {
             message: formatToolErrorMessage(error)
@@ -173,14 +174,14 @@ export class ToolOrchestrator {
     return createToolResult(normalizedRequest, {
       status,
       mode: definition.mode,
-      previewOnly: true,
+      previewOnly: definition.permissionPolicy === "preview_only",
       permissionRequired: false,
       message:
         status === "planned"
           ? `Tool "${definition.name}" was recorded as a plan only.`
-          : `Tool "${definition.name}" completed in preview-only mode.`,
+          : `Tool "${definition.name}" completed as a local preview.`,
       outputJson: {
-        previewOnly: true,
+        previewOnly: definition.permissionPolicy === "preview_only",
         planned: status === "planned"
       }
     });
@@ -194,238 +195,10 @@ export class ToolOrchestrator {
 export function createDefaultToolRegistry(): ToolRegistry {
   return new ToolRegistry([
     {
-      name: "daily_work.preview",
-      mode: "daily_work",
-      description:
-        "Preview a daily-work action without connector, workflow, document, or calendar side effects."
-    },
-    {
-      name: "daily_work.plan",
-      mode: "daily_work",
-      description:
-        "Record a daily-work tool action as an execution plan without performing it.",
-      defaultResultStatus: "planned"
-    },
-    {
-      name: "coding.shell",
-      mode: "coding_agent",
-      description:
-        "Reserved coding-agent shell access. The skeleton only returns permission_required."
-    },
-    {
-      name: "coding.file_edit",
-      mode: "coding_agent",
-      description:
-        "Reserved coding-agent file editing access. The skeleton only returns permission_required."
-    },
-    {
-      name: "gmail.search_threads",
-      mode: "daily_work",
-      description:
-        "Search authorized Gmail threads and return metadata only. Preview-only: no email is sent or modified.",
-      inputSchema: dailyWorkToolInputSchemas["gmail.search_threads"],
-      parametersJsonSchema: {
-        type: "object",
-        properties: {
-          query: { type: "string", description: "Gmail search query." },
-          maxResults: {
-            type: "integer",
-            minimum: 1,
-            maximum: 20,
-            default: 10
-          }
-        },
-        required: ["query"],
-        additionalProperties: false
-      }
-    },
-    {
-      name: "gmail.read_thread",
-      mode: "daily_work",
-      description:
-        "Read metadata and snippets for an authorized Gmail thread. Preview-only: attachments and sends are disabled.",
-      inputSchema: dailyWorkToolInputSchemas["gmail.read_thread"],
-      parametersJsonSchema: {
-        type: "object",
-        properties: {
-          threadId: { type: "string" }
-        },
-        required: ["threadId"],
-        additionalProperties: false
-      }
-    },
-    {
-      name: "gmail.create_draft_preview",
-      mode: "daily_work",
-      description:
-        "Create a local Gmail draft payload preview. Does not call Gmail drafts.create or send.",
-      inputSchema: dailyWorkToolInputSchemas["gmail.create_draft_preview"],
-      parametersJsonSchema: {
-        type: "object",
-        properties: {
-          to: { type: "array", items: { type: "string", format: "email" } },
-          cc: { type: "array", items: { type: "string", format: "email" } },
-          subject: { type: "string" },
-          bodyText: { type: "string" },
-          threadId: { type: "string" }
-        },
-        required: ["to", "subject", "bodyText"],
-        additionalProperties: false
-      }
-    },
-    {
-      name: "calendar.list_events",
-      mode: "daily_work",
-      description:
-        "List authorized Google Calendar event metadata. Preview-only: no event is created or changed.",
-      inputSchema: dailyWorkToolInputSchemas["calendar.list_events"],
-      parametersJsonSchema: {
-        type: "object",
-        properties: {
-          calendarId: { type: "string", default: "primary" },
-          timeMin: { type: "string", format: "date-time" },
-          timeMax: { type: "string", format: "date-time" },
-          maxResults: {
-            type: "integer",
-            minimum: 1,
-            maximum: 50,
-            default: 10
-          }
-        },
-        additionalProperties: false
-      }
-    },
-    {
-      name: "calendar.propose_event_preview",
-      mode: "daily_work",
-      description:
-        "Create a local Google Calendar event payload preview. Does not call events.insert.",
-      inputSchema: dailyWorkToolInputSchemas["calendar.propose_event_preview"],
-      parametersJsonSchema: {
-        type: "object",
-        properties: {
-          calendarId: { type: "string", default: "primary" },
-          summary: { type: "string" },
-          description: { type: "string" },
-          startDateTime: { type: "string", format: "date-time" },
-          endDateTime: { type: "string", format: "date-time" },
-          attendeeEmails: {
-            type: "array",
-            items: { type: "string", format: "email" }
-          }
-        },
-        required: ["summary", "startDateTime", "endDateTime"],
-        additionalProperties: false
-      }
-    },
-    {
-      name: "outlook.search_messages",
-      mode: "daily_work",
-      description:
-        "Search authorized Outlook messages and return metadata only. Preview-only: no email is sent or modified.",
-      inputSchema: dailyWorkToolInputSchemas["outlook.search_messages"],
-      parametersJsonSchema: {
-        type: "object",
-        properties: {
-          query: { type: "string", description: "Microsoft Graph message search text." },
-          maxResults: {
-            type: "integer",
-            minimum: 1,
-            maximum: 20,
-            default: 10
-          }
-        },
-        additionalProperties: false
-      }
-    },
-    {
-      name: "outlook.read_message",
-      mode: "daily_work",
-      description:
-        "Read one authorized Outlook message. Preview-only: attachments, replies, and sends are disabled.",
-      inputSchema: dailyWorkToolInputSchemas["outlook.read_message"],
-      parametersJsonSchema: {
-        type: "object",
-        properties: {
-          messageId: { type: "string" }
-        },
-        required: ["messageId"],
-        additionalProperties: false
-      }
-    },
-    {
-      name: "outlook.create_draft_preview",
-      mode: "daily_work",
-      description:
-        "Create a local Microsoft Graph message draft payload preview. Does not create or send a real Outlook draft.",
-      inputSchema: dailyWorkToolInputSchemas["outlook.create_draft_preview"],
-      parametersJsonSchema: {
-        type: "object",
-        properties: {
-          to: { type: "array", items: { type: "string", format: "email" } },
-          cc: { type: "array", items: { type: "string", format: "email" } },
-          subject: { type: "string" },
-          bodyText: { type: "string" },
-          conversationId: { type: "string" }
-        },
-        required: ["to", "subject", "bodyText"],
-        additionalProperties: false
-      }
-    },
-    {
-      name: "outlook.calendar.list_events",
-      mode: "daily_work",
-      description:
-        "List authorized Outlook Calendar event metadata. Preview-only: no event is created or changed.",
-      inputSchema: dailyWorkToolInputSchemas["outlook.calendar.list_events"],
-      parametersJsonSchema: {
-        type: "object",
-        properties: {
-          calendarId: { type: "string", default: "primary" },
-          timeMin: { type: "string", format: "date-time" },
-          timeMax: { type: "string", format: "date-time" },
-          maxResults: {
-            type: "integer",
-            minimum: 1,
-            maximum: 50,
-            default: 10
-          },
-          timeZone: { type: "string", default: "UTC" }
-        },
-        additionalProperties: false
-      }
-    },
-    {
-      name: "outlook.calendar.propose_event_preview",
-      mode: "daily_work",
-      description:
-        "Create a local Microsoft Graph calendar event payload preview. Does not create a real Outlook event.",
-      inputSchema:
-        dailyWorkToolInputSchemas["outlook.calendar.propose_event_preview"],
-      parametersJsonSchema: {
-        type: "object",
-        properties: {
-          calendarId: { type: "string", default: "primary" },
-          summary: { type: "string" },
-          description: { type: "string" },
-          startDateTime: { type: "string", format: "date-time" },
-          endDateTime: { type: "string", format: "date-time" },
-          attendeeEmails: {
-            type: "array",
-            items: { type: "string", format: "email" }
-          },
-          timeZone: { type: "string", default: "UTC" },
-          location: { type: "string" }
-        },
-        required: ["summary", "startDateTime", "endDateTime"],
-        additionalProperties: false
-      }
-    },
-    {
       name: "daily.persist_artifact",
       mode: "daily_work",
       description:
-        "Persist an AI generated daily-work artifact locally for review. Preview-only external boundary: no provider write.",
+        "Persist an AI generated local artifact for review. No external connector effects.",
       inputSchema: dailyWorkToolInputSchemas["daily.persist_artifact"],
       parametersJsonSchema: {
         type: "object",
@@ -438,18 +211,114 @@ export function createDefaultToolRegistry(): ToolRegistry {
         required: ["title", "content"],
         additionalProperties: false
       }
-    }
+    },
+    createCodingToolDefinition({
+      name: "coding.list_files",
+      description: "List files under the configured workspace root.",
+      inputSchema: codingToolInputSchemas["coding.list_files"],
+      properties: {
+        path: { type: "string", default: "." },
+        maxDepth: { type: "integer", minimum: 1, maximum: 8, default: 3 },
+        maxEntries: { type: "integer", minimum: 1, maximum: 500, default: 200 }
+      }
+    }),
+    createCodingToolDefinition({
+      name: "coding.read_file",
+      description: "Read a text file under the configured workspace root.",
+      inputSchema: codingToolInputSchemas["coding.read_file"],
+      required: ["path"],
+      properties: {
+        path: { type: "string" },
+        maxBytes: { type: "integer", minimum: 1, maximum: 500000, default: 200000 }
+      }
+    }),
+    createCodingToolDefinition({
+      name: "coding.grep",
+      description: "Search text in workspace files.",
+      inputSchema: codingToolInputSchemas["coding.grep"],
+      required: ["query"],
+      properties: {
+        query: { type: "string" },
+        path: { type: "string", default: "." },
+        includeGlob: { type: "string" },
+        maxResults: { type: "integer", minimum: 1, maximum: 200, default: 50 }
+      }
+    }),
+    createCodingToolDefinition({
+      name: "coding.git_status",
+      description: "Read git status for the workspace.",
+      inputSchema: codingToolInputSchemas["coding.git_status"],
+      properties: {}
+    }),
+    createCodingToolDefinition({
+      name: "coding.git_diff",
+      description: "Read git diff for the workspace.",
+      inputSchema: codingToolInputSchemas["coding.git_diff"],
+      properties: {
+        path: { type: "string" },
+        staged: { type: "boolean", default: false }
+      }
+    }),
+    createCodingToolDefinition({
+      name: "coding.write_file",
+      description:
+        "Write a file under the workspace root. Requires same-session authorization.",
+      inputSchema: codingToolInputSchemas["coding.write_file"],
+      permissionPolicy: "permission_required",
+      required: ["path", "content"],
+      properties: {
+        path: { type: "string" },
+        content: { type: "string" },
+        createDirs: { type: "boolean", default: false }
+      }
+    }),
+    createCodingToolDefinition({
+      name: "coding.edit_file",
+      description:
+        "Replace exact text in a workspace file. Requires same-session authorization.",
+      inputSchema: codingToolInputSchemas["coding.edit_file"],
+      permissionPolicy: "permission_required",
+      required: ["path", "search", "replace"],
+      properties: {
+        path: { type: "string" },
+        search: { type: "string" },
+        replace: { type: "string" },
+        expectedReplacements: { type: "integer", minimum: 1, maximum: 100, default: 1 }
+      }
+    }),
+    createCodingToolDefinition({
+      name: "coding.run_shell",
+      description:
+        "Run a shell command in the workspace. Requires same-session authorization.",
+      inputSchema: codingToolInputSchemas["coding.run_shell"],
+      permissionPolicy: "permission_required",
+      required: ["command"],
+      properties: {
+        command: { type: "string" },
+        timeoutMs: { type: "integer", minimum: 1000, maximum: 120000, default: 30000 }
+      }
+    }),
+    createCodingToolDefinition({
+      name: "coding.run_tests",
+      description:
+        "Run a test command in the workspace. Requires same-session authorization.",
+      inputSchema: codingToolInputSchemas["coding.run_tests"],
+      permissionPolicy: "permission_required",
+      properties: {
+        command: { type: "string", default: "npm test" },
+        timeoutMs: { type: "integer", minimum: 1000, maximum: 300000, default: 120000 }
+      }
+    })
   ]);
 }
 
 export function createModelToolDefinitions(
   registry: ToolRegistry,
-  mode: AppMode = "daily_work"
+  mode: AppMode = "coding_agent"
 ): ModelToolDefinition[] {
   return registry
     .list()
     .filter((definition) => definition.mode === mode)
-    .filter((definition) => definition.permissionPolicy !== "permission_required")
     .filter((definition) => Boolean(definition.parametersJsonSchema))
     .map((definition) => ({
       type: "function",
@@ -485,6 +354,29 @@ export function fromModelToolName(
   return match?.name ?? modelToolName;
 }
 
+function createCodingToolDefinition(input: {
+  name: string;
+  description: string;
+  inputSchema: ToolInputSchema;
+  properties: Record<string, unknown>;
+  required?: string[];
+  permissionPolicy?: ToolPermissionPolicy;
+}): ToolDefinition {
+  return {
+    name: input.name,
+    mode: "coding_agent",
+    description: input.description,
+    inputSchema: input.inputSchema,
+    permissionPolicy: input.permissionPolicy ?? "preview_only",
+    parametersJsonSchema: {
+      type: "object",
+      properties: input.properties,
+      required: input.required ?? [],
+      additionalProperties: false
+    }
+  };
+}
+
 function resolveToolDefinition(registry: ToolRegistry, name: string) {
   return registry.get(name) ?? registry.get(fromModelToolName(registry, name));
 }
@@ -500,19 +392,11 @@ function normalizeToolDefinition(definition: ToolDefinition): ToolDefinition {
     definition.permissionPolicy ??
     (definition.mode === "coding_agent" ? "permission_required" : "preview_only");
 
-  if (definition.mode === "daily_work") {
-    return {
-      ...definition,
-      name,
-      permissionPolicy,
-      defaultResultStatus: definition.defaultResultStatus ?? "completed"
-    };
-  }
-
   return {
     ...definition,
     name,
-    permissionPolicy
+    permissionPolicy,
+    defaultResultStatus: definition.defaultResultStatus ?? "completed"
   };
 }
 
@@ -608,5 +492,9 @@ function formatToolErrorCode(error: unknown) {
 }
 
 function formatToolErrorMessage(error: unknown) {
-  return error instanceof Error ? error.message : String(error);
+  if (error instanceof Error) {
+    return error.message;
+  }
+
+  return String(error);
 }

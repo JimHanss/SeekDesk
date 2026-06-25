@@ -5,7 +5,7 @@ import { useState } from "react";
 import {
   Activity,
   Info,
-  Mail,
+  FileCode2,
   MessageSquare,
   Presentation,
   Search,
@@ -24,6 +24,7 @@ import {
 import { statusLabel } from "@/features/daily-work/domain";
 import { PromptCard } from "@/features/daily-work/components/DailyWorkPrimitives";
 import type {
+  AgentToolCallTraceItem,
   AgentTraceState,
   ChatMessage,
   ChatStatus
@@ -48,8 +49,10 @@ interface DailyWorkAssistantViewProps {
   selectedTemplateTitle?: string | null;
   status: ChatStatus;
   onApplyPrompt: (prompt: string) => void;
+  onAuthorizeToolCall: (toolCall: AgentToolCallTraceItem) => Promise<void> | void;
   onCancelRequest: () => void;
   onDismissError: () => void;
+  onExecuteToolCall: (toolCall: AgentToolCallTraceItem) => Promise<void> | void;
   onInputChange: (value: string) => void;
   onRetry: () => void;
 }
@@ -57,22 +60,22 @@ interface DailyWorkAssistantViewProps {
 type AssistantPanel = "prompts" | "runtime" | "trace" | null;
 
 const primaryPrompt = {
-  icon: Mail,
-  title: "客户更新",
-  text: "帮我写一封客户更新邮件，整理当前结果、时间线、风险和下一步。"
+  icon: FileCode2,
+  title: "阅读代码",
+  text: "帮我梳理这个功能的入口文件、调用链和关键风险。"
 };
 
 const promptCards = [
   primaryPrompt,
   {
     icon: Presentation,
-    title: "会议纪要",
-    text: "把这些会议记录整理成可分享的纪要，标出决策、负责人、风险和待补信息。"
+    title: "生成修改方案",
+    text: "先给出实现计划和需要改动的文件，等我确认后再执行。"
   },
   {
     icon: Search,
-    title: "研究简报",
-    text: "把最新资料整理成一页简报，区分已知信息、信息缺口和建议下一步。"
+    title: "检查变更",
+    text: "查看当前 git diff，说明改动影响、风险和建议测试。"
   }
 ];
 
@@ -94,8 +97,10 @@ export function DailyWorkAssistantView({
   selectedTemplateTitle,
   status,
   onApplyPrompt,
+  onAuthorizeToolCall,
   onCancelRequest,
   onDismissError,
+  onExecuteToolCall,
   onInputChange,
   onRetry
 }: DailyWorkAssistantViewProps) {
@@ -180,8 +185,8 @@ export function DailyWorkAssistantView({
               ref={inputRef}
               className="max-h-40 min-h-10 min-w-0 flex-1 resize-none bg-transparent py-2 text-sm leading-5 text-slate-950 outline-none placeholder:text-slate-400"
               placeholder={modelInputPlaceholder}
-              aria-label="输入日常工作请求"
-              value={input}
+              aria-label="输入编程请求"
+              value={input ?? ""}
               onChange={(event) => onInputChange(event.target.value)}
               disabled={isBusy}
               rows={1}
@@ -268,7 +273,12 @@ export function DailyWorkAssistantView({
           ) : null}
 
           <div className={activePanel === "trace" ? "block" : "hidden"}>
-            <AgentTracePanel agentTrace={agentTrace} modelName={activeModelName} />
+            <AgentTracePanel
+              agentTrace={agentTrace}
+              modelName={activeModelName}
+              onAuthorizeToolCall={onAuthorizeToolCall}
+              onExecuteToolCall={onExecuteToolCall}
+            />
           </div>
         </div>
       </aside>

@@ -191,11 +191,11 @@ describe("DeepSeekModelProvider", () => {
                 tool_calls: [
                   {
                     index: 0,
-                    id: "call-gmail",
+                    id: "call-grep",
                     type: "function",
                     function: {
-                      name: "gmail.search_threads",
-                      arguments: "{\"query\":\"from:customer"
+                      name: "coding.grep",
+                      arguments: "{\"query\":\"coding_agent"
                     }
                   }
                 ]
@@ -238,14 +238,14 @@ describe("DeepSeekModelProvider", () => {
     const chunks = await collectChunks(
       provider.streamChat({
         mode: "daily_work",
-        messages: [{ role: "user", content: "Find customer mail" }],
+        messages: [{ role: "user", content: "Search workspace files" }],
         maxTurns: 1,
         tools: [
           {
             type: "function",
             function: {
-              name: "gmail.search_threads",
-              description: "Search Gmail threads.",
+              name: "coding.grep",
+              description: "Search workspace files.",
               parameters: {
                 type: "object",
                 properties: {
@@ -262,13 +262,13 @@ describe("DeepSeekModelProvider", () => {
     expect(chunks).toEqual([
       {
         type: "tool-call",
-        id: "call-gmail",
-        name: "gmail.search_threads",
+        id: "call-grep",
+        name: "coding.grep",
         inputJson: {
-          query: "from:customer",
+          query: "coding_agent",
           maxResults: 5
         },
-        rawArguments: "{\"query\":\"from:customer\",\"maxResults\":5}"
+        rawArguments: "{\"query\":\"coding_agent\",\"maxResults\":5}"
       },
       {
         type: "usage",

@@ -4,7 +4,6 @@ import { useMemo, useState } from "react";
 
 import {
   activityEvents,
-  artifacts,
   connectorItems,
   connectorMatchesFilter,
   connectorPreviewApprovalStatus,
@@ -41,12 +40,12 @@ export function useDailyWorkSelectionState() {
     useState<WorkflowActionFilter>("全部");
   const [selectedWorkflowActionId, setSelectedWorkflowActionId] = useState<
     string | null
-  >(workflowActions[0]?.id ?? null);
+  >(null);
   const [selectedActivityEventId, setSelectedActivityEventId] = useState<
     string | null
   >(activityEvents[0]?.id ?? null);
   const [selectedArtifactId, setSelectedArtifactId] = useState<string | null>(
-    artifacts[0]?.id ?? null
+    null
   );
   const [artifactFilter, setArtifactFilter] = useState<ArtifactFilter>("全部");
   const [modelRouteMode, setModelRouteMode] = useState<ModelRouteMode>("fast");
@@ -190,11 +189,15 @@ export function useDailyWorkDerivedSelections({
     [sessionHistoryFilter, sessionHistoryPanelItems]
   );
   const selectedSessionHistory = useMemo(() => {
-    const selectedInFilter = filteredSessionHistory.find(
-      (item) => item.id === selectedSessionHistoryId
-    );
+    if (!selectedSessionHistoryId) {
+      return null;
+    }
 
-    return selectedInFilter ?? filteredSessionHistory[0] ?? sessionHistoryPanelItems[0] ?? null;
+    return (
+      filteredSessionHistory.find((item) => item.id === selectedSessionHistoryId) ??
+      sessionHistoryPanelItems.find((item) => item.id === selectedSessionHistoryId) ??
+      null
+    );
   }, [filteredSessionHistory, selectedSessionHistoryId, sessionHistoryPanelItems]);
 
   return {

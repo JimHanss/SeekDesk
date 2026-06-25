@@ -19,6 +19,7 @@ import { Button } from "@/components/ui/button";
 import { cn } from "@/lib/utils";
 
 import type {
+  AgentPermissionGrantTraceItem,
   AgentToolActivityTraceItem,
   AgentToolCallTraceItem,
   AgentTraceState,
@@ -94,10 +95,14 @@ export function ChatThread({
 
 export function AgentTracePanel({
   agentTrace,
-  modelName
+  modelName,
+  onAuthorizeToolCall,
+  onExecuteToolCall
 }: {
   agentTrace: AgentTraceState;
   modelName: string;
+  onAuthorizeToolCall?: ((toolCall: AgentToolCallTraceItem) => Promise<void> | void) | undefined;
+  onExecuteToolCall?: ((toolCall: AgentToolCallTraceItem) => Promise<void> | void) | undefined;
 }) {
   const hasToolCalls = agentTrace.toolCalls.length > 0;
   const hasToolActivityEvents = agentTrace.toolActivityEvents.length > 0;
@@ -181,13 +186,18 @@ export function AgentTracePanel({
       <div className="mt-3 space-y-2">
         {hasToolCalls ? (
           agentTrace.toolCalls.map((toolCall) => (
-            <ToolCallRow key={toolCall.id} toolCall={toolCall} />
+            <ToolCallRow
+              key={toolCall.id}
+              grants={agentTrace.permissionGrants}
+              toolCall={toolCall}
+              onAuthorizeToolCall={onAuthorizeToolCall}
+              onExecuteToolCall={onExecuteToolCall}
+            />
           ))
         ) : (
           <div className="rounded-[8px] border border-dashed border-slate-200 bg-white px-3 py-2 text-xs text-slate-600">
-            No tools have been called in this turn yet. DeepSeek can plan Gmail,
-            Calendar, and local preview tools when the task requires context or
-            a reviewable artifact.
+            No tools have been called in this turn yet. DeepSeek can plan file
+            reads, search, git inspection, edits, shell commands, and tests.
           </div>
         )}
       </div>
@@ -260,9 +270,25 @@ function ToolActivityTimeline({
   );
 }
 
-function ToolCallRow({ toolCall }: { toolCall: AgentToolCallTraceItem }) {
+function ToolCallRow({
+  grants,
+  toolCall,
+  onAuthorizeToolCall,
+  onExecuteToolCall
+}: {
+  grants: AgentPermissionGrantTraceItem[];
+  toolCall: AgentToolCallTraceItem;
+  onAuthorizeToolCall?: ((toolCall: AgentToolCallTraceItem) => Promise<void> | void) | undefined;
+  onExecuteToolCall?: ((toolCall: AgentToolCallTraceItem) => Promise<void> | void) | undefined;
+}) {
   const resultSummary = summarizeToolResult(toolCall);
   const reference = summarizeToolReference(toolCall.outputJson);
+  const activeGrant = grants.find(
+    (grant) => grant.action === toolCall.name && grant.status === "active"
+  );
+  const isWriteOrCommand = isCodingWriteOrCommandTool(toolCall.name);
+  const canAuthorize = isWriteOrCommand && toolCall.permissionRequired && !activeGrant;
+  const canExecute = isWriteOrCommand && Boolean(activeGrant) && toolCall.status !== "completed";
 
   return (
     <div
@@ -318,6 +344,45 @@ function ToolCallRow({ toolCall }: { toolCall: AgentToolCallTraceItem }) {
         <div className="mt-2 rounded-[8px] border border-teal-100 bg-teal-50 px-2.5 py-2 text-teal-800">
           <span className="font-medium">Reference: </span>
           {reference}
+        </div>
+      ) : null}
+
+      {isWriteOrCommand ? (
+        <div
+          className="mt-2 rounded-[8px] border border-orange-100 bg-orange-50 px-2.5 py-2 text-orange-900"
+          data-agent-write-authorization={toolCall.id}
+        >
+          <div className="text-[11px] font-semibold uppercase tracking-normal">
+            Workspace action authorization
+          </div>
+          <div className="mt-1 text-xs leading-5">
+            {activeGrant
+              ? "Authorized for this session until " + formatTraceTime(activeGrant.expiresAt) + "."
+              : "Requires same-session authorization before writing files, running commands, or running tests."}
+          </div>
+          <div className="mt-2 flex flex-wrap gap-2">
+            {canAuthorize ? (
+              <Button
+                type="button"
+                size="sm"
+                variant="secondary"
+                data-agent-authorize-tool={toolCall.id}
+                onClick={() => void onAuthorizeToolCall?.(toolCall)}
+              >
+                Authorize session
+              </Button>
+            ) : null}
+            {canExecute ? (
+              <Button
+                type="button"
+                size="sm"
+                data-agent-execute-tool={toolCall.id}
+                onClick={() => void onExecuteToolCall?.(toolCall)}
+              >
+                Execute action
+              </Button>
+            ) : null}
+          </div>
         </div>
       ) : null}
 
@@ -610,6 +675,15 @@ function toolStatusClass(status: string) {
   }
 }
 
+function isCodingWriteOrCommandTool(name: string) {
+  return (
+    name === "coding.write_file" ||
+    name === "coding.edit_file" ||
+    name === "coding.run_shell" ||
+    name === "coding.run_tests"
+  );
+}
+
 function summarizeToolPlan(toolCall: AgentToolCallTraceItem) {
   return `${toolCall.name} with ${summarizeJsonShape(toolCall.inputJson)}`;
 }
@@ -632,24 +706,42 @@ function summarizeToolResult(toolCall: AgentToolCallTraceItem) {
     return "No structured result yet";
   }
 
-  if (Array.isArray(output.threads)) {
-    return `${output.threads.length} Gmail thread result(s)`;
+  if (output.previewOnly === false) {
+    return "Authorized workspace action completed";
   }
 
-  if (Array.isArray(output.messages)) {
-    return `${output.messages.length} Gmail message metadata record(s)`;
+  if (Array.isArray(output.entries)) {
+    return `${output.entries.length} file tree entr${output.entries.length === 1 ? "y" : "ies"}`;
   }
 
-  if (Array.isArray(output.events)) {
-    return `${output.events.length} calendar event result(s)`;
+  if (typeof output.content === "string") {
+    const path = typeof output.path === "string" ? output.path : "file";
+    return `Read ${path}`;
   }
 
-  if (output.draftPayloadPreview) {
-    return "Local Gmail draft payload preview";
+  if (Array.isArray(output.matches)) {
+    return `${output.matches.length} search match${output.matches.length === 1 ? "" : "es"}`;
   }
 
-  if (output.eventPayloadPreview) {
-    return "Local Calendar event payload preview";
+  if (typeof output.statusShort === "string" || typeof output.branch === "string") {
+    return "Git status captured";
+  }
+
+  if (typeof output.diff === "string") {
+    return "Git diff captured";
+  }
+
+  if (typeof output.stdout === "string" || typeof output.stderr === "string") {
+    const exitCode = typeof output.exitCode === "number" ? output.exitCode : "unknown";
+    return `Command finished with exit code ${exitCode}`;
+  }
+
+  if (typeof output.writtenPath === "string") {
+    return `Wrote ${output.writtenPath}`;
+  }
+
+  if (typeof output.editedPath === "string") {
+    return `Edited ${output.editedPath}`;
   }
 
   if (typeof output.artifactId === "string") {
@@ -669,22 +761,20 @@ function summarizeToolReference(outputJson: unknown) {
     return `artifact ${output.artifactId}`;
   }
 
-  if (typeof output.threadId === "string" && output.threadId.trim()) {
-    return `Gmail thread ${output.threadId}`;
+  if (typeof output.path === "string" && output.path.trim()) {
+    return output.path;
   }
 
-  if (Array.isArray(output.threads) && output.threads.length > 0) {
-    const first = asRecord(output.threads[0]);
-    return typeof first?.id === "string" ? `Gmail thread ${first.id}` : null;
+  if (typeof output.writtenPath === "string" && output.writtenPath.trim()) {
+    return output.writtenPath;
   }
 
-  if (Array.isArray(output.events) && output.events.length > 0) {
-    const first = asRecord(output.events[0]);
-    return typeof first?.id === "string" ? `Calendar event ${first.id}` : null;
+  if (typeof output.editedPath === "string" && output.editedPath.trim()) {
+    return output.editedPath;
   }
 
-  if (typeof output.calendarId === "string" && output.calendarId.trim()) {
-    return `calendar ${output.calendarId}`;
+  if (typeof output.cwd === "string" && output.cwd.trim()) {
+    return `cwd ${output.cwd}`;
   }
 
   return null;

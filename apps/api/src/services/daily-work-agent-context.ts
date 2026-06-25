@@ -17,8 +17,6 @@ import {
 } from "@seekdesk/shared";
 
 import type { DailyWorkRepository } from "../repositories/daily-work-repository.js";
-import { getGoogleConnectionStatus } from "./google-connector-service.js";
-import { getMicrosoftConnectionStatus } from "./microsoft-connector-service.js";
 
 export interface DailyWorkAgentContext {
   context: ChatContext;
@@ -44,8 +42,6 @@ export async function createDailyWorkAgentContext(input: {
     connectors,
     workflows,
     sessionDetails,
-    googleStatus,
-    microsoftStatus,
     sessionToolCalls,
     sessionModelUsageRecords
   ] = await Promise.all([
@@ -57,8 +53,6 @@ export async function createDailyWorkAgentContext(input: {
     input.repository.listConnectors(),
     input.repository.listWorkflows(),
     input.repository.listSessionDetails(),
-    getGoogleConnectionStatus({ repository: input.repository }),
-    getMicrosoftConnectionStatus({ repository: input.repository }),
     input.repository.listToolCalls({ sessionId: input.sessionId, limit: 50 }),
     input.repository.listModelUsageRecords({
       sessionId: input.sessionId,
@@ -111,12 +105,10 @@ export async function createDailyWorkAgentContext(input: {
         : summarizeArtifacts(artifacts, context.artifactIds)),
       ...summarizeApprovals(approvalRequests, context.approvalRequestIds),
       ...summarizeConnectors(connectors, context.connectorIds),
-      ...summarizeGoogleAuthorization(googleStatus),
-      ...summarizeMicrosoftAuthorization(microsoftStatus),
       ...summarizeWorkflows(workflows, context.workflowIds),
       ...summarizeAllowedTools(allowedToolNames),
-      "Tool planning hint: use gmail.search_threads before gmail.read_thread for Google mail; use outlook.search_messages before outlook.read_message for Outlook mail; use calendar.list_events or outlook.calendar.list_events for schedule or time-window questions; use daily.persist_artifact for reviewable local work artifacts.",
-      "Tool execution boundary: Gmail, Google Calendar, Outlook Mail, and Outlook Calendar read tools may use authorized connectors. Draft email and calendar event tools only create local payload previews; they must not send email or insert events."
+      "Tool planning hint: email and calendar connectors are removed in this build. Use coding_agent tools for local workspace inspection, edits, commands, git, and tests.",
+      "Tool execution boundary: coding_agent writes and commands require same-session authorization and must stay inside the workspace root."
     ]
   };
 }
@@ -288,32 +280,37 @@ function summarizeToolOutput(value: unknown) {
     return `artifact ${output.artifactId}`;
   }
 
-  if (Array.isArray(output.threads)) {
-    return `${output.threads.length} Gmail thread result(s)`;
+  if (Array.isArray(output.entries)) {
+    return `${output.entries.length} file tree entr${output.entries.length === 1 ? "y" : "ies"}`;
   }
 
-  if (Array.isArray(output.messages)) {
-    return output.provider === "outlook"
-      ? `${output.messages.length} Outlook message metadata record(s)`
-      : `${output.messages.length} Gmail message metadata record(s)`;
+  if (Array.isArray(output.matches)) {
+    return `${output.matches.length} workspace search match${output.matches.length === 1 ? "" : "es"}`;
   }
 
-  if (Array.isArray(output.events)) {
-    return output.provider === "outlook_calendar"
-      ? `${output.events.length} Outlook calendar event result(s)`
-      : `${output.events.length} calendar event result(s)`;
+  if (typeof output.content === "string") {
+    return `file read ${typeof output.path === "string" ? output.path : "content"}`;
   }
 
-  if (output.draftPayloadPreview) {
-    return output.provider === "outlook"
-      ? "local Outlook draft payload preview"
-      : "local Gmail draft payload preview";
+  if (typeof output.diff === "string") {
+    return "git diff captured";
   }
 
-  if (output.eventPayloadPreview) {
-    return output.provider === "outlook_calendar"
-      ? "local Outlook Calendar event payload preview"
-      : "local Calendar event payload preview";
+  if (typeof output.statusShort === "string" || typeof output.branch === "string") {
+    return "git status captured";
+  }
+
+  if (typeof output.stdout === "string" || typeof output.stderr === "string") {
+    const exitCode = typeof output.exitCode === "number" ? output.exitCode : "unknown";
+    return `command completed with exit code ${exitCode}`;
+  }
+
+  if (typeof output.writtenPath === "string") {
+    return `file written ${output.writtenPath}`;
+  }
+
+  if (typeof output.editedPath === "string") {
+    return `file edited ${output.editedPath}`;
   }
 
   return `fields ${Object.keys(output).join(", ") || "none"}`;
@@ -323,7 +320,7 @@ function summarizeTemporalContext(context: ChatContext, now: Date) {
   return [
     `Current time: ${now.toISOString()}.`,
     `Requested locale/timezone: locale=${context.locale ?? "not provided"}; timezone=${context.timezone ?? "not provided"}.`,
-    "Temporal planning: for requests like today, this morning, this week, or upcoming meetings, derive explicit ISO time windows before calling calendar.list_events."
+    "Temporal planning: preserve explicit dates, times, versions, and file paths in the user request before planning coding tools."
   ];
 }
 
@@ -460,87 +457,11 @@ function summarizeConnectors(
   connectors: DailyWorkConnector[],
   requestedIds: string[]
 ) {
-  const selected = selectRequestedOrDefault(
-    connectors,
-    requestedIds,
-    (connector) =>
-      connector.provider === "gmail" ||
-      connector.provider === "google_calendar" ||
-      connector.provider === "outlook" ||
-      connector.provider === "outlook_calendar",
-    5
-  );
-
-  if (!selected.length) {
-    return ["Connectors: no mail or calendar connector catalog entries found."];
-  }
-
-  return [
-    "Connector state:",
-    ...selected.map(
-      (connector) =>
-        `Connector ${connector.id}: ${connector.displayName}; provider=${connector.provider}; status=${connector.status}; permission=${connector.permissionState}; actions=${connector.availableActions.join(", ") || "none"}; approvals=${connector.requiredApprovalRequestIds.join(", ") || "none"}; notes=${truncateText(connector.notes.join(" "), 220)}`
-    )
-  ];
+  void connectors;
+  void requestedIds;
+  return ["Connectors: email and calendar connectors are removed in coding-agent mode."];
 }
 
-function summarizeGoogleAuthorization(
-  status: Awaited<ReturnType<typeof getGoogleConnectionStatus>>
-) {
-  if (status.connected) {
-    if (!status.scopesComplete) {
-      const missingScopes = status.missingScopes.join(", ") || "unknown";
-
-      return [
-        `Google authorization: connected${status.accountEmail ? ` as ${status.accountEmail}` : ""}, but required scopes are incomplete. Missing scopes=${missingScopes}.`,
-        "Google tool availability: do not call Gmail or Calendar read tools until OAuth is refreshed with all required scopes. Gmail draft and calendar event preview tools can still create local payload previews when the user provides all content."
-      ];
-    }
-
-    return [
-      `Google authorization: connected${status.accountEmail ? ` as ${status.accountEmail}` : ""}; scopes=${status.scopes.join(", ") || "unknown"}.`,
-      "Google tool availability: gmail.search_threads, gmail.read_thread, and calendar.list_events may read authorized metadata. Gmail draft and calendar event tools remain local previews only."
-    ];
-  }
-
-  const missingConfig = status.missingConfig?.length
-    ? ` Missing config: ${status.missingConfig.join(", ")}.`
-    : "";
-
-  return [
-    `Google authorization: not connected.${missingConfig}`,
-    "Google tool availability: do not claim Gmail or Calendar data was read until OAuth is connected. If the user asks for Google data, explain that authorization is required or attempt the tool only when the request explicitly asks for connector verification."
-  ];
-}
-
-function summarizeMicrosoftAuthorization(
-  status: Awaited<ReturnType<typeof getMicrosoftConnectionStatus>>
-) {
-  if (status.connected) {
-    if (!status.scopesComplete) {
-      const missingScopes = status.missingScopes.join(", ") || "unknown";
-
-      return [
-        `Microsoft authorization: connected${status.accountEmail ? ` as ${status.accountEmail}` : ""}, but required scopes are incomplete. Missing scopes=${missingScopes}.`,
-        "Microsoft tool availability: do not call Outlook Mail or Outlook Calendar read tools until OAuth is refreshed with all required scopes. Outlook draft and calendar event preview tools can still create local payload previews when the user provides all content."
-      ];
-    }
-
-    return [
-      `Microsoft authorization: connected${status.accountEmail ? ` as ${status.accountEmail}` : ""}; scopes=${status.scopes.join(", ") || "unknown"}.`,
-      "Microsoft tool availability: outlook.search_messages, outlook.read_message, and outlook.calendar.list_events may read authorized metadata. Outlook draft and calendar event tools remain local previews only."
-    ];
-  }
-
-  const missingConfig = status.missingConfig?.length
-    ? ` Missing config: ${status.missingConfig.join(", ")}.`
-    : "";
-
-  return [
-    `Microsoft authorization: not connected.${missingConfig}`,
-    "Microsoft tool availability: do not claim Outlook Mail or Outlook Calendar data was read until OAuth is connected. If the user asks for Outlook data, explain that authorization is required or attempt the tool only when the request explicitly asks for connector verification."
-  ];
-}
 
 function summarizeWorkflows(
   workflows: DailyWorkWorkflow[],

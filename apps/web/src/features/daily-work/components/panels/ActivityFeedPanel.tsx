@@ -58,7 +58,7 @@ export function ActivityFeedPanel({
             <span className="min-w-0 break-words">实时活动流 / 状态事件</span>
           </div>
           <p className="mt-1 text-xs leading-5 text-teal-700">
-            daily_work 的任务状态轨迹：记录会话恢复、模板填入、审批变化、工作流预演和产物复用状态。
+            记录会话、工具计划、审批变化、执行结果和产物复用状态。
           </p>
         </div>
 
@@ -92,7 +92,7 @@ export function ActivityFeedPanel({
       </div>
 
       <div className="mt-3 rounded-[8px] border border-orange-200 bg-orange-50 px-3 py-2 text-xs leading-5 text-orange-800">
-        编码模式兼容提示：这些事件只描述 daily_work 日常工作自动化状态，不暴露 coding_agent 命令、仓库操作或脚本工具。
+        编码模式提示：活动事件会关联当前会话、工具调用和产物，便于回溯执行链路。
       </div>
 
       <div className="mt-3 grid gap-3 xl:grid-cols-[minmax(0,1.08fr)_minmax(0,0.92fr)]">
@@ -243,26 +243,26 @@ function ActivityToolAuditBlock({
     >
       <div className="flex items-center gap-2 text-xs font-medium text-slate-950">
         <Wrench className="size-4 shrink-0 text-teal-700" aria-hidden="true" />
-        <span className="min-w-0 break-words">Agent tool audit</span>
+        <span className="min-w-0 break-words">工具审计</span>
       </div>
 
       <div className="mt-2 grid gap-2">
         <ArtifactDetailRow
-          label="Tool"
+          label="工具"
           value={`${toolAudit.toolPhase} / ${toolAudit.toolName}`}
         />
         <ArtifactDetailRow
-          label="Provider"
+          label="来源"
           value={toolAudit.provider ?? "local preview"}
         />
-        <ArtifactDetailRow label="Connector" value={toolAudit.connectorId ?? "none"} />
-        <ArtifactDetailRow label="Input fields" value={inputFields} />
-        <ArtifactDetailRow label="Result count" value={resultCount} />
-        <ArtifactDetailRow label="External effects" value={externalEffects} />
+        <ArtifactDetailRow label="关联对象" value={toolAudit.connectorId ?? "none"} />
+        <ArtifactDetailRow label="输入字段" value={inputFields} />
+        <ArtifactDetailRow label="结果数量" value={resultCount} />
+        <ArtifactDetailRow label="外部影响" value={externalEffects} />
       </div>
 
       <div className="mt-2 rounded-[8px] border border-teal-100 bg-teal-50 px-2.5 py-2 text-xs leading-5 text-teal-800">
-        <span className="font-medium">Summary: </span>
+        <span className="font-medium">摘要：</span>
         {toolAudit.externalDataSummary}
       </div>
 
@@ -274,8 +274,8 @@ function ActivityToolAuditBlock({
       ) : null}
 
       <div className="mt-2 rounded-[8px] border border-orange-100 bg-orange-50 px-2.5 py-2 text-xs leading-5 text-orange-800">
-        <span className="font-medium">Boundary: </span>
-        {boundary}; external writes remain disabled in daily_work mode.
+        <span className="font-medium">边界：</span>
+        {boundary}; 写入、命令和测试执行必须经过会话内审批。
       </div>
     </div>
   );

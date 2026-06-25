@@ -83,7 +83,7 @@ export function mapApprovalRequestsResponse(
   payload: DailyApprovalRequestsResponseDto
 ): ApprovalRequestItem[] {
   if (payload.mode !== activeMode || !Array.isArray(payload.requests)) {
-    throw new Error("Approvals response did not include daily_work requests.");
+    throw new Error("Approvals response did not include coding_agent requests.");
   }
 
   return payload.requests.map(mapApprovalRequestDtoToItem);
