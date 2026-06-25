@@ -1,12 +1,13 @@
 #!/usr/bin/env node
 const fs = require("node:fs");
+const net = require("node:net");
 const { spawn } = require("node:child_process");
 const { setTimeout: delay } = require("node:timers/promises");
 const path = require("node:path");
 
 const root = path.resolve(__dirname, "..");
 const apiPort = Number(process.env.SEEKDESK_API_PORT || 4000);
-const webPort = Number(process.env.SEEKDESK_WEB_PORT || 3000);
+let webPort = Number(process.env.SEEKDESK_WEB_PORT || 3000);
 const apiUrl = process.env.SEEKDESK_API_URL || `http://127.0.0.1:${apiPort}`;
 let webUrl = process.env.SEEKDESK_WEB_URL || `http://127.0.0.1:${webPort}`;
 const spawned = [];
@@ -56,6 +57,65 @@ async function canFetch(url) {
   }
 }
 
+async function isSeekDeskWeb(url) {
+  try {
+    const response = await fetch(url, { signal: AbortSignal.timeout(1500) });
+    const body = await response.text();
+    return response.ok && body.includes("SeekDesk");
+  } catch {
+    return false;
+  }
+}
+
+function isPortAvailable(port) {
+  return new Promise((resolve) => {
+    const server = net.createServer();
+    server.once("error", () => resolve(false));
+    server.once("listening", () => {
+      server.close(() => resolve(true));
+    });
+    server.listen({ host: "127.0.0.1", port });
+  });
+}
+
+async function isWebPortUnused(port) {
+  if (!(await isPortAvailable(port))) {
+    return false;
+  }
+
+  return !(await canFetch(`http://127.0.0.1:${port}`));
+}
+
+async function findAvailablePort(startPort) {
+  for (let candidate = startPort; candidate < startPort + 100; candidate += 1) {
+    if (await isWebPortUnused(candidate)) {
+      return candidate;
+    }
+  }
+  fail(`could not find an available web port starting at ${startPort}.`);
+}
+
+async function prepareDefaultWebUrl() {
+  if (process.env.SEEKDESK_WEB_URL || process.env.SEEKDESK_WEB_PORT) {
+    return;
+  }
+
+  const availablePort = await findAvailablePort(webPort);
+  if (availablePort !== webPort) {
+    log(`web port ${webPort} is busy; using ${availablePort}`);
+    webPort = availablePort;
+    webUrl = `http://127.0.0.1:${webPort}`;
+    return;
+  }
+
+  if ((await canFetch(webUrl)) && !(await isSeekDeskWeb(webUrl))) {
+    const nextPort = await findAvailablePort(webPort + 1);
+    log(`${webUrl} is not a SeekDesk web app; using ${nextPort}`);
+    webPort = nextPort;
+    webUrl = `http://127.0.0.1:${webPort}`;
+  }
+}
+
 async function resolveExistingNextDevUrl() {
   const lockPath = path.join(root, "apps", "web", ".next", "dev", "lock");
   try {
@@ -67,7 +127,7 @@ async function resolveExistingNextDevUrl() {
     ].filter(Boolean);
 
     for (const candidate of candidates) {
-      if (await canFetch(candidate)) {
+      if (await isSeekDeskWeb(candidate)) {
         return candidate;
       }
     }
@@ -149,6 +209,8 @@ async function waitFor(url, label) {
 }
 
 async function ensureServers() {
+  await prepareDefaultWebUrl();
+
   if (!(await canFetch(`${apiUrl}/health`))) {
     if (!useLiveProvider) {
       log("using deterministic mock provider for browser smoke");

@@ -65,13 +65,7 @@ npm run build
 npm run test:browser-smoke
 ```
 
-`test:browser-smoke` uses Node.js plus Chrome DevTools Protocol to run a
-production-page smoke without Playwright or Puppeteer. It starts the API and web
-services, then verifies page render, daily activity API/WebSocket snapshots,
-the DeepSeek model-usage panel, prompt interactions, workflow prompt filling,
-and highlighted chat code blocks. By default it starts `apps/web` with
-`next start` on `http://127.0.0.1:3000`; set `SEEKDESK_SMOKE_URL` to reuse an
-already-running service and `BROWSER_PATH` to override Chrome or Edge discovery.
+`test:browser-smoke` uses Node.js plus Chrome DevTools Protocol to verify the coding workbench without Playwright or Puppeteer. It starts the API and web app when needed, chooses an available web port if `3000` is occupied, and checks the workspace picker, file/search/Git panels, chat trace, approval flow, terminal output, model usage, and removed email-connector text. Set `SEEKDESK_WEB_URL` to reuse an already-running web service and `BROWSER_PATH` to override Chrome or Edge discovery.
 
 Default local endpoints:
 

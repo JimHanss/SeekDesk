@@ -1,27 +1,18 @@
 # Scripts
 
-Project-level automation scripts live here. The current real-agent helpers cover
-secret hygiene, Google OAuth readiness, remote env sync, browser OAuth
-preparation, and remote DeepSeek/Postgres verification.
+Project-level automation scripts live here. The current helpers focus on coding-agent verification, secret hygiene, smoke cleanup, and browser smoke coverage.
 
 Useful commands:
 
 - `npm run verify:secrets`
-- `npm run verify:real-agent-env`
-- `npm run configure:google-oauth`
-- `npm run sync:remote-google-oauth -- --host jim-mac`
-- `npm run prepare:remote-google-oauth`
-- `npm run verify:remote-real-agent`
+- `npm run cleanup:smoke-data`
+- `npm run test:browser-smoke`
+- `npm run db:migrate`
 
-The Google OAuth helpers write only to ignored env files and avoid printing
-secret values. `prepare:remote-google-oauth` also attempts to clean up the
-temporary remote API process if OAuth readiness fails before the ready state.
-
-To check whether a local or SSH remote checkout has the required real-agent env
-variables without revealing values, and to print the Google OAuth redirect URI
-and required scopes:
+Daemon workflow:
 
 ```bash
-npm run verify:real-agent-env
-npm run verify:real-agent-env -- --host jim-mac
+npm run dev:daemon -- start --api http://127.0.0.1:4000 --token seekdesk-local-dev --workspace /path/to/project
 ```
+
+The browser smoke starts the API and web app when needed, selects an available web port if `3000` is occupied, verifies the coding workbench UI, and exercises workspace, file, search, Git, chat trace, approval, and shell/test execution paths through the safe runtime boundary.
