@@ -782,19 +782,26 @@ export default function Page() {
       apiBaseUrl={apiBaseUrl}
       open={newConversationDialogOpen}
       state={codingWorkbench.state}
-      onBrowseWorkspace={(path) => void codingWorkbench.actions.browseWorkspace(path)}
+      onBrowseWorkspace={(path, workspaceId) => void codingWorkbench.actions.browseWorkspace(path, workspaceId)}
       onClose={() => setNewConversationDialogOpen(false)}
-      onCreate={async () => {
+      onCreate={async (workspaceId) => {
         const manualPath = codingWorkbench.state.workspaceBrowser.manualPath.trim();
+        let targetWorkspaceId = workspaceId || selectedWorkspaceId || codingWorkbench.state.workspaces[0]?.workspaceId || "";
+        if (!targetWorkspaceId && !manualPath) {
+          const refreshedWorkspaces = await codingWorkbench.actions.refreshWorkspaces();
+          targetWorkspaceId = refreshedWorkspaces[0]?.workspaceId || "";
+        }
         if (manualPath) {
-          await codingWorkbench.actions.selectWorkspace(manualPath);
-        } else if (!selectedWorkspaceId && codingWorkbench.state.workspaces[0]) {
+          await codingWorkbench.actions.selectWorkspace(manualPath, targetWorkspaceId);
+        } else if (targetWorkspaceId) {
+          setSelectedWorkspaceId(targetWorkspaceId);
+        } else if (codingWorkbench.state.workspaces[0]) {
           setSelectedWorkspaceId(codingWorkbench.state.workspaces[0].workspaceId);
         }
         selectCurrentConversation();
         setNewConversationDialogOpen(false);
       }}
-      onPickWorkspace={() => void codingWorkbench.actions.pickWorkspace()}
+      onPickWorkspace={(workspaceId) => void codingWorkbench.actions.pickWorkspace(workspaceId)}
       onSelectExistingWorkspace={(workspaceId) => {
         codingWorkbench.actions.setActiveWorkspace(workspaceId);
       }}
@@ -862,10 +869,10 @@ function NewConversationWorkspaceDialog({
   apiBaseUrl: string;
   open: boolean;
   state: CodingWorkbenchController["state"];
-  onBrowseWorkspace: (path?: string) => void;
+  onBrowseWorkspace: (path?: string, workspaceId?: string) => void;
   onClose: () => void;
-  onCreate: () => Promise<void>;
-  onPickWorkspace: () => void;
+  onCreate: (workspaceId?: string) => Promise<void>;
+  onPickWorkspace: (workspaceId?: string) => void;
   onSelectExistingWorkspace: (workspaceId: string) => void;
   onUpdateWorkspacePath: (path: string) => void;
 }) {
@@ -874,9 +881,16 @@ function NewConversationWorkspaceDialog({
   }
 
   const activeWorkspaceId = state.activeWorkspaceId || state.workspace?.workspaceId || "";
-  const hasConnectedLocalDaemon = state.workspaces.some(
-    (workspace) => workspace.runtimeMode === "local_daemon"
+  const activeWorkspace = state.workspaces.find(
+    (workspace) => workspace.workspaceId === activeWorkspaceId
   );
+  const preferredLocalWorkspace =
+    activeWorkspace?.runtimeMode === "local_daemon"
+      ? activeWorkspace
+      : state.workspaces.find((workspace) => workspace.runtimeMode === "local_daemon");
+  const workspaceForLocalSelection = preferredLocalWorkspace?.workspaceId || activeWorkspaceId;
+  const hasConnectedLocalDaemon = Boolean(preferredLocalWorkspace);
+  const createDisabled = state.workspaceBrowser.status === "selecting";
   const daemonStartCommand =
     'seekdesk-daemon start --api ' +
     apiBaseUrl +
@@ -943,7 +957,7 @@ function NewConversationWorkspaceDialog({
             <div className="flex flex-wrap gap-2">
               <button
                 type="button"
-                onClick={onPickWorkspace}
+                onClick={() => onPickWorkspace(workspaceForLocalSelection || undefined)}
                 disabled={!hasConnectedLocalDaemon}
                 className={
                   "h-9 rounded-[6px] border px-3 text-sm font-semibold " +
@@ -954,7 +968,7 @@ function NewConversationWorkspaceDialog({
               >
                 打开本机选择器
               </button>
-              <button type="button" onClick={() => onBrowseWorkspace(state.workspaceBrowser.currentPath || state.workspace?.workspaceRoot)} className="h-9 rounded-[6px] border border-slate-200 px-3 text-sm font-semibold text-slate-700 hover:bg-slate-50">
+              <button type="button" onClick={() => onBrowseWorkspace(state.workspaceBrowser.currentPath || preferredLocalWorkspace?.rootPath || state.workspace?.workspaceRoot, workspaceForLocalSelection || undefined)} className="h-9 rounded-[6px] border border-slate-200 px-3 text-sm font-semibold text-slate-700 hover:bg-slate-50">
                 浏览目录
               </button>
             </div>
@@ -966,19 +980,19 @@ function NewConversationWorkspaceDialog({
             />
             <div className="mt-2 text-xs text-slate-500">
               {state.workspaceBrowser.notice ||
-                (!hasConnectedLocalDaemon
-                  ? "本机选择器需要已连接的本机 daemon；远程 fallback 只能浏览服务器目录。"
-                  : "")}
+                (preferredLocalWorkspace
+                  ? "\u9009\u62e9\u5668\u5c06\u4f7f\u7528 " + (preferredLocalWorkspace.machineName ?? "\u672c\u673a") + " / " + preferredLocalWorkspace.rootPath
+                  : "\u672c\u673a\u9009\u62e9\u5668\u9700\u8981\u5df2\u8fde\u63a5\u7684\u672c\u673a daemon\uff1b\u8fdc\u7a0b fallback \u53ea\u80fd\u6d4f\u89c8\u670d\u52a1\u5668\u76ee\u5f55\u3002")}
             </div>
 
             <div className="mt-3 max-h-48 overflow-y-auto rounded-[8px] border border-slate-100">
               {state.workspaceBrowser.parentPath ? (
-                <button type="button" onClick={() => onBrowseWorkspace(state.workspaceBrowser.parentPath ?? undefined)} className="block w-full border-b border-slate-100 px-3 py-2 text-left text-sm text-slate-700 hover:bg-slate-50">
+                <button type="button" onClick={() => onBrowseWorkspace(state.workspaceBrowser.parentPath ?? undefined, workspaceForLocalSelection || undefined)} className="block w-full border-b border-slate-100 px-3 py-2 text-left text-sm text-slate-700 hover:bg-slate-50">
                   ../
                 </button>
               ) : null}
               {state.workspaceBrowser.entries.map((entry) => (
-                <button key={entry.path} type="button" onClick={() => onBrowseWorkspace(entry.path)} className="block w-full border-b border-slate-100 px-3 py-2 text-left text-sm text-slate-700 last:border-b-0 hover:bg-slate-50">
+                <button key={entry.path} type="button" onClick={() => onBrowseWorkspace(entry.path, workspaceForLocalSelection || undefined)} className="block w-full border-b border-slate-100 px-3 py-2 text-left text-sm text-slate-700 last:border-b-0 hover:bg-slate-50">
                   {entry.name}
                 </button>
               ))}
@@ -990,8 +1004,19 @@ function NewConversationWorkspaceDialog({
           <button type="button" onClick={onClose} className="h-9 rounded-[6px] border border-slate-200 px-4 text-sm font-semibold text-slate-700 hover:bg-slate-50">
             取消
           </button>
-          <button type="button" data-coding-dialog-create onClick={() => void onCreate()} className="h-9 rounded-[6px] border border-orange-500 bg-orange-500 px-4 text-sm font-semibold text-white hover:bg-orange-600">
-            创建对话
+          <button
+            type="button"
+            data-coding-dialog-create
+            onClick={() => void onCreate(workspaceForLocalSelection || undefined)}
+            disabled={createDisabled}
+            className={
+              "h-9 rounded-[6px] border px-4 text-sm font-semibold text-white " +
+              (createDisabled
+                ? "cursor-not-allowed border-slate-300 bg-slate-300"
+                : "border-orange-500 bg-orange-500 hover:bg-orange-600")
+            }
+          >
+            {state.workspaceBrowser.status === "selecting" ? "\u6b63\u5728\u7ed1\u5b9a..." : "\u521b\u5efa\u5bf9\u8bdd"}
           </button>
         </div>
       </div>

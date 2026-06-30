@@ -313,7 +313,7 @@ export function useCodingWorkbench(
     }
   }, [activeWorkspaceId, fetchJson, withWorkspace]);
 
-  const browseWorkspace = useCallback(async (path?: string) => {
+  const browseWorkspace = useCallback(async (path?: string, workspaceId = activeWorkspaceId) => {
     setWorkspaceBrowser((current) => ({
       ...current,
       status: "loading",
@@ -329,7 +329,7 @@ export function useCodingWorkbench(
         entries?: CodingWorkspaceDirectoryEntry[];
       }>("/api/coding/workspace/browse", {
         method: "POST",
-        body: JSON.stringify(withWorkspace(path ? { path } : {}))
+        body: JSON.stringify({ ...(path ? { path } : {}), ...(workspaceId ? { workspaceId } : {}) })
       });
       setWorkspaceBrowser({
         status: "ready",
@@ -344,7 +344,7 @@ export function useCodingWorkbench(
     } catch (error) {
       setWorkspaceBrowser((current) => ({ ...current, status: "error", notice: "读取文件夹失败：" + formatUnknownError(error) }));
     }
-  }, [fetchJson, withWorkspace]);
+  }, [activeWorkspaceId, fetchJson]);
 
   const updateWorkspacePathDraft = useCallback((path: string) => {
     setWorkspaceBrowser((current) => ({ ...current, manualPath: path }));

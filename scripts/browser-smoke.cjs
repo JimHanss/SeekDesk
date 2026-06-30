@@ -57,14 +57,27 @@ async function canFetch(url) {
   }
 }
 
-async function isSeekDeskWeb(url) {
+async function fetchSeekDeskWebBody(url) {
   try {
     const response = await fetch(url, { signal: AbortSignal.timeout(1500) });
     const body = await response.text();
-    return response.ok && body.includes("SeekDesk");
+    if (response.ok && body.includes("SeekDesk")) {
+      return body;
+    }
   } catch {
-    return false;
+    return null;
   }
+  return null;
+}
+
+async function isSeekDeskWeb(url) {
+  return (await fetchSeekDeskWebBody(url)) !== null;
+}
+
+async function isSeekDeskWebForApi(url, expectedApiUrl) {
+  const body = await fetchSeekDeskWebBody(url);
+  if (!body) return false;
+  return body.includes(expectedApiUrl);
 }
 
 function isPortAvailable(port) {
@@ -127,7 +140,7 @@ async function resolveExistingNextDevUrl() {
     ].filter(Boolean);
 
     for (const candidate of candidates) {
-      if (await isSeekDeskWeb(candidate)) {
+      if (await isSeekDeskWebForApi(candidate, apiUrl)) {
         return candidate;
       }
     }
@@ -240,6 +253,7 @@ async function ensureServers() {
       webUrl = existingWebUrl;
       log("using existing web dev server at " + webUrl);
     } else {
+      log("existing web dev server is absent or points at a different API; starting an isolated web server");
       spawnWebDev({
         SEEKDESK_WEB_PORT: String(webPort),
         PORT: String(webPort),
