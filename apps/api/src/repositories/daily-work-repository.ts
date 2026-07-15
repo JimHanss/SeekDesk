@@ -21,6 +21,7 @@ import {
   defaultDailyWorkSessionDetails,
   defaultDailyWorkTemplates,
   defaultDailyWorkflows,
+  normalizeRuntimeMode,
   type DailyActivityEvent,
   type DailyApprovalRequest,
   type DailyContextDocument,
@@ -788,7 +789,7 @@ function mergeChatMessageIntoSessions(
       workspaceId: message.workspaceId ?? "workspace-seekdesk",
       ...(message.workspaceName ? { workspaceName: message.workspaceName } : {}),
       ...(message.workspaceRoot ? { workspaceRoot: message.workspaceRoot } : {}),
-      ...(message.workspaceRuntimeMode ? { workspaceRuntimeMode: message.workspaceRuntimeMode as "local_daemon" | "server_local" | "cloud_workspace" } : {}),
+      ...(message.workspaceRuntimeMode ? { workspaceRuntimeMode: normalizeRuntimeMode(message.workspaceRuntimeMode) } : {}),
       appMode: message.appMode ?? "daily_work",
       title: createSessionTitle(parsedMessage.content),
       pinned: false,
@@ -824,7 +825,7 @@ function mergeChatMessageIntoSessions(
     existing.workspaceRoot = message.workspaceRoot;
   }
   if (message.workspaceRuntimeMode && !existing.workspaceRuntimeMode) {
-    existing.workspaceRuntimeMode = message.workspaceRuntimeMode as "local_daemon" | "server_local" | "cloud_workspace";
+    existing.workspaceRuntimeMode = normalizeRuntimeMode(message.workspaceRuntimeMode);
   }
   existing.recentMessages = [...existing.recentMessages, parsedMessage].slice(-20);
   existing.messageCount = Math.max(

@@ -1,8 +1,17 @@
 import { z } from "zod";
 
+import {
+  runtimeLifecycleStatusSchema,
+  runtimeModeInputSchema
+} from "./runtime.js";
 import { codingToolNameSchema } from "./tools.js";
 
-export const daemonRuntimeModeSchema = z.enum(["local_daemon", "server_local"]);
+export const daemonProtocolVersionSchema = z.number().int().positive().default(1);
+export const daemonCapabilityVersionSchema = z.string().trim().min(1).default("1");
+export const daemonRuntimeModeSchema = runtimeModeInputSchema.refine(
+  (value) => value === "local_daemon" || value === "server_local",
+  "Daemon runtime mode must be local_daemon or server_local."
+);
 
 export const daemonWorkspaceSchema = z.object({
   workspaceId: z.string().trim().min(1),
@@ -11,8 +20,13 @@ export const daemonWorkspaceSchema = z.object({
   rootPath: z.string().trim().min(1),
   runtimeMode: daemonRuntimeModeSchema,
   connected: z.boolean(),
+  status: runtimeLifecycleStatusSchema.default("ready"),
   platform: z.string().trim().min(1).optional(),
   machineName: z.string().trim().min(1).optional(),
+  supportedCapabilities: z.array(codingToolNameSchema).default([]),
+  protocolVersion: daemonProtocolVersionSchema,
+  capabilityVersion: daemonCapabilityVersionSchema,
+  createdAt: z.string().datetime().optional(),
   updatedAt: z.string()
 });
 
@@ -22,6 +36,8 @@ export const daemonStatusSchema = z.object({
   platform: z.string().trim().min(1),
   workspaceRoot: z.string().trim().min(1),
   supportedCapabilities: z.array(codingToolNameSchema),
+  protocolVersion: daemonProtocolVersionSchema,
+  capabilityVersion: daemonCapabilityVersionSchema,
   pid: z.number().int().positive().optional()
 });
 
@@ -76,6 +92,7 @@ export const daemonRegisteredMessageSchema = z.object({
 });
 
 export type DaemonRuntimeMode = z.infer<typeof daemonRuntimeModeSchema>;
+export type DaemonProtocolVersion = z.infer<typeof daemonProtocolVersionSchema>;
 export type DaemonWorkspace = z.infer<typeof daemonWorkspaceSchema>;
 export type DaemonStatus = z.infer<typeof daemonStatusSchema>;
 export type DaemonClientMessage = z.infer<typeof daemonClientMessageSchema>;

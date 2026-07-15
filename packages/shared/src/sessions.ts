@@ -1,13 +1,22 @@
 import { z } from "zod";
 
 import { appModeSchema } from "./app-modes.js";
+import {
+  runtimeModeInputSchema,
+  userSelectableRuntimeModeSchema
+} from "./runtime.js";
+
+export const codingSessionWorkspaceBindingSchema = z.object({
+  workspaceId: z.string().trim().min(1),
+  runtimeMode: userSelectableRuntimeModeSchema
+});
 
 export const sessionRefSchema = z.object({
   id: z.string(),
   workspaceId: z.string(),
   workspaceName: z.string().optional(),
   workspaceRoot: z.string().optional(),
-  workspaceRuntimeMode: z.enum(["local_daemon", "server_local", "cloud_workspace"]).optional(),
+  workspaceRuntimeMode: runtimeModeInputSchema.optional(),
   appMode: appModeSchema.default("daily_work"),
   title: z.string(),
   createdAt: z.string(),
@@ -50,7 +59,7 @@ export const dailyWorkSessionSummarySchema = z.object({
   workspaceId: z.string(),
   workspaceName: z.string().optional(),
   workspaceRoot: z.string().optional(),
-  workspaceRuntimeMode: z.enum(["local_daemon", "server_local", "cloud_workspace"]).optional(),
+  workspaceRuntimeMode: runtimeModeInputSchema.optional(),
   appMode: appModeSchema.default("daily_work"),
   title: z.string(),
   pinned: z.boolean().default(false),

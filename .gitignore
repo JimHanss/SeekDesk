@@ -31,6 +31,14 @@ Thumbs.db
 .cache/
 *.tsbuildinfo
 
+# SeekDesk runtime data
+.runtime/
+.runtime-data/
+.cloud-runtime/
+tmp/runtime-fixtures/
+*.runtime-token
+*.runtime-secret
+
 # Local research artifacts
 .firecrawl/
 .worktrees/

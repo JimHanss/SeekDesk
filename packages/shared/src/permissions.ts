@@ -1,5 +1,10 @@
 import { z } from "zod";
 
+import {
+  runtimeModeInputSchema,
+  runtimeModeSchema,
+  userSelectableRuntimeModeSchema
+} from "./runtime.js";
 import { codingToolNameSchema } from "./tools.js";
 
 export const permissionModeSchema = z.enum([
@@ -41,13 +46,24 @@ export const codingPermissionGrantStatusSchema = z.enum([
   "expired"
 ]);
 
-export const codingPermissionGrantProviderSchema = z.literal("local_daemon");
+export const codingPermissionGrantProviderSchema = runtimeModeSchema;
+
+export const codingPermissionGrantBindingSchema = z.object({
+  ownerId: z.string().trim().min(1),
+  sessionId: z.string().trim().min(1),
+  workspaceId: z.string().trim().min(1),
+  runtimeMode: userSelectableRuntimeModeSchema,
+  action: codingPermissionGrantActionSchema
+});
 
 export const codingPermissionGrantSchema = z.object({
   id: z.string(),
   mode: z.literal("coding_agent").default("coding_agent"),
   provider: codingPermissionGrantProviderSchema,
+  ownerId: z.string().trim().min(1).optional(),
   sessionId: z.string().trim().min(1),
+  workspaceId: z.string().trim().min(1).optional(),
+  runtimeMode: runtimeModeInputSchema.optional(),
   action: codingPermissionGrantActionSchema,
   decision: z.literal("allow_for_session"),
   status: codingPermissionGrantStatusSchema,
@@ -60,7 +76,10 @@ export const codingPermissionGrantSchema = z.object({
 export const codingPermissionGrantCreateRequestSchema = z.object({
   mode: z.literal("coding_agent").default("coding_agent"),
   provider: codingPermissionGrantProviderSchema.default("local_daemon"),
+  ownerId: z.string().trim().min(1).optional(),
   sessionId: z.string().trim().min(1),
+  workspaceId: z.string().trim().min(1).optional(),
+  runtimeMode: runtimeModeInputSchema.optional(),
   action: codingPermissionGrantActionSchema,
   reason: z.string().trim().max(1000).optional()
 });
@@ -72,6 +91,9 @@ export const codingPermissionGrantRevokeRequestSchema = z.object({
 
 export type CodingPermissionGrantAction = z.infer<
   typeof codingPermissionGrantActionSchema
+>;
+export type CodingPermissionGrantBinding = z.infer<
+  typeof codingPermissionGrantBindingSchema
 >;
 export type CodingPermissionGrantStatus = z.infer<
   typeof codingPermissionGrantStatusSchema

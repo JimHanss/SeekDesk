@@ -1,5 +1,7 @@
 import { z } from "zod";
 
+import { runtimeModeInputSchema } from "./runtime.js";
+
 export const dailyWorkToolNames = [
   "draft_document",
   "research_topic",
@@ -128,7 +130,11 @@ export const codingToolInputSchemas = {
 
 export const toolCallRecordSchema = z.object({
   id: z.string(),
+  ownerId: z.string().trim().min(1).optional(),
   sessionId: z.string().optional(),
+  workspaceId: z.string().trim().min(1).optional(),
+  runtimeMode: runtimeModeInputSchema.optional(),
+  requestId: z.string().trim().min(1).optional(),
   name: toolNameSchema,
   status: toolCallStatusSchema,
   inputJson: z.unknown(),
@@ -138,6 +144,7 @@ export const toolCallRecordSchema = z.object({
   permissionRequired: z.boolean().default(false),
   error: z.string().optional(),
   createdAt: z.string(),
+  startedAt: z.string().optional(),
   completedAt: z.string().optional()
 });
 

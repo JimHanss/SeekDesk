@@ -34,4 +34,24 @@ describe("coding tool schemas", () => {
       codingRunShellInputSchema
     );
   });
+
+  it("records canonical runtime bindings without breaking legacy calls", async () => {
+    const { toolCallRecordSchema } = await import("./tools.js");
+    const parsed = toolCallRecordSchema.parse({
+      id: "tool-call-1",
+      ownerId: "user-1",
+      sessionId: "session-1",
+      workspaceId: "workspace-1",
+      runtimeMode: "cloud_workspace",
+      requestId: "request-1",
+      name: "coding.read_file",
+      status: "completed",
+      inputJson: { path: "README.md" },
+      previewOnly: false,
+      permissionRequired: false,
+      createdAt: "2026-07-15T00:00:00.000Z"
+    });
+
+    expect(parsed.runtimeMode).toBe("cloud_runtime");
+  });
 });

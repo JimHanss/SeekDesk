@@ -72,6 +72,8 @@ export class DaemonLocalRuntime {
         "coding.git_status",
         "coding.run_tests"
       ],
+      protocolVersion: 1,
+      capabilityVersion: "1",
       pid: process.pid
     };
   }

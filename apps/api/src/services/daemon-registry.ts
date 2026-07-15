@@ -294,6 +294,7 @@ function validatePairingToken(token: string) {
 
 function createWorkspace(status: DaemonStatus): DaemonWorkspace {
   const rootPath = status.workspaceRoot;
+  const now = new Date().toISOString();
   return {
     workspaceId: createWorkspaceId(status.daemonId, rootPath),
     daemonId: status.daemonId,
@@ -301,9 +302,14 @@ function createWorkspace(status: DaemonStatus): DaemonWorkspace {
     rootPath,
     runtimeMode: "local_daemon",
     connected: true,
+    status: "ready",
     platform: status.platform,
     machineName: status.machineName,
-    updatedAt: new Date().toISOString()
+    supportedCapabilities: status.supportedCapabilities,
+    protocolVersion: status.protocolVersion,
+    capabilityVersion: status.capabilityVersion,
+    createdAt: now,
+    updatedAt: now
   };
 }
 
