@@ -18,7 +18,12 @@ import {
 
 import type { DailyWorkRepository } from "../repositories/daily-work-repository.js";
 import type { CloudRuntimeClient } from "./cloud-runtime-client.js";
-import { CodingRuntimeError, LocalCodingRuntime, type CodingRuntime } from "./coding-runtime.js";
+import {
+  CodingRuntimeError,
+  LocalCodingRuntime,
+  type CodingRuntime,
+  type CodingRuntimeExecutionContext
+} from "./coding-runtime.js";
 import type { DaemonRegistry } from "./daemon-registry.js";
 
 const serverLocalWorkspaceId = "server-local-runtime";
@@ -248,9 +253,9 @@ class CloudCodingRuntimeAdapter implements CodingRuntime {
     return Promise.reject(cloudWorkspaceSelectionError());
   }
 
-  execute(name: CodingToolName, input: unknown) {
+  execute(name: CodingToolName, input: unknown, context?: CodingRuntimeExecutionContext) {
     return this.client.execute({
-      requestId: `cloud-execute-${randomUUID()}`,
+      requestId: context?.requestId ?? `cloud-execute-${randomUUID()}`,
       ownerId: this.workspace.ownerId,
       workspaceId: this.workspace.workspaceId,
       toolName: name,

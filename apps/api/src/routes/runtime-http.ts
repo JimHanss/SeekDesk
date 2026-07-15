@@ -61,6 +61,7 @@ function runtimeErrorStatus(code: string) {
     code === "runtime_not_ready" ||
     code === "session_workspace_mismatch" ||
     code === "workspace_operation_conflict" ||
+    code === "runtime_request_conflict" ||
     code === "runtime_request_timeout" ||
     code === "runtime_request_cancelled"
   ) {

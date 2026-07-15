@@ -4,11 +4,15 @@ import {
   codingPermissionGrantCreateRequestSchema,
   codingPermissionGrantRevokeRequestSchema,
   codingToolInputSchemas,
+  normalizeRuntimeMode,
+  runtimeErrorCodeSchema,
   type CodingPermissionGrantAction,
   codingToolNameSchema,
   type CodingPermissionGrant,
   type CodingToolName,
+  type DailyWorkArtifact,
   type RuntimeMode,
+  type RuntimeOperation,
   type ToolCallRecord
 } from "@seekdesk/shared";
 import {
@@ -82,7 +86,9 @@ export async function executeAuthorizedCodingToolCall(input: {
   ownerId: string;
   toolCallId: string;
   sessionId: string;
-  runtime?: CodingRuntime;
+  workspaceId: string;
+  runtimeMode: RuntimeMode;
+  runtime: CodingRuntime;
 }) {
   const toolCall = (
     await input.repository.listToolCalls({
@@ -98,6 +104,31 @@ export async function executeAuthorizedCodingToolCall(input: {
     });
   }
 
+  if (
+    !toolCall.ownerId ||
+    !toolCall.workspaceId ||
+    !toolCall.runtimeMode ||
+    !toolCall.requestId ||
+    toolCall.ownerId !== input.ownerId ||
+    toolCall.sessionId !== input.sessionId ||
+    toolCall.workspaceId !== input.workspaceId ||
+    normalizeRuntimeMode(toolCall.runtimeMode) !== input.runtimeMode
+  ) {
+    throw new CodingRuntimeError(
+      "Tool call scope does not match the current session and Runtime.",
+      "session_workspace_mismatch",
+      {
+        toolCallId: input.toolCallId,
+        expected: {
+          ownerId: input.ownerId,
+          sessionId: input.sessionId,
+          workspaceId: input.workspaceId,
+          runtimeMode: input.runtimeMode
+        }
+      }
+    );
+  }
+
   const toolName = normalizeCodingToolName(toolCall.name);
   if (!toolName) {
     throw new CodingRuntimeError("Tool call is not a coding tool.", "not_coding_tool", {
@@ -109,9 +140,9 @@ export async function executeAuthorizedCodingToolCall(input: {
     const grants = await input.repository.listPermissionGrants({
       ownerId: input.ownerId,
       sessionId: input.sessionId,
-      ...(toolCall.workspaceId ? { workspaceId: toolCall.workspaceId } : {}),
-      ...(toolCall.runtimeMode ? { runtimeMode: toolCall.runtimeMode } : {}),
-      provider: toolCall.runtimeMode ?? "local_daemon",
+      workspaceId: input.workspaceId,
+      runtimeMode: input.runtimeMode,
+      provider: input.runtimeMode,
       action: toolName,
       activeOnly: true,
       limit: 100
@@ -127,45 +158,102 @@ export async function executeAuthorizedCodingToolCall(input: {
   }
 
   const parsedInput = codingToolInputSchemas[toolName].parse(toolCall.inputJson ?? {});
-  const runtime = input.runtime ?? new LocalCodingRuntime();
+  assertRuntimeBinding(input.runtime, input.workspaceId, input.runtimeMode);
   const startedAt = new Date().toISOString();
-  await input.repository.recordToolCall({
-    ...toolCall,
-    status: "running",
-    permissionRequired: writeOrCommandTools.has(toolName),
-    previewOnly: false,
+  const claimedToolCall = await input.repository.claimToolCallExecution({
+    ownerId: input.ownerId,
+    sessionId: input.sessionId,
+    workspaceId: input.workspaceId,
+    runtimeMode: input.runtimeMode,
+    toolCallId: input.toolCallId,
     startedAt
   });
+  if (!claimedToolCall) {
+    throw new CodingRuntimeError(
+      "This tool call is no longer pending or is already running.",
+      "runtime_request_conflict",
+      { toolCallId: input.toolCallId }
+    );
+  }
+  if (!claimedToolCall.requestId) {
+    throw new CodingRuntimeError(
+      "Coding tool call is missing its persisted requestId.",
+      "runtime_request_conflict",
+      { toolCallId: input.toolCallId }
+    );
+  }
+  const operation = createToolRuntimeOperation({
+    ownerId: input.ownerId,
+    workspaceId: input.workspaceId,
+    toolCall: claimedToolCall,
+    toolName,
+    inputJson: parsedInput,
+    startedAt
+  });
+  await input.repository.upsertRuntimeOperation(operation);
   await input.repository.upsertActivityEvent(
     createToolActivityEvent({
       sessionId: input.sessionId,
       toolName,
-      status: "queued",
+      status: "in_progress",
       timestamp: startedAt,
       inputJson: parsedInput,
       toolCallId: input.toolCallId,
-      phase: "requested"
+      runtimeMode: input.runtimeMode,
+      requestId: claimedToolCall.requestId,
+      phase: "running"
     }),
-    createToolScope(input.ownerId, toolCall)
+    createToolScope(input.ownerId, claimedToolCall)
   );
 
   try {
-    const outputJson = await runtime.execute(toolName, parsedInput);
+    const runtimeOutput = await input.runtime.execute(toolName, parsedInput, {
+      requestId: claimedToolCall.requestId
+    });
+    let outputJson = normalizeCodingToolOutput({
+      toolName,
+      inputJson: parsedInput,
+      outputJson: runtimeOutput,
+      workspaceId: input.workspaceId,
+      runtimeMode: input.runtimeMode,
+      requestId: claimedToolCall.requestId,
+      workspaceRoot: input.runtime.status().workspaceRoot
+    });
+    if (toolName === "coding.write_file" || toolName === "coding.edit_file") {
+      outputJson = await persistCodingWriteArtifact({
+        repository: input.repository,
+        ownerId: input.ownerId,
+        sessionId: input.sessionId,
+        workspaceId: input.workspaceId,
+        runtimeMode: input.runtimeMode,
+        toolCall: claimedToolCall,
+        toolName,
+        inputJson: parsedInput,
+        outputJson,
+        runtime: input.runtime
+      });
+    }
     const completedAt = new Date().toISOString();
     const completedRecord: ToolCallRecord = {
-      ...toolCall,
+      ...claimedToolCall,
       name: toolName,
       status: "completed",
       inputJson: parsedInput,
       outputJson,
       previewOnly: false,
       permissionRequired: writeOrCommandTools.has(toolName),
-      createdAt: toolCall.createdAt,
+      createdAt: claimedToolCall.createdAt,
       startedAt,
       completedAt
     };
 
     await input.repository.recordToolCall(completedRecord);
+    await input.repository.upsertRuntimeOperation({
+      ...operation,
+      status: "completed",
+      resultPayload: outputJson,
+      completedAt
+    });
     await input.repository.upsertActivityEvent(
       createToolActivityEvent({
         sessionId: input.sessionId,
@@ -175,6 +263,8 @@ export async function executeAuthorizedCodingToolCall(input: {
         inputJson: parsedInput,
         outputJson,
         toolCallId: input.toolCallId,
+        runtimeMode: input.runtimeMode,
+        requestId: claimedToolCall.requestId,
         phase: "completed"
       }),
       createToolScope(input.ownerId, completedRecord)
@@ -187,32 +277,42 @@ export async function executeAuthorizedCodingToolCall(input: {
     };
   } catch (error) {
     const completedAt = new Date().toISOString();
+    const cancelled = isRuntimeCancellation(error);
     const failedRecord: ToolCallRecord = {
-      ...toolCall,
+      ...claimedToolCall,
       name: toolName,
-      status: "failed",
+      status: cancelled ? "cancelled" : "failed",
       inputJson: parsedInput,
       outputJson: formatCodingRuntimeError(error),
       previewOnly: false,
       permissionRequired: writeOrCommandTools.has(toolName),
       error: formatCodingRuntimeErrorCode(error),
-      createdAt: toolCall.createdAt,
+      createdAt: claimedToolCall.createdAt,
       startedAt,
       completedAt
     };
 
     await input.repository.recordToolCall(failedRecord);
+    await input.repository.upsertRuntimeOperation({
+      ...operation,
+      status: cancelled ? "cancelled" : "failed",
+      errorCode: normalizeRuntimeOperationErrorCode(error),
+      errorMessage: error instanceof Error ? error.message : String(error),
+      completedAt
+    });
     await input.repository.upsertActivityEvent(
       createToolActivityEvent({
         sessionId: input.sessionId,
         toolName,
-        status: "failed",
+        status: cancelled ? "cancelled" : "failed",
         timestamp: completedAt,
         inputJson: parsedInput,
         outputJson: failedRecord.outputJson,
         ...(failedRecord.error ? { error: failedRecord.error } : {}),
         toolCallId: input.toolCallId,
-        phase: "completed"
+        runtimeMode: input.runtimeMode,
+        requestId: claimedToolCall.requestId,
+        phase: cancelled ? "cancelled" : "failed"
       }),
       createToolScope(input.ownerId, failedRecord)
     );
@@ -221,6 +321,225 @@ export async function executeAuthorizedCodingToolCall(input: {
 }
 
 export { codingPermissionGrantCreateRequestSchema, codingPermissionGrantRevokeRequestSchema };
+
+function assertRuntimeBinding(
+  runtime: CodingRuntime,
+  workspaceId: string,
+  runtimeMode: RuntimeMode
+) {
+  const status = runtime.status();
+  if (
+    status.workspaceId !== workspaceId ||
+    normalizeRuntimeMode(status.runtimeMode) !== runtimeMode
+  ) {
+    throw new CodingRuntimeError(
+      "Resolved Runtime does not match the tool call workspace binding.",
+      "session_workspace_mismatch",
+      {
+        expected: { workspaceId, runtimeMode },
+        actual: {
+          workspaceId: status.workspaceId,
+          runtimeMode: status.runtimeMode
+        }
+      }
+    );
+  }
+}
+
+function createToolRuntimeOperation(input: {
+  ownerId: string;
+  workspaceId: string;
+  toolCall: ToolCallRecord;
+  toolName: CodingToolName;
+  inputJson: unknown;
+  startedAt: string;
+}): RuntimeOperation {
+  return {
+    id: `runtime-tool-${input.toolCall.id}`,
+    ownerId: input.ownerId,
+    workspaceId: input.workspaceId,
+    type: "execute",
+    status: "running",
+    idempotencyKey: `tool-call:${input.toolCall.id}`,
+    requestPayload: {
+      toolCallId: input.toolCall.id,
+      requestId: input.toolCall.requestId,
+      runtimeMode: input.toolCall.runtimeMode,
+      toolName: input.toolName,
+      inputJson: input.inputJson
+    },
+    createdAt: input.startedAt,
+    startedAt: input.startedAt
+  };
+}
+
+function normalizeCodingToolOutput(input: {
+  toolName: CodingToolName;
+  inputJson: unknown;
+  outputJson: unknown;
+  workspaceId: string;
+  runtimeMode: RuntimeMode;
+  requestId: string;
+  workspaceRoot: string;
+}): Record<string, unknown> {
+  const output = isRecord(input.outputJson)
+    ? input.outputJson
+    : { result: input.outputJson };
+  const base = {
+    ...output,
+    workspaceId: input.workspaceId,
+    runtimeMode: input.runtimeMode,
+    requestId: input.requestId
+  };
+  if (input.toolName !== "coding.run_shell" && input.toolName !== "coding.run_tests") {
+    return base;
+  }
+  const toolInput = isRecord(input.inputJson) ? input.inputJson : {};
+  const timedOut = output.timedOut === true;
+  return {
+    ...base,
+    command: stringOutput(output.command) ?? stringOutput(toolInput.command) ?? "",
+    cwd: stringOutput(output.cwd) ?? input.workspaceRoot,
+    stdout: stringOutput(output.stdout) ?? "",
+    stderr: stringOutput(output.stderr) ?? "",
+    exitCode: typeof output.exitCode === "number" ? output.exitCode : 1,
+    timeout: timedOut,
+    timedOut,
+    truncated: output.truncated === true
+  };
+}
+
+async function persistCodingWriteArtifact(input: {
+  repository: DailyWorkRepository;
+  ownerId: string;
+  sessionId: string;
+  workspaceId: string;
+  runtimeMode: RuntimeMode;
+  toolCall: ToolCallRecord;
+  toolName: "coding.write_file" | "coding.edit_file";
+  inputJson: unknown;
+  outputJson: Record<string, unknown>;
+  runtime: CodingRuntime;
+}) {
+  const path = stringOutput(isRecord(input.inputJson) ? input.inputJson.path : undefined) ?? "workspace file";
+  const gitDiff = await captureGitDiff(input.runtime, path);
+  const now = new Date().toISOString();
+  const artifactId = `coding-artifact-${input.toolCall.id}`;
+  const artifact: DailyWorkArtifact = {
+    id: artifactId,
+    ownerId: input.ownerId,
+    mode: "coding_agent",
+    artifactType: "status_update",
+    title: `Code change: ${path}`,
+    description: `Workspace change created by ${input.toolName}.`,
+    summary: summarizeGitDiff(gitDiff, path),
+    status: "ready",
+    owner: {
+      id: input.ownerId,
+      displayName: "Coding Agent"
+    },
+    updatedAt: now,
+    sourceContextIds: [input.workspaceId],
+    approvalRequestIds: [],
+    version: 1,
+    reusable: false,
+    nextAction: null,
+    permissionState: "workspace_shared",
+    trace: {
+      origin: "coding_tool",
+      createdAt: now,
+      createdBy: "coding-agent",
+      events: [{
+        at: now,
+        actor: "coding-agent",
+        type: "created",
+        summary: `Created from tool call ${input.toolCall.id}.`
+      }]
+    },
+    lifecycle: [],
+    tags: ["coding", "workspace-write", input.runtimeMode],
+    sessionId: input.sessionId,
+    workspaceId: input.workspaceId,
+    runtimeMode: input.runtimeMode,
+    toolCallId: input.toolCall.id,
+    requestId: input.toolCall.requestId,
+    path
+  };
+  await input.repository.upsertArtifact(artifact, {
+    ownerId: input.ownerId,
+    workspaceId: input.workspaceId,
+    runtimeMode: input.runtimeMode
+  });
+  const session = (await input.repository.listSessionDetails({
+    ownerId: input.ownerId,
+    workspaceId: input.workspaceId,
+    runtimeMode: input.runtimeMode
+  })).find((candidate) => candidate.id === input.sessionId);
+  if (session) {
+    await input.repository.updateSessionDetail({
+      ...session,
+      artifactIds: [...new Set([...session.artifactIds, artifactId])],
+      updatedAt: now,
+      lastAction: {
+        at: now,
+        actor: "coding-agent",
+        label: `Updated ${path}`
+      }
+    });
+  }
+  return {
+    ...input.outputJson,
+    artifactId,
+    gitDiff
+  };
+}
+
+async function captureGitDiff(runtime: CodingRuntime, path: string) {
+  try {
+    return await runtime.gitDiff({ path, staged: false });
+  } catch (error) {
+    return {
+      unavailable: true,
+      error: formatCodingRuntimeError(error)
+    };
+  }
+}
+
+function summarizeGitDiff(diff: unknown, path: string) {
+  if (isRecord(diff)) {
+    const stdout = stringOutput(diff.stdout);
+    if (stdout?.trim()) {
+      return stdout.length > 2000 ? `${stdout.slice(0, 2000)}\n[diff truncated]` : stdout;
+    }
+  }
+  return `Workspace file ${path} was updated. Git diff is unavailable or empty.`;
+}
+
+function isRuntimeCancellation(error: unknown) {
+  return error instanceof CodingRuntimeError && (
+    error.code === "runtime_request_cancelled" ||
+    error.code === "daemon_request_cancelled"
+  );
+}
+
+function normalizeRuntimeOperationErrorCode(error: unknown) {
+  const rawCode = error instanceof CodingRuntimeError ? error.code : "runtime_execution_failed";
+  const normalizedCode = rawCode === "daemon_request_timeout"
+    ? "runtime_request_timeout"
+    : rawCode === "daemon_request_cancelled"
+      ? "runtime_request_cancelled"
+      : rawCode;
+  const parsed = runtimeErrorCodeSchema.safeParse(normalizedCode);
+  return parsed.success ? parsed.data : "runtime_execution_failed";
+}
+
+function stringOutput(value: unknown) {
+  return typeof value === "string" ? value : undefined;
+}
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return Boolean(value && typeof value === "object" && !Array.isArray(value));
+}
 
 function attachRuntimeExecutor(
   definition: ToolDefinition,

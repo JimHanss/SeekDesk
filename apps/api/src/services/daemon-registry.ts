@@ -12,7 +12,11 @@ import {
   type DaemonWorkspace
 } from "@seekdesk/shared";
 
-import { CodingRuntimeError, type CodingRuntime } from "./coding-runtime.js";
+import {
+  CodingRuntimeError,
+  type CodingRuntime,
+  type CodingRuntimeExecutionContext
+} from "./coding-runtime.js";
 
 interface WebSocketLike {
   readyState: number;
@@ -173,11 +177,21 @@ export class DaemonRegistry {
     return result;
   }
 
-  async requestTool(workspaceId: string, toolName: CodingToolName, input: unknown) {
-    return this.request(workspaceId, "tool.execute", { toolName, input });
+  async requestTool(
+    workspaceId: string,
+    toolName: CodingToolName,
+    input: unknown,
+    requestId?: string
+  ) {
+    return this.request(workspaceId, "tool.execute", { toolName, input }, requestId);
   }
 
-  private request(workspaceId: string, command: string, payload: unknown) {
+  private request(
+    workspaceId: string,
+    command: string,
+    payload: unknown,
+    suppliedRequestId?: string
+  ) {
     const daemonId = this.workspaceToDaemon.get(workspaceId);
     const client = daemonId ? this.daemons.get(daemonId) : undefined;
 
@@ -185,7 +199,14 @@ export class DaemonRegistry {
       throw new CodingRuntimeError("No local daemon is connected for this workspace.", "runtime_unavailable", { workspaceId });
     }
 
-    const requestId = `daemon-request-${randomUUID()}`;
+    const requestId = suppliedRequestId ?? `daemon-request-${randomUUID()}`;
+    if (this.pending.has(requestId)) {
+      throw new CodingRuntimeError(
+        "A Runtime request with this requestId is already running.",
+        "runtime_request_conflict",
+        { requestId, workspaceId }
+      );
+    }
     const timeoutMs = command === "tool.execute" ? 125_000 : 30_000;
 
     return new Promise<unknown>((resolve, reject) => {
@@ -292,8 +313,8 @@ export class LocalDaemonRuntimeAdapter implements CodingRuntime {
     return this.registry.requestWorkspace(this.workspaceId, "workspace.pick", {});
   }
 
-  execute(name: CodingToolName, input: unknown) {
-    return this.registry.requestTool(this.workspaceId, name, input);
+  execute(name: CodingToolName, input: unknown, context?: CodingRuntimeExecutionContext) {
+    return this.registry.requestTool(this.workspaceId, name, input, context?.requestId);
   }
 
   listFiles(input: CodingListFilesInput) {

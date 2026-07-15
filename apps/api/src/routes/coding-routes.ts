@@ -136,13 +136,26 @@ export async function registerCodingRoutes(
     return withResolvedRuntime(request, reply, resolver, (runtime) => runtime.gitDiff(parsed.data));
   });
 
-  app.get<{ Querystring: { sessionId?: string; activeOnly?: string } }>(
+  app.get<{
+    Querystring: {
+      sessionId?: string;
+      workspaceId?: string;
+      runtimeMode?: RuntimeMode;
+      action?: string;
+      activeOnly?: string;
+    };
+  }>(
     "/api/coding/permission-grants",
     async (request) => ({
       mode: "coding_agent",
       grants: await repository.listPermissionGrants({
         ownerId: request.actor.ownerId,
         ...(request.query.sessionId ? { sessionId: request.query.sessionId } : {}),
+        ...(request.query.workspaceId ? { workspaceId: request.query.workspaceId } : {}),
+        ...(request.query.runtimeMode
+          ? { runtimeMode: normalizeRuntimeMode(request.query.runtimeMode) }
+          : {}),
+        ...(request.query.action ? { action: request.query.action } : {}),
         activeOnly: request.query.activeOnly === "true",
         limit: 100
       })
@@ -272,6 +285,8 @@ export async function registerCodingRoutes(
           ownerId: request.actor.ownerId,
           toolCallId: request.params.toolCallId,
           sessionId,
+          workspaceId: binding.workspaceId,
+          runtimeMode: binding.runtimeMode,
           runtime: resolution.runtime
         });
       });

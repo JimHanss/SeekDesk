@@ -634,14 +634,16 @@ async function recordToolCallChunk(
   }
 
   const createdAt = new Date().toISOString();
+  const toolCallId = chunk.id ?? `tool-call-${randomUUID()}`;
+  const requestId = chunk.id ?? `request-${randomUUID()}`;
 
   await options.dailyWorkRepository.recordToolCall({
-    id: chunk.id ?? `tool-call-${randomUUID()}`,
+    id: toolCallId,
     ownerId: options.ownerId,
     sessionId: options.sessionId,
     workspaceId: options.workspaceId,
     runtimeMode: options.runtimeMode,
-    requestId: chunk.id ?? `request-${randomUUID()}`,
+    requestId,
     name: parsedName.data,
     status: "requested",
     inputJson: chunk.inputJson,
@@ -656,7 +658,9 @@ async function recordToolCallChunk(
       status: "queued",
       timestamp: createdAt,
       inputJson: chunk.inputJson,
-      ...(chunk.id ? { toolCallId: chunk.id } : {}),
+      toolCallId,
+      runtimeMode: options.runtimeMode,
+      requestId,
       phase: "requested"
     }),
     {
@@ -685,14 +689,16 @@ async function recordToolResultChunk(
   const result = isToolCallResult(chunk.result) ? chunk.result : undefined;
   const status = normalizeToolRecordStatus(result?.status);
   const completedAt = new Date().toISOString();
+  const toolCallId = chunk.id ?? result?.id ?? `tool-call-${randomUUID()}`;
+  const requestId = chunk.id ?? result?.id ?? `request-${randomUUID()}`;
 
   await options.dailyWorkRepository.recordToolCall({
-    id: chunk.id ?? result?.id ?? `tool-call-${randomUUID()}`,
+    id: toolCallId,
     ownerId: options.ownerId,
     sessionId: options.sessionId,
     workspaceId: options.workspaceId,
     runtimeMode: options.runtimeMode,
-    requestId: chunk.id ?? result?.id ?? `request-${randomUUID()}`,
+    requestId,
     name: parsedName.data,
     status,
     inputJson: result?.inputJson ?? {},
@@ -712,9 +718,9 @@ async function recordToolResultChunk(
       inputJson: result?.inputJson ?? {},
       outputJson: result?.outputJson ?? chunk.result,
       ...(result?.error ? { error: result.error } : {}),
-      ...(chunk.id ?? result?.id
-        ? { toolCallId: String(chunk.id ?? result?.id) }
-        : {}),
+      toolCallId,
+      runtimeMode: options.runtimeMode,
+      requestId,
       phase: "completed"
     }),
     {

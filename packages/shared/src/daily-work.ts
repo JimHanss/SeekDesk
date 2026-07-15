@@ -2,6 +2,7 @@ import { z } from "zod";
 
 import { appModeSchema } from "./app-modes.js";
 import { modelRouteSchema } from "./model-usage.js";
+import { runtimeModeInputSchema } from "./runtime.js";
 
 export const templateCategorySchema = z.enum([
   "triage",
@@ -53,6 +54,7 @@ export const dailyWorkArtifactNextActionTypeSchema = z.enum([
 export const dailyWorkArtifactTraceOriginSchema = z.enum([
   "template",
   "daily_chat",
+  "coding_tool",
   "manual"
 ]);
 
@@ -136,6 +138,7 @@ export const dailyWorkTemplateSchema = z.object({
 
 export const dailyWorkArtifactSchema = z.object({
   id: z.string(),
+  ownerId: z.string().trim().min(1).optional(),
   mode: appModeSchema.default("daily_work"),
   artifactType: artifactTypeSchema,
   title: z.string(),
@@ -153,7 +156,13 @@ export const dailyWorkArtifactSchema = z.object({
   permissionState: dailyWorkArtifactPermissionStateSchema,
   trace: dailyWorkArtifactTraceSchema,
   lifecycle: z.array(dailyWorkArtifactLifecycleEventSchema).default([]),
-  tags: z.array(z.string()).default([])
+  tags: z.array(z.string()).default([]),
+  sessionId: z.string().trim().min(1).optional(),
+  workspaceId: z.string().trim().min(1).optional(),
+  runtimeMode: runtimeModeInputSchema.optional(),
+  toolCallId: z.string().trim().min(1).optional(),
+  requestId: z.string().trim().min(1).optional(),
+  path: z.string().trim().min(1).optional()
 });
 
 export const dailyWorkTemplatesResponseSchema = z.object({

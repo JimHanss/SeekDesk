@@ -1,4 +1,4 @@
-import { and, asc, desc, eq, isNull } from "drizzle-orm";
+import { and, asc, desc, eq, gt, isNull } from "drizzle-orm";
 import type { AnyPgColumn } from "drizzle-orm/pg-core";
 import { drizzle, type NodePgDatabase } from "drizzle-orm/node-postgres";
 import { Pool } from "pg";
@@ -48,6 +48,7 @@ import {
 import * as schema from "../db/schema.js";
 import type {
   DailyWorkConnectorAccount,
+  CodingToolCallExecutionClaim,
   CodingScopeQuery,
   CodingWorkspaceQuery,
   DailyWorkDataLayerStatus,
@@ -337,6 +338,28 @@ export class PostgresDailyWorkRepository implements DailyWorkRepository {
       });
 
     return cloneJson(parsed);
+  }
+
+  async claimToolCallExecution(claim: CodingToolCallExecutionClaim) {
+    const [row] = await this.db
+      .update(schema.toolCalls)
+      .set({
+        status: "running",
+        startedAt: new Date(claim.startedAt),
+        completedAt: null,
+        error: null
+      })
+      .where(and(
+        eq(schema.toolCalls.id, claim.toolCallId),
+        eq(schema.toolCalls.ownerId, claim.ownerId),
+        eq(schema.toolCalls.sessionId, claim.sessionId),
+        eq(schema.toolCalls.workspaceId, claim.workspaceId),
+        eq(schema.toolCalls.runtimeMode, claim.runtimeMode),
+        eq(schema.toolCalls.status, "permission_required")
+      ))
+      .returning();
+
+    return row ? mapToolCallRow(row) : null;
   }
 
   async listToolCalls(query: DailyWorkTraceQuery = {}) {
@@ -868,11 +891,24 @@ export class PostgresDailyWorkRepository implements DailyWorkRepository {
 
   private async selectPermissionGrantRows(query: DailyWorkPermissionGrantQuery) {
     const limit = normalizeTraceLimit(query.limit);
-    const conditions = createTraceConditions(schema.dailyWorkPermissionGrants, query);
+    const baseConditions = createTraceConditionsList(
+      schema.dailyWorkPermissionGrants,
+      query
+    );
+    if (query.provider) {
+      baseConditions.push(eq(schema.dailyWorkPermissionGrants.provider, query.provider));
+    }
+    if (query.action) {
+      baseConditions.push(eq(schema.dailyWorkPermissionGrants.action, query.action));
+    }
+    if (query.activeOnly) {
+      baseConditions.push(eq(schema.dailyWorkPermissionGrants.status, "active"));
+      baseConditions.push(gt(schema.dailyWorkPermissionGrants.expiresAt, new Date()));
+    }
     return this.db
       .select()
       .from(schema.dailyWorkPermissionGrants)
-      .where(conditions)
+      .where(baseConditions.length > 0 ? and(...baseConditions) : undefined)
       .orderBy(asc(schema.dailyWorkPermissionGrants.createdAt))
       .limit(limit);
   }
@@ -883,6 +919,19 @@ const fallbackWorkspaceId = "workspace-seekdesk";
 const fallbackRuntimeMode = "server_local" as const;
 
 function createTraceConditions(
+  table: {
+    ownerId: AnyPgColumn;
+    sessionId: AnyPgColumn;
+    workspaceId: AnyPgColumn;
+    runtimeMode: AnyPgColumn;
+  },
+  query: DailyWorkTraceQuery
+) {
+  const conditions = createTraceConditionsList(table, query);
+  return conditions.length > 0 ? and(...conditions) : undefined;
+}
+
+function createTraceConditionsList(
   table: {
     ownerId: AnyPgColumn;
     sessionId: AnyPgColumn;
@@ -904,7 +953,7 @@ function createTraceConditions(
   if (query.runtimeMode) {
     conditions.push(eq(table.runtimeMode, query.runtimeMode));
   }
-  return conditions.length > 0 ? and(...conditions) : undefined;
+  return conditions;
 }
 
 function mapWorkspaceRow(row: typeof schema.workspaces.$inferSelect): CodingWorkspaceRecord {
@@ -1121,7 +1170,9 @@ function mapPermissionGrantRow(
     runtimeMode: row.runtimeMode,
     action: row.action,
     decision: row.decision,
-    status: row.status,
+    status: row.status === "active" && row.expiresAt.getTime() <= Date.now()
+      ? "expired"
+      : row.status,
     ...(row.reason ? { reason: row.reason } : {}),
     createdAt: row.createdAt.toISOString(),
     expiresAt: row.expiresAt.toISOString(),

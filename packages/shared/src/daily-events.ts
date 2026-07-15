@@ -3,6 +3,7 @@ import { z } from "zod";
 import { appModeSchema } from "./app-modes.js";
 import { artifactTypeSchema, dailyWorkArtifactStatusSchema } from "./daily-work.js";
 import { approvalStatusSchema } from "./approvals.js";
+import { runtimeModeInputSchema } from "./runtime.js";
 import {
   workflowActionQueueItemStatusSchema,
   workflowExternalEffectSchema,
@@ -22,7 +23,12 @@ export const dailyActivityEventTypeSchema = z.enum([
   "workflow.preview.completed",
   "connector.action.completed",
   "artifact.updated",
-  "artifact.ready"
+  "artifact.ready",
+  "coding.tool.requested",
+  "coding.tool.running",
+  "coding.tool.completed",
+  "coding.tool.failed",
+  "coding.tool.cancelled"
 ]);
 
 export const dailyActivityEventStatusSchema = z.enum([
@@ -33,7 +39,8 @@ export const dailyActivityEventStatusSchema = z.enum([
   "completed",
   "ready",
   "blocked",
-  "failed"
+  "failed",
+  "cancelled"
 ]);
 
 export const dailyActivityRelatedRefsSchema = z.object({
@@ -66,6 +73,9 @@ export const dailyActivityNextActionSchema = z.object({
 
 export const dailyActivityEventSchema = z.object({
   id: z.string(),
+  ownerId: z.string().trim().min(1).optional(),
+  workspaceId: z.string().trim().min(1).optional(),
+  runtimeMode: runtimeModeInputSchema.optional(),
   mode: appModeSchema.default("daily_work"),
   eventType: dailyActivityEventTypeSchema,
   status: dailyActivityEventStatusSchema,
@@ -91,8 +101,10 @@ export const dailyActivityEventSchema = z.object({
       externalEffects: z.array(workflowExternalEffectSchema).default(["none"]),
       artifactType: artifactTypeSchema.optional(),
       toolName: z.string().optional(),
-      toolPhase: z.enum(["requested", "completed"]).optional(),
+      toolPhase: z.enum(["requested", "running", "completed", "failed", "cancelled"]).optional(),
       provider: z.string().optional(),
+      runtimeMode: runtimeModeInputSchema.optional(),
+      requestId: z.string().optional(),
       connectorId: z.string().optional(),
       inputFields: z.array(z.string()).optional(),
       externalDataSummary: z.string().optional(),

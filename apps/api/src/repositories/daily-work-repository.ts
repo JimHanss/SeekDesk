@@ -115,6 +115,15 @@ export interface RuntimeOperationQuery {
   limit?: number;
 }
 
+export interface CodingToolCallExecutionClaim {
+  ownerId: string;
+  sessionId: string;
+  workspaceId: string;
+  runtimeMode: RuntimeMode;
+  toolCallId: string;
+  startedAt: string;
+}
+
 export interface RepositoryCredentialRecord {
   id: string;
   ownerId: string;
@@ -177,6 +186,9 @@ export interface DailyWorkRepository {
   upsertArtifact(artifact: DailyWorkArtifact, scope?: CodingScopeQuery): Promise<DailyWorkArtifact>;
   recordChatMessage(message: PersistedChatMessage): Promise<PersistedChatMessage>;
   recordToolCall(record: ToolCallRecord): Promise<ToolCallRecord>;
+  claimToolCallExecution(
+    claim: CodingToolCallExecutionClaim
+  ): Promise<ToolCallRecord | null>;
   listToolCalls(query?: DailyWorkTraceQuery): Promise<ToolCallRecord[]>;
   recordModelUsage(record: ToolModelUsageRecord): Promise<ToolModelUsageRecord>;
   listModelUsageRecords(
@@ -329,17 +341,15 @@ export class SeedDailyWorkRepository implements DailyWorkRepository {
     return this.sessionDetails.length !== before;
   }
 
-  async upsertActivityEvent(event: DailyActivityEvent, _scope: CodingScopeQuery = {}) {
-    void _scope;
-    const parsed = dailyActivityEventSchema.parse(event);
+  async upsertActivityEvent(event: DailyActivityEvent, scope: CodingScopeQuery = {}) {
+    const parsed = dailyActivityEventSchema.parse({ ...event, ...scope });
     upsertFirstById(this.events, parsed);
 
     return cloneJson(parsed);
   }
 
-  async upsertArtifact(artifact: DailyWorkArtifact, _scope: CodingScopeQuery = {}) {
-    void _scope;
-    const parsed = dailyWorkArtifactSchema.parse(artifact);
+  async upsertArtifact(artifact: DailyWorkArtifact, scope: CodingScopeQuery = {}) {
+    const parsed = dailyWorkArtifactSchema.parse({ ...artifact, ...scope });
     replaceById(this.artifacts, parsed);
 
     return cloneJson(parsed);
@@ -355,6 +365,10 @@ export class SeedDailyWorkRepository implements DailyWorkRepository {
     upsertFirstById(this.toolCalls, record);
 
     return cloneJson(record);
+  }
+
+  async claimToolCallExecution(claim: CodingToolCallExecutionClaim) {
+    return claimToolCallFromCollection(this.toolCalls, claim);
   }
 
   async listToolCalls(query: DailyWorkTraceQuery = {}) {
@@ -674,9 +688,8 @@ export class JsonDailyWorkRepository implements DailyWorkRepository {
     return true;
   }
 
-  async upsertActivityEvent(event: DailyActivityEvent, _scope: CodingScopeQuery = {}) {
-    void _scope;
-    const parsed = dailyActivityEventSchema.parse(event);
+  async upsertActivityEvent(event: DailyActivityEvent, scope: CodingScopeQuery = {}) {
+    const parsed = dailyActivityEventSchema.parse({ ...event, ...scope });
     const events = await this.listEvents();
     upsertFirstById(events, parsed);
     await this.writeCollection("events", dailyActivityEventSchema.array(), events);
@@ -684,9 +697,8 @@ export class JsonDailyWorkRepository implements DailyWorkRepository {
     return cloneJson(parsed);
   }
 
-  async upsertArtifact(artifact: DailyWorkArtifact, _scope: CodingScopeQuery = {}) {
-    void _scope;
-    const parsed = dailyWorkArtifactSchema.parse(artifact);
+  async upsertArtifact(artifact: DailyWorkArtifact, scope: CodingScopeQuery = {}) {
+    const parsed = dailyWorkArtifactSchema.parse({ ...artifact, ...scope });
     const artifacts = await this.listArtifacts();
     replaceById(artifacts, parsed);
     await this.writeCollection(
@@ -714,6 +726,10 @@ export class JsonDailyWorkRepository implements DailyWorkRepository {
     upsertFirstById(this.toolCalls, record);
 
     return cloneJson(record);
+  }
+
+  async claimToolCallExecution(claim: CodingToolCallExecutionClaim) {
+    return claimToolCallFromCollection(this.toolCalls, claim);
   }
 
   async listToolCalls(query: DailyWorkTraceQuery = {}) {
@@ -1148,8 +1164,41 @@ function filterPermissionGrants(
         !query.activeOnly ||
         (grant.status === "active" && new Date(grant.expiresAt).getTime() > now)
     )
+    .map((grant) =>
+      grant.status === "active" && new Date(grant.expiresAt).getTime() <= now
+        ? { ...grant, status: "expired" as const }
+        : grant
+    )
     .sort((a, b) => a.createdAt.localeCompare(b.createdAt))
     .slice(0, normalizeTraceLimit(query.limit));
+}
+
+function claimToolCallFromCollection(
+  records: ToolCallRecord[],
+  claim: CodingToolCallExecutionClaim
+) {
+  const index = records.findIndex((record) => record.id === claim.toolCallId);
+  if (index === -1) {
+    return null;
+  }
+  const record = records[index]!;
+  if (
+    record.status !== "permission_required" ||
+    record.ownerId !== claim.ownerId ||
+    record.sessionId !== claim.sessionId ||
+    record.workspaceId !== claim.workspaceId ||
+    !record.runtimeMode ||
+    normalizeRuntimeMode(record.runtimeMode) !== claim.runtimeMode
+  ) {
+    return null;
+  }
+  const claimed = {
+    ...record,
+    status: "running" as const,
+    startedAt: claim.startedAt
+  };
+  records[index] = claimed;
+  return cloneJson(claimed);
 }
 
 function filterTraceRecords<T extends { createdAt: string }>(
@@ -1187,12 +1236,15 @@ function traceRecordMatchesScope(record: unknown, query: CodingScopeQuery) {
 
 function filterFallbackScope<T>(records: T[], query: CodingScopeQuery) {
   return records.filter((record) => {
-    if (query.ownerId && query.ownerId !== fallbackOwnerId) {
-      return false;
-    }
     const value = record && typeof record === "object"
-      ? record as { workspaceId?: unknown; workspaceRuntimeMode?: unknown; runtimeMode?: unknown }
+      ? record as {
+          ownerId?: unknown;
+          workspaceId?: unknown;
+          workspaceRuntimeMode?: unknown;
+          runtimeMode?: unknown;
+        }
       : {};
+    const ownerId = typeof value.ownerId === "string" ? value.ownerId : fallbackOwnerId;
     const workspaceId = typeof value.workspaceId === "string"
       ? value.workspaceId
       : fallbackWorkspaceId;
@@ -1200,6 +1252,7 @@ function filterFallbackScope<T>(records: T[], query: CodingScopeQuery) {
       value.workspaceRuntimeMode ?? value.runtimeMode ?? fallbackRuntimeMode
     );
     return (
+      (!query.ownerId || query.ownerId === ownerId) &&
       (!query.workspaceId || query.workspaceId === workspaceId) &&
       (!query.runtimeMode || query.runtimeMode === runtimeMode)
     );

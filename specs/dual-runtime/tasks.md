@@ -121,14 +121,14 @@
 
 ## 阶段 7：审批、审计与关联闭环
 
-- [ ] T082 修改 grant 创建与查询，强制匹配 `ownerId + sessionId + workspaceId + runtimeMode + action` 和有效期。
-- [ ] T083 修改 tool plan 持久化，使每条 coding tool call 在创建时保存 workspace、Runtime 和 requestId。
-- [ ] T084 在批准执行前重新读取 session、workspace、tool call、grant 和 Runtime 状态，任一不一致立即拒绝。
-- [ ] T085 将 running/completed/failed/cancelled 状态同步写入 tool call、activity event 和 workspace operation reference。
-- [ ] T086 将文件写入结果关联 artifact/tool call/workspace，并在完成后刷新对应 workspace 的 Git diff。
-- [ ] T087 将 Shell/test 的 command、cwd、stdout、stderr、exitCode、timeout、truncated 和 Runtime 信息写入 trace 与 terminal payload。
-- [ ] T088 将 model usage、message 和 assistant stream 记录补齐 owner/workspace 关联。
-- [ ] T089 增加授权撤销、授权过期、跨 workspace、跨 Runtime、重复执行、执行中断和审计完整性测试。
+- [x] T082 修改 grant 创建与查询，强制匹配 `ownerId + sessionId + workspaceId + runtimeMode + action` 和有效期。
+- [x] T083 修改 tool plan 持久化，使每条 coding tool call 在创建时保存 workspace、Runtime 和 requestId。
+- [x] T084 在批准执行前重新读取 session、workspace、tool call、grant 和 Runtime 状态，任一不一致立即拒绝。
+- [x] T085 将 running/completed/failed/cancelled 状态同步写入 tool call、activity event 和 workspace operation reference。
+- [x] T086 将文件写入结果关联 artifact/tool call/workspace，并在完成后刷新对应 workspace 的 Git diff。
+- [x] T087 将 Shell/test 的 command、cwd、stdout、stderr、exitCode、timeout、truncated 和 Runtime 信息写入 trace 与 terminal payload。
+- [x] T088 将 model usage、message 和 assistant stream 记录补齐 owner/workspace 关联。
+- [x] T089 增加授权撤销、授权过期、跨 workspace、跨 Runtime、重复执行、执行中断和审计完整性测试。
 
 ## 阶段 8：前端双 Runtime 工作台
 

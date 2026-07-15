@@ -2,9 +2,20 @@
 
 ## 当前验收状态
 
-- 已完成并验证：`T001-T003`、`T005-T061`、`T063-T074`、`T076-T080`。
+- 已完成并验证：`T001-T003`、`T005-T061`、`T063-T074`、`T076-T080`、`T082-T089`。
 - 环境阻塞：`T004`、`T062`、`T075` 和 `T081` 的真实 Docker/Postgres/container/network 验证。
-- 下一批：`T082-T089` 审批、工具执行、activity、artifact、terminal 与 trace 的完整关联。
+- 下一批：`T090-T103` 双 Runtime 前端选择、生命周期、历史分组和工作台联动。
+
+### 审批与工具执行一致性
+
+- grant 创建与查询使用可信 owner 和持久化 session，严格绑定 workspace、Runtime、action 与有效期；过期授权对外呈现 `expired`，不会参与执行。
+- coding tool call 创建即保存 owner、session、workspace、Runtime 和稳定 requestId；requestId 原样传到 local daemon 或 cloud runtime。
+- repository 提供原子 execution claim；重复执行仅一个请求能从 `permission_required` 进入 `running`，其余返回 `runtime_request_conflict`。
+- 执行前重新校验 session、workspace、tool call、grant、Runtime 状态；running/completed/failed/cancelled 同步到 tool call、activity 与 runtime operation。
+- 文件写入生成关联 coding artifact，回写 session artifactIds，并立即刷新当前 workspace/path 的 Git diff。
+- Shell/test trace 统一记录 command、cwd、stdout、stderr、exitCode、timeout/timedOut、truncated、workspace、Runtime 和 requestId。
+- 新增 4 项执行一致性测试，覆盖撤销、过期、跨 workspace、跨 Runtime、重复执行、写入产物、执行中断和审计关联。
+- 全仓 API tests 现为 `124` 项通过、`4` 项按环境跳过；lint、test、typecheck、build、secret hygiene 与 diff check 全部通过。
 
 ### Cloud Runtime Service
 

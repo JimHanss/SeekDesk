@@ -56,12 +56,20 @@ export interface CodingRuntime {
   browseWorkspaceDirectories(input: CodingWorkspaceBrowseInput): Promise<unknown>;
   selectWorkspace(input: CodingWorkspaceSelectInput): Promise<unknown>;
   pickWorkspaceDirectory?(): Promise<unknown>;
-  execute(name: CodingToolName, input: unknown): Promise<unknown>;
+  execute(
+    name: CodingToolName,
+    input: unknown,
+    context?: CodingRuntimeExecutionContext
+  ): Promise<unknown>;
   listFiles(input: CodingListFilesInput): Promise<unknown>;
   readFile(input: CodingReadFileInput): Promise<unknown>;
   grep(input: CodingGrepInput): Promise<unknown>;
   gitStatus(): Promise<unknown>;
   gitDiff(input: CodingGitDiffInput): Promise<unknown>;
+}
+
+export interface CodingRuntimeExecutionContext {
+  requestId: string;
 }
 
 export class LocalCodingRuntime implements CodingRuntime {
@@ -117,7 +125,8 @@ export class LocalCodingRuntime implements CodingRuntime {
     };
   }
 
-  execute(name: CodingToolName, input: unknown) {
+  execute(name: CodingToolName, input: unknown, _context?: CodingRuntimeExecutionContext) {
+    void _context;
     return this.translateError(() => this.core.execute(name, input));
   }
 

@@ -7,9 +7,11 @@ import type {
 export function createToolActivityEvent(input: {
   sessionId: string;
   toolName: ToolCallRecord["name"];
-  status: "queued" | "completed" | "failed";
+  status: "queued" | "in_progress" | "completed" | "failed" | "cancelled";
+  runtimeMode?: ToolCallRecord["runtimeMode"];
+  requestId?: string;
   timestamp: string;
-  phase: "requested" | "completed";
+  phase: "requested" | "running" | "completed" | "failed" | "cancelled";
   inputJson?: unknown;
   outputJson?: unknown;
   error?: string;
@@ -18,8 +20,8 @@ export function createToolActivityEvent(input: {
   const isCodingTool = input.toolName.startsWith("coding.");
   const artifactIds = inferToolArtifactIds(input.outputJson);
   const boundary = inferToolSafetyBoundary(input.outputJson, input.error);
-  const isCompleted = input.phase === "completed";
-  const summary = isCompleted
+  const isTerminal = input.phase === "completed" || input.phase === "failed" || input.phase === "cancelled";
+  const summary = isTerminal
     ? summarizeToolResult(input.toolName, input.outputJson, input.error)
     : summarizeToolRequest(input.toolName, input.inputJson);
   const metadata = createToolActivityMetadata({
@@ -27,16 +29,22 @@ export function createToolActivityEvent(input: {
     phase: input.phase,
     inputJson: input.inputJson,
     outputJson: input.outputJson,
+    ...(input.runtimeMode ? { runtimeMode: input.runtimeMode } : {}),
+    ...(input.requestId ? { requestId: input.requestId } : {}),
     ...(input.error ? { error: input.error } : {})
   });
 
   return {
-    id: `agent-tool-${input.sessionId}-${input.toolCallId ?? input.toolName}-${input.phase}`,
+    id: `agent-tool-${input.sessionId}-${input.toolCallId ?? input.toolName}-${input.phase}-${input.status}`,
     mode: isCodingTool ? "coding_agent" : "daily_work",
-    eventType: isCompleted ? "workflow.preview.completed" : "workflow.preview.queued",
+    eventType: isCodingTool
+      ? `coding.tool.${input.phase}` as DailyActivityEvent["eventType"]
+      : isTerminal
+        ? "workflow.preview.completed"
+        : "workflow.preview.queued",
     status: input.status,
     timestamp: input.timestamp,
-    title: isCompleted ? "Agent tool completed" : "Agent tool planned",
+    title: createActivityTitle(input.phase),
     summary,
     actor: isCodingTool ? "coding-agent" : "daily-work-agent",
     relatedRefs: {
@@ -162,10 +170,12 @@ function summarizeToolResult(
 
 function createToolActivityMetadata(input: {
   toolName: ToolCallRecord["name"];
-  phase: "requested" | "completed";
+  phase: "requested" | "running" | "completed" | "failed" | "cancelled";
   inputJson?: unknown;
   outputJson?: unknown;
   error?: string;
+  runtimeMode?: ToolCallRecord["runtimeMode"];
+  requestId?: string;
 }) {
   const reference = inferReference(input.outputJson);
 
@@ -174,10 +184,30 @@ function createToolActivityMetadata(input: {
     toolPhase: input.phase,
     externalDataSummary: summarizeJsonShape(input.outputJson ?? input.inputJson),
     ...(reference ? { reference } : {}),
-    provider: input.toolName.startsWith("coding.") ? "local_daemon" : "local",
+    provider: input.toolName.startsWith("coding.")
+      ? input.runtimeMode ?? "server_local"
+      : "local",
+    ...(input.runtimeMode ? { runtimeMode: input.runtimeMode } : {}),
+    ...(input.requestId ? { requestId: input.requestId } : {}),
     previewOnly: inferPreviewOnly(input.outputJson, input.error),
     ...(input.error ? { error: input.error } : {})
   };
+}
+
+function createActivityTitle(phase: "requested" | "running" | "completed" | "failed" | "cancelled") {
+  if (phase === "requested") {
+    return "Agent tool planned";
+  }
+  if (phase === "running") {
+    return "Agent tool running";
+  }
+  if (phase === "failed") {
+    return "Agent tool failed";
+  }
+  if (phase === "cancelled") {
+    return "Agent tool cancelled";
+  }
+  return "Agent tool completed";
 }
 
 function summarizeJsonShape(value: unknown) {
