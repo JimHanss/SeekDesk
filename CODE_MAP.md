@@ -91,6 +91,32 @@
 用途：
 - 组合 server-local runtime、只读工具自动执行、高风险工具审批，以及在线 daemon workspace/request 路由。
 
+### Runtime Resolver
+
+路径：
+- `apps/api/src/services/runtime-resolver.ts`
+- `apps/api/src/services/cloud-runtime-client.ts`
+
+用途：
+- 按可信 owner、workspace、Runtime 类型和 lifecycle 状态解析 local daemon、cloud runtime 或显式 server-local 执行端。
+- 通过内部 HTTP client 提交 cloud lifecycle operation 和结构化工具请求，并对内部错误做稳定映射与脱敏。
+
+关键导出：
+- `RuntimeResolver`：合并持久化 workspace 与 daemon live 状态，解析唯一 Runtime adapter。
+- `LocalDaemonRuntimeAdapter`：把 coding 操作转发给指定 owner/workspace 的在线 daemon。
+- `CloudRuntimeClient`：定义 API 与 cloud-runtime internal service 的 lifecycle/execute 边界。
+- `HttpCloudRuntimeClient`：使用 service token、timeout 和结构化协议调用 internal service。
+
+### Coding Workspace API
+
+路径：
+- `apps/api/src/routes/coding-workspace-routes.ts`
+- `apps/api/src/routes/runtime-http.ts`
+
+用途：
+- 提供 workspace list/detail 与 cloud create/start/stop/retry/delete API，持久化 operation 并保证 idempotency key 不跨操作复用。
+- 将 Runtime/repository 错误统一映射为稳定的 `404`、`403`、`409` 或脱敏 `500` 响应。
+
 ### Actor Context
 
 路径：
@@ -148,6 +174,9 @@
 
 路径：
 - `apps/api/src/authorization-integration.test.ts`
+- `apps/api/src/dual-runtime-api.test.ts`
+- `apps/api/src/services/runtime-resolver.test.ts`
+- `apps/api/src/services/cloud-runtime-client.test.ts`
 - `apps/api/src/repositories/coding-workspace-repository.test.ts`
 - `apps/api/src/repositories/postgres-daily-work-repository.test.ts`
 - `packages/runtime-core/src/index.test.ts`

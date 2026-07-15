@@ -133,7 +133,8 @@ export async function executeAuthorizedCodingToolCall(input: {
     ...toolCall,
     status: "running",
     permissionRequired: writeOrCommandTools.has(toolName),
-    previewOnly: false
+    previewOnly: false,
+    startedAt
   });
   await input.repository.upsertActivityEvent(
     createToolActivityEvent({
@@ -160,6 +161,7 @@ export async function executeAuthorizedCodingToolCall(input: {
       previewOnly: false,
       permissionRequired: writeOrCommandTools.has(toolName),
       createdAt: toolCall.createdAt,
+      startedAt,
       completedAt
     };
 
@@ -195,6 +197,7 @@ export async function executeAuthorizedCodingToolCall(input: {
       permissionRequired: writeOrCommandTools.has(toolName),
       error: formatCodingRuntimeErrorCode(error),
       createdAt: toolCall.createdAt,
+      startedAt,
       completedAt
     };
 

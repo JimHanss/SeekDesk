@@ -75,14 +75,31 @@ describe("api server", () => {
       postgresConfigured: false,
       postgresReady: false,
       futureDatabaseReady: false,
-      auth: {
-        mode: "development",
-        configured: true,
-        productionCloudRuntimeAllowed: true,
-        issuerConfigured: false,
-        audienceConfigured: false,
-        jwksConfigured: false
-      }
+       auth: {
+         mode: "development",
+         configured: true,
+         productionCloudRuntimeAllowed: true,
+         issuerConfigured: false,
+         audienceConfigured: false,
+         jwksConfigured: false
+       },
+       runtime: {
+         cloud: {
+           configured: false,
+           reachable: false,
+           service: "seekdesk-cloud-runtime",
+           dockerReady: false,
+           message: "Cloud runtime is not configured."
+         },
+         localDaemon: {
+           connected: 0,
+           ownerConfigured: true
+         },
+         serverLocal: {
+           enabled: true,
+           workspaceId: "server-local-runtime"
+         }
+       }
     });
 
     await app.close();
@@ -112,14 +129,31 @@ describe("api server", () => {
           postgresConfigured: false,
           postgresReady: false,
           futureDatabaseReady: false,
-          auth: {
-            mode: "development",
-            configured: true,
-            productionCloudRuntimeAllowed: true,
-            issuerConfigured: false,
-            audienceConfigured: false,
-            jwksConfigured: false
-          }
+           auth: {
+             mode: "development",
+             configured: true,
+             productionCloudRuntimeAllowed: true,
+             issuerConfigured: false,
+             audienceConfigured: false,
+             jwksConfigured: false
+           },
+           runtime: {
+             cloud: {
+               configured: false,
+               reachable: false,
+               service: "seekdesk-cloud-runtime",
+               dockerReady: false,
+               message: "Cloud runtime is not configured."
+             },
+             localDaemon: {
+               connected: 0,
+               ownerConfigured: true
+             },
+             serverLocal: {
+               enabled: true,
+               workspaceId: "server-local-runtime"
+             }
+           }
         });
       } finally {
         await app.close();
@@ -3427,18 +3461,27 @@ describe("api server", () => {
       const updatedWorkspaceId = String(updatedWorkspace?.workspaceId);
       socket.close();
 
-      let removed = false;
+      let offlineWorkspace: Record<string, unknown> | undefined;
       for (let attempt = 0; attempt < 20; attempt += 1) {
         const response = await app.inject({ method: "GET", url: "/api/coding/workspaces" });
         const workspaces = response.json().workspaces as Record<string, unknown>[];
-        removed = !workspaces.some((workspace) => workspace.workspaceId === updatedWorkspaceId);
-        if (removed) {
+        offlineWorkspace = workspaces.find((workspace) => (
+          workspace.workspaceId === updatedWorkspaceId
+          && workspace.connected === false
+          && workspace.status === "offline"
+        ));
+        if (offlineWorkspace) {
           break;
         }
         await new Promise((resolve) => setTimeout(resolve, 20));
       }
 
-      expect(removed).toBe(true);
+      expect(offlineWorkspace).toEqual(expect.objectContaining({
+        workspaceId: updatedWorkspaceId,
+        runtimeMode: "local_daemon",
+        connected: false,
+        status: "offline"
+      }));
 
       const unavailable = await app.inject({
         method: "POST",
@@ -3450,7 +3493,7 @@ describe("api server", () => {
         }
       });
 
-      expect(unavailable.statusCode).toBe(400);
+      expect(unavailable.statusCode).toBe(409);
       expect(unavailable.json()).toEqual(
         expect.objectContaining({
           mode: "coding_agent",
@@ -3519,8 +3562,11 @@ describe("api server", () => {
     const response = await app.inject({
       method: "POST",
       url: "/api/chat",
-      payload: {
-        prompt: "hello"
+       payload: {
+         prompt: "hello",
+         context: {
+           workspaceId: "server-local-runtime"
+         }
       }
     });
 
@@ -4060,10 +4106,13 @@ describe("api server", () => {
       const response = await app.inject({
         method: "POST",
         url: "/api/chat",
-        payload: {
-          mode: "coding_agent",
-          sessionId: "coding-shell-session",
-          prompt: "Run shell command: node -e \"console.log('seekdesk')\""
+         payload: {
+           mode: "coding_agent",
+           sessionId: "coding-shell-session",
+           prompt: "Run shell command: node -e \"console.log('seekdesk')\"",
+           context: {
+             workspaceId: "server-local-runtime"
+           }
         }
       });
 
@@ -4174,49 +4223,38 @@ describe("api server", () => {
     await app.close();
   });
 
-  it("browses and selects a coding workspace folder", async () => {
+  it("rejects folder browse and selection for the server-local fallback", async () => {
     const workspaceDir = await mkdtemp(join(tmpdir(), "seekdesk-workspace-select-"));
-    await writeFile(join(workspaceDir, "selected.txt"), "workspace selected", "utf8");
 
     try {
       const app = await buildServer();
       const browse = await app.inject({
         method: "POST",
         url: "/api/coding/workspace/browse",
-        payload: { path: workspaceDir }
+        payload: {
+          workspaceId: "server-local-runtime",
+          path: workspaceDir
+        }
       });
 
-      expect(browse.statusCode).toBe(200);
-      expect(browse.json()).toEqual(
-        expect.objectContaining({
-          mode: "coding_agent",
-          currentPath: workspaceDir
-        })
-      );
+      expect(browse.statusCode).toBe(409);
+      expect(browse.json()).toEqual(expect.objectContaining({
+        error: "session_workspace_mismatch"
+      }));
 
       const selected = await app.inject({
         method: "POST",
         url: "/api/coding/workspace/select",
-        payload: { path: workspaceDir }
+        payload: {
+          workspaceId: "server-local-runtime",
+          path: workspaceDir
+        }
       });
 
-      expect(selected.statusCode).toBe(200);
-      expect(selected.json().workspace.workspaceRoot).toBe(workspaceDir);
-
-      const workspace = await app.inject({
-        method: "GET",
-        url: "/api/coding/workspace"
-      });
-      expect(workspace.json().workspaceRoot).toBe(workspaceDir);
-
-      const file = await app.inject({
-        method: "POST",
-        url: "/api/coding/files/read",
-        payload: { path: "selected.txt", maxBytes: 1000 }
-      });
-
-      expect(file.statusCode).toBe(200);
-      expect(file.json().content).toBe("workspace selected");
+      expect(selected.statusCode).toBe(409);
+      expect(selected.json()).toEqual(expect.objectContaining({
+        error: "session_workspace_mismatch"
+      }));
       await app.close();
     } finally {
       await rm(workspaceDir, { force: true, recursive: true });
@@ -4247,9 +4285,25 @@ describe("api server", () => {
 
   it("requires same-session authorization before executing coding write tool calls", async () => {
     const repository = new SeedDailyWorkRepository();
+    await repository.recordChatMessage({
+      id: "coding-session-message",
+      ownerId: "local-dev-user",
+      sessionId: "coding-session",
+      appMode: "coding_agent",
+      role: "user",
+      content: "Run a shell command.",
+      workspaceId: "server-local-runtime",
+      workspaceName: "SeekDesk",
+      workspaceRuntimeMode: "server_local",
+      createdAt: "2026-06-19T00:00:00.000Z"
+    });
     await repository.recordToolCall({
       id: "tool-call-run-shell",
+      ownerId: "local-dev-user",
       sessionId: "coding-session",
+      workspaceId: "server-local-runtime",
+      runtimeMode: "server_local",
+      requestId: "tool-call-run-shell-request",
       name: "coding.run_shell",
       status: "permission_required",
       inputJson: {

@@ -39,8 +39,8 @@ export interface CodingRuntimeStatus {
   workspaceId?: string;
   workspaceName?: string;
   workspaceRoot: string;
-  workspaceSelectable: true;
-  runtimeMode: "local_daemon" | "server_local";
+  workspaceSelectable: boolean;
+  runtimeMode: "local_daemon" | "cloud_runtime" | "server_local";
   supportedCapabilities: CodingToolName[];
   safetyBoundary: {
     readsUserFiles: true;

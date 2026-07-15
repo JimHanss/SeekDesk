@@ -9,7 +9,8 @@ import {
   type ModelProvider
 } from "@seekdesk/agent";
 import {
-  chatRequestSchema,
+  codingChatRequestSchema,
+  normalizeRuntimeMode,
   createDailyActivitySnapshotMessage,
   toolNameSchema,
   type ChatProvider,
@@ -34,7 +35,13 @@ import {
 } from "./repositories/daily-work-repository.js";
 import { registerDailyWorkRoutes } from "./routes/daily-work-routes.js";
 import { registerCodingRoutes } from "./routes/coding-routes.js";
+import { registerCodingWorkspaceRoutes } from "./routes/coding-workspace-routes.js";
+import { sendRuntimeError } from "./routes/runtime-http.js";
 import { DaemonRegistry } from "./services/daemon-registry.js";
+import {
+  createCloudRuntimeClientFromEnv,
+  type CloudRuntimeClient
+} from "./services/cloud-runtime-client.js";
 import {
   createDailyModelUsageSnapshot,
   filterDailyActivityEvents
@@ -47,6 +54,8 @@ import {
   createActorContextResolver,
   type ActorContextResolver
 } from "./services/actor-context.js";
+import { CodingRuntimeError } from "./services/coding-runtime.js";
+import { RuntimeResolver } from "./services/runtime-resolver.js";
 
 const defaultAllowedOrigins = [
   "http://localhost:3000",
@@ -57,14 +66,23 @@ const defaultToolRegistry = createDefaultToolRegistry();
 export async function buildServer(options?: {
   dailyWorkRepository?: DailyWorkRepository;
   actorContextResolver?: ActorContextResolver;
+  daemonRegistry?: DaemonRegistry;
+  cloudRuntimeClient?: CloudRuntimeClient;
+  runtimeResolver?: RuntimeResolver;
 }) {
   const dailyWorkRepository =
     options?.dailyWorkRepository ?? createDailyWorkRepositoryFromEnv();
   const app = Fastify({
     logger: true
   });
-  const daemonRegistry = new DaemonRegistry();
+  const daemonRegistry = options?.daemonRegistry ?? new DaemonRegistry();
   const actorContextResolver = options?.actorContextResolver ?? createActorContextResolver();
+  const cloudRuntimeClient = options?.cloudRuntimeClient ?? createCloudRuntimeClientFromEnv();
+  const runtimeResolver = options?.runtimeResolver ?? new RuntimeResolver({
+    repository: dailyWorkRepository,
+    daemonRegistry,
+    cloudRuntimeClient
+  });
 
   await app.register(websocket);
   await app.register(multipart);
@@ -91,18 +109,25 @@ export async function buildServer(options?: {
   app.options("/api/chat", async (_request, reply) => reply.code(204).send());
 
   await registerDailyWorkRoutes(app, dailyWorkRepository);
-  await registerCodingRoutes(app, dailyWorkRepository, daemonRegistry);
+  await registerCodingRoutes(app, dailyWorkRepository, runtimeResolver);
+  await registerCodingWorkspaceRoutes(
+    app,
+    dailyWorkRepository,
+    runtimeResolver,
+    cloudRuntimeClient
+  );
 
   app.get("/health", async () => ({
     status: "ok",
     service: "seekdesk-api",
     version: "0.1.0",
     ...(await dailyWorkRepository.getDataLayerStatus()),
-    auth: actorContextResolver.readiness
+    auth: actorContextResolver.readiness,
+    runtime: await runtimeResolver.health()
   }));
 
   app.post<{ Body: unknown }>("/api/chat", async (request, reply) => {
-    const parsed = chatRequestSchema.safeParse(request.body);
+    const parsed = codingChatRequestSchema.safeParse(request.body);
     if (!parsed.success) {
       return reply.code(400).send({
         error: "Invalid chat request.",
@@ -116,6 +141,22 @@ export async function buildServer(options?: {
     const chatRequest = parsed.data;
     const ownerId = request.actor.ownerId;
     const sessionId = chatRequest.sessionId ?? `chat-${randomUUID()}`;
+    let codingResolution: Awaited<ReturnType<RuntimeResolver["resolve"]>> | undefined;
+    if (chatRequest.mode === "coding_agent") {
+      try {
+        codingResolution = await resolveCodingChatWorkspace({
+          repository: dailyWorkRepository,
+          resolver: runtimeResolver,
+          ownerId,
+          sessionId,
+          hasExplicitSessionId: Boolean(chatRequest.sessionId),
+          workspaceId: chatRequest.context?.workspaceId,
+          runtimeMode: chatRequest.context?.runtimeMode
+        });
+      } catch (error) {
+        return sendRuntimeError(reply, error);
+      }
+    }
     const incomingUserMessage = findIncomingUserMessage(chatRequest);
     const shouldGenerateSessionTitle =
       !chatRequest.sessionId &&
@@ -133,11 +174,10 @@ export async function buildServer(options?: {
       mode: chatRequest.mode,
       ...(agentContext?.modelRoute ? { modelRoute: agentContext.modelRoute } : {})
     });
-    const chatWorkspace = daemonRegistry.getWorkspace(chatRequest.context?.workspaceId) ?? undefined;
     const toolRuntime =
       chatRequest.mode === "coding_agent"
         ? createCodingToolRuntime({
-            ...(chatWorkspace ? { runtime: daemonRegistry.createRuntime(chatWorkspace.workspaceId) } : {})
+            runtime: codingResolution!.runtime
           })
         : undefined;
     await recordIncomingChatMessage({
@@ -145,7 +185,7 @@ export async function buildServer(options?: {
       chatRequest,
       sessionId,
       ownerId,
-      ...(chatWorkspace ? { workspace: chatWorkspace } : {})
+      ...(codingResolution ? { workspace: codingResolution.workspace } : {})
     });
     const generatedSessionTitle = shouldGenerateSessionTitle && incomingUserMessage
       ? await generateSessionTitle({
@@ -171,10 +211,8 @@ export async function buildServer(options?: {
         dailyWorkRepository,
         sessionId,
         ownerId,
-        workspaceId: chatWorkspace?.workspaceId ?? chatRequest.context?.workspaceId ?? "workspace-seekdesk",
-        runtimeMode: chatWorkspace?.runtimeMode ?? (
-          chatRequest.context?.workspaceId === "server-local-runtime" ? "server_local" : "local_daemon"
-        ),
+        workspaceId: codingResolution?.workspace.workspaceId ?? chatRequest.context?.workspaceId ?? "workspace-seekdesk",
+        runtimeMode: codingResolution?.workspace.runtimeMode ?? "server_local",
         providerName: providerSelection.providerName,
         modelName: providerSelection.modelName
       }
@@ -203,21 +241,43 @@ export async function buildServer(options?: {
     async (request) => {
       const sessionId = request.params.sessionId.trim();
       const ownerId = request.actor.ownerId;
-      const [
-        toolCalls,
-        modelUsageRecords,
-        activityEvents,
-        permissionGrants
-      ] = await Promise.all([
-        dailyWorkRepository.listToolCalls({ ownerId, sessionId, limit: 100 }),
-        dailyWorkRepository.listModelUsageRecords({ ownerId, sessionId, limit: 100 }),
-        dailyWorkRepository.listEvents({ ownerId }),
-        dailyWorkRepository.listPermissionGrants({ ownerId, sessionId, limit: 100 })
+      const [sessions, toolCalls] = await Promise.all([
+        dailyWorkRepository.listSessionDetails({ ownerId }),
+        dailyWorkRepository.listToolCalls({ ownerId, sessionId, limit: 100 })
       ]);
+      const session = sessions.find((candidate) => candidate.id === sessionId);
+      const workspaceId = session?.workspaceId ?? toolCalls.at(-1)?.workspaceId;
+      const runtimeMode = session?.workspaceRuntimeMode
+        ? normalizeRuntimeMode(session.workspaceRuntimeMode)
+        : toolCalls.at(-1)?.runtimeMode
+          ? normalizeRuntimeMode(toolCalls.at(-1)!.runtimeMode)
+          : undefined;
+      const scope = {
+        ownerId,
+        sessionId,
+        ...(workspaceId ? { workspaceId } : {}),
+        ...(runtimeMode ? { runtimeMode } : {}),
+        limit: 100
+      };
+      const [modelUsageRecords, activityEvents, permissionGrants, workspace, operations] =
+        await Promise.all([
+          dailyWorkRepository.listModelUsageRecords(scope),
+          dailyWorkRepository.listEvents({ ownerId }),
+          dailyWorkRepository.listPermissionGrants(scope),
+          workspaceId ? runtimeResolver.getWorkspace(ownerId, workspaceId) : null,
+          workspaceId
+            ? dailyWorkRepository.listRuntimeOperations({ ownerId, workspaceId, limit: 10 })
+            : []
+        ]);
 
       return {
         mode: "coding_agent",
         sessionId,
+        ...(workspace ? { workspace } : {}),
+        ...(workspaceId ? { workspaceId } : {}),
+        ...(runtimeMode ? { runtimeMode } : {}),
+        operations,
+        ...(operations[0] ? { latestOperation: operations[0] } : {}),
         toolCalls,
         toolActivityEvents: filterSessionToolActivityEvents(
           activityEvents,
@@ -371,6 +431,54 @@ function createModelProvider(options: {
     providerName: "deepseek",
     modelName: modelConfig.selectedModel
   };
+}
+
+async function resolveCodingChatWorkspace(input: {
+  repository: DailyWorkRepository;
+  resolver: RuntimeResolver;
+  ownerId: string;
+  sessionId: string;
+  hasExplicitSessionId: boolean;
+  workspaceId?: string | undefined;
+  runtimeMode?: RuntimeMode | undefined;
+}) {
+  const session = (await input.repository.listSessionDetails({ ownerId: input.ownerId }))
+    .find((candidate) => candidate.id === input.sessionId);
+  if (session) {
+    const sessionRuntimeMode = normalizeRuntimeMode(
+      session.workspaceRuntimeMode ?? (
+        session.workspaceId === "server-local-runtime" ? "server_local" : "local_daemon"
+      )
+    );
+    if (
+      session.appMode !== "coding_agent" ||
+      session.workspaceId !== input.workspaceId ||
+      (input.runtimeMode && normalizeRuntimeMode(input.runtimeMode) !== sessionRuntimeMode)
+    ) {
+      throw new CodingRuntimeError(
+        "The chat request does not match the persisted session workspace.",
+        "session_workspace_mismatch",
+        {
+          sessionId: input.sessionId,
+          expectedWorkspaceId: session.workspaceId,
+          expectedRuntimeMode: sessionRuntimeMode,
+          actualWorkspaceId: input.workspaceId,
+          actualRuntimeMode: input.runtimeMode
+        }
+      );
+    }
+    return input.resolver.resolve(
+      input.ownerId,
+      session.workspaceId,
+      sessionRuntimeMode
+    );
+  }
+  if (input.hasExplicitSessionId && !input.workspaceId) {
+    throw new CodingRuntimeError("Coding session was not found.", "session_not_found", {
+      sessionId: input.sessionId
+    });
+  }
+  return input.resolver.resolve(input.ownerId, input.workspaceId, input.runtimeMode);
 }
 
 async function recordIncomingChatMessage(input: {

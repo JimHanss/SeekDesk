@@ -5,7 +5,7 @@
 - 功能：`dual-runtime`
 - 分支：`codex/dual-runtime`
 - 任务范围：`T001-T124`
-- 当前批次：`T029-T041` 已完成，准备进入 `T042-T054`
+- 当前批次：`T042-T054` 已完成，准备进入 `T055-T062`
 - 基线 HEAD：`855c888606ca933acf4879dc933d3b2b3852f13b`
 
 ## 2026-07-15 基线检查
@@ -36,6 +36,7 @@
 - `T005-T015`：已完成。新增统一 Runtime/workspace/session/grant/tool/chat contract，并保留旧 runtime 名称和旧记录兼容。
 - `T016-T028`：已完成。新增共享 `runtime-core`，daemon 与 server-local adapter 使用同一执行实现，并完成真实 daemon 审批执行验收。
 - `T029-T041`：已完成。新增双 Runtime 数据模型、显式历史回填迁移、owner-scoped repository、加密凭据和 OIDC/JWT actor 边界。
+- `T042-T054`：已完成。新增 RuntimeResolver、cloud client、公开 workspace lifecycle API、稳定错误映射、会话绑定和 workspace-scoped trace。
 
 ## T001-T015 批次验证
 
@@ -67,8 +68,18 @@
 - `npm run lint`、`npm run test --workspaces --if-present`、`npm run typecheck`、`npm run build`、`npm run verify:secrets`、`git diff --check`：全部通过。
 - `T004` 与真实 migration apply 仍由 Docker Engine 环境阻塞，将在 `T119-T121` 集中补跑。
 
+## T042-T054 批次验证
+
+- 文件、搜索、Git、chat 和 tool execution 统一通过 `RuntimeResolver`；未知 workspace、离线 daemon、未就绪 cloud 和跨 Runtime 绑定返回稳定错误。
+- local daemon 离线后保留持久化 workspace summary，重新连接后可由 resolver 合并 live 状态。
+- cloud workspace create/start/stop/retry/delete 返回 `202` operation；idempotent replay 返回原 operation，冲突 key 返回 `workspace_operation_conflict`。
+- session trace 返回 workspace、runtimeMode、operation、tool call、grant、activity 和 model usage，并保持 owner/session 关联。
+- API 测试：`118` 项通过，`4` 项按环境跳过。
+- `npm run lint`、`npm run test --workspaces --if-present`、`npm run typecheck`、`npm run build`、`npm run verify:secrets`、`git diff --check`：全部通过。
+- `T004` 与 Docker/Postgres/cloud image 真实验证仍由 Docker Engine 环境阻塞。
+
 ## 进行中
 
-- 功能：Runtime Resolver 与公开 API
-- 当前阶段：`T042-T054`
-- 下一步：统一 local daemon、cloud runtime 和显式 server-local adapter 的解析、错误映射、会话绑定及 lifecycle API。
+- 功能：Runtime Worker 与 Node.js 22 image
+- 当前阶段：`T055-T062`
+- 下一步：创建独立 runtime-worker workspace、JSON transport、统一 runtime-core 执行、取消/超时处理和容器镜像安全约定。

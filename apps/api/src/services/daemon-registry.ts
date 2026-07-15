@@ -44,6 +44,7 @@ const daemonSupportedCapabilities: CodingToolName[] = [
 ];
 
 interface PendingDaemonRequest {
+  workspaceId: string;
   resolve: (value: unknown) => void;
   reject: (error: unknown) => void;
   timer: ReturnType<typeof setTimeout>;
@@ -53,6 +54,8 @@ export class DaemonRegistry {
   private readonly daemons = new Map<string, ConnectedDaemon>();
   private readonly workspaceToDaemon = new Map<string, string>();
   private readonly pending = new Map<string, PendingDaemonRequest>();
+
+  constructor(readonly ownerId = resolveDaemonOwnerId()) {}
 
   handleConnection(socket: WebSocketLike) {
     let daemonId: string | null = null;
@@ -129,7 +132,10 @@ export class DaemonRegistry {
     });
   }
 
-  listWorkspaces() {
+  listWorkspaces(ownerId?: string) {
+    if (ownerId && ownerId !== this.ownerId) {
+      return [];
+    }
     return [...this.daemons.values()].map((client) => ({
       ...client.workspace,
       connected: true,
@@ -137,7 +143,10 @@ export class DaemonRegistry {
     }));
   }
 
-  getWorkspace(workspaceId: string | undefined) {
+  getWorkspace(workspaceId: string | undefined, ownerId?: string) {
+    if (ownerId && ownerId !== this.ownerId) {
+      return null;
+    }
     if (!workspaceId) {
       return this.listWorkspaces()[0] ?? null;
     }
@@ -146,8 +155,8 @@ export class DaemonRegistry {
     return daemonId ? this.daemons.get(daemonId)?.workspace ?? null : null;
   }
 
-  createRuntime(workspaceId: string): CodingRuntime {
-    return new DaemonBackedCodingRuntime(this, workspaceId);
+  createRuntime(workspaceId: string, ownerId = this.ownerId): CodingRuntime {
+    return new LocalDaemonRuntimeAdapter(this, workspaceId, ownerId);
   }
 
   async requestWorkspace(workspaceId: string, command: "workspace.browse" | "workspace.select" | "workspace.pick", payload: unknown) {
@@ -193,7 +202,7 @@ export class DaemonRegistry {
         reject(new CodingRuntimeError("Daemon request timed out.", "daemon_request_timeout", { workspaceId, command }));
       }, timeoutMs);
 
-      this.pending.set(requestId, { resolve, reject, timer });
+      this.pending.set(requestId, { workspaceId, resolve, reject, timer });
       client.socket.send(JSON.stringify({
         type: "daemon.request",
         requestId,
@@ -226,13 +235,29 @@ export class DaemonRegistry {
     const current = this.daemons.get(daemonId);
     if (current) {
       this.workspaceToDaemon.delete(current.workspace.workspaceId);
+      for (const [requestId, pending] of this.pending) {
+        if (pending.workspaceId !== current.workspace.workspaceId) {
+          continue;
+        }
+        clearTimeout(pending.timer);
+        pending.reject(new CodingRuntimeError(
+          "The local daemon disconnected while handling the request.",
+          "runtime_unavailable",
+          { workspaceId: pending.workspaceId, reason: "daemon_disconnected" }
+        ));
+        this.pending.delete(requestId);
+      }
     }
     this.daemons.delete(daemonId);
   }
 }
 
-class DaemonBackedCodingRuntime implements CodingRuntime {
-  constructor(private readonly registry: DaemonRegistry, private readonly workspaceId: string) {}
+export class LocalDaemonRuntimeAdapter implements CodingRuntime {
+  constructor(
+    private readonly registry: DaemonRegistry,
+    private readonly workspaceId: string,
+    private readonly ownerId: string
+  ) {}
 
   status() {
     const workspace = this.requireWorkspace();
@@ -292,7 +317,7 @@ class DaemonBackedCodingRuntime implements CodingRuntime {
   }
 
   private requireWorkspace() {
-    const workspace = this.registry.getWorkspace(this.workspaceId);
+    const workspace = this.registry.getWorkspace(this.workspaceId, this.ownerId);
     if (!workspace) {
       throw new CodingRuntimeError("No local daemon is connected for this workspace.", "runtime_unavailable", { workspaceId: this.workspaceId });
     }
@@ -305,6 +330,12 @@ function validatePairingToken(token: string) {
   if (token !== expected) {
     throw new CodingRuntimeError("Invalid daemon pairing token.", "invalid_pairing_token");
   }
+}
+
+function resolveDaemonOwnerId(env: NodeJS.ProcessEnv = process.env) {
+  return env.SEEKDESK_DAEMON_OWNER_ID?.trim() ||
+    env.SEEKDESK_DEV_USER_ID?.trim() ||
+    "local-dev-user";
 }
 
 function createWorkspace(status: DaemonStatus): DaemonWorkspace {

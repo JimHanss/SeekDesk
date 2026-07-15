@@ -72,19 +72,19 @@
 
 ## 阶段 4：Runtime Resolver 与公开 API
 
-- [ ] T042 新增 `RuntimeAdapter` 与 `RuntimeResolver`，按 owner、workspace、runtimeMode 和状态解析执行端。
-- [ ] T043 将 `DaemonRegistry` 包装为 `LocalDaemonRuntimeAdapter`，离线时保留持久化 workspace 元数据并返回 `daemon_offline`。
-- [ ] T044 新增 `CloudRuntimeClient` interface 和未配置实现，为后续 internal service 保持可测试边界。
-- [ ] T045 修改 `apps/api/src/routes/coding-routes.ts`，所有文件、搜索和 Git route 都通过 resolver，删除未知 workspace fallback。
-- [ ] T046 修改 `/api/chat`，新会话校验 workspace owner/status，已有会话校验持久化 workspace 绑定。
-- [ ] T047 修改 coding tool execution，执行 workspace 只能来自 session/tool call 持久化记录，request body 只做一致性校验。
-- [ ] T048 将 Runtime error 映射为稳定的 `404 workspace_not_found`、`409 runtime_unavailable`、`409 runtime_not_ready` 和 `409 session_workspace_mismatch`。
-- [ ] T049 新增 `GET /api/coding/workspaces` 与 `GET /api/coding/workspaces/:workspaceId`，合并持久化 cloud workspace 和 daemon 状态。
-- [ ] T050 新增 cloud workspace create/start/stop/retry/delete public route，使用 operation 与 idempotency key 返回 `202`。
-- [ ] T051 限制 `/api/coding/workspace/browse|select|pick` 仅用于 `local_daemon`，cloud workspace 根目录固定为 `/workspace`。
-- [ ] T052 扩展 `/health`，展示 cloud runtime 配置、内部服务连接、Docker readiness、身份模式和 server-local fallback 状态，不泄露 secret。
-- [ ] T053 扩展 session trace，返回 workspace summary、runtimeMode、operation、workspace-scoped tool/grant/activity/model usage。
-- [ ] T054 增加 resolver、chat 绑定、未知 workspace、daemon offline、跨 owner、跨 session、跨 Runtime 和 public workspace API 测试。
+- [x] T042 新增 `RuntimeAdapter` 与 `RuntimeResolver`，按 owner、workspace、runtimeMode 和状态解析执行端。
+- [x] T043 将 `DaemonRegistry` 包装为 `LocalDaemonRuntimeAdapter`，离线时保留持久化 workspace 元数据并返回 `daemon_offline`。
+- [x] T044 新增 `CloudRuntimeClient` interface 和未配置实现，为后续 internal service 保持可测试边界。
+- [x] T045 修改 `apps/api/src/routes/coding-routes.ts`，所有文件、搜索和 Git route 都通过 resolver，删除未知 workspace fallback。
+- [x] T046 修改 `/api/chat`，新会话校验 workspace owner/status，已有会话校验持久化 workspace 绑定。
+- [x] T047 修改 coding tool execution，执行 workspace 只能来自 session/tool call 持久化记录，request body 只做一致性校验。
+- [x] T048 将 Runtime error 映射为稳定的 `404 workspace_not_found`、`409 runtime_unavailable`、`409 runtime_not_ready` 和 `409 session_workspace_mismatch`。
+- [x] T049 新增 `GET /api/coding/workspaces` 与 `GET /api/coding/workspaces/:workspaceId`，合并持久化 cloud workspace 和 daemon 状态。
+- [x] T050 新增 cloud workspace create/start/stop/retry/delete public route，使用 operation 与 idempotency key 返回 `202`。
+- [x] T051 限制 `/api/coding/workspace/browse|select|pick` 仅用于 `local_daemon`，cloud workspace 根目录固定为 `/workspace`。
+- [x] T052 扩展 `/health`，展示 cloud runtime 配置、内部服务连接、Docker readiness、身份模式和 server-local fallback 状态，不泄露 secret。
+- [x] T053 扩展 session trace，返回 workspace summary、runtimeMode、operation、workspace-scoped tool/grant/activity/model usage。
+- [x] T054 增加 resolver、chat 绑定、未知 workspace、daemon offline、跨 owner、跨 session、跨 Runtime 和 public workspace API 测试。
 
 ## 阶段 5：Runtime Worker 与 Node22 Image
 
