@@ -1,4 +1,5 @@
-import { asc, desc, eq } from "drizzle-orm";
+import { and, asc, desc, eq, isNull } from "drizzle-orm";
+import type { AnyPgColumn } from "drizzle-orm/pg-core";
 import { drizzle, type NodePgDatabase } from "drizzle-orm/node-postgres";
 import { Pool } from "pg";
 
@@ -15,6 +16,8 @@ import {
   dailyWorkTemplateSchema,
   dailyWorkWorkflowSchema,
   dailyWorkPermissionGrantSchema,
+  codingWorkspaceRecordSchema,
+  runtimeOperationSchema,
   toolCallRecordSchema,
   toolModelUsageRecordSchema,
   defaultDailyActivityEvents,
@@ -36,6 +39,8 @@ import {
   type DailyWorkSessionDetail,
   type DailyWorkTemplate,
   type DailyWorkSessionMessage,
+  type CodingWorkspaceRecord,
+  type RuntimeOperation,
   type ToolCallRecord,
   type ToolModelUsageRecord
 } from "@seekdesk/shared";
@@ -43,23 +48,31 @@ import {
 import * as schema from "../db/schema.js";
 import type {
   DailyWorkConnectorAccount,
+  CodingScopeQuery,
+  CodingWorkspaceQuery,
   DailyWorkDataLayerStatus,
   DailyWorkPermissionGrantQuery,
   DailyWorkTraceQuery,
   DailyWorkRepository,
-  PersistedChatMessage
+  PersistedChatMessage,
+  RepositoryCredentialMetadata,
+  RepositoryCredentialRecord,
+  RuntimeOperationQuery
 } from "./daily-work-repository.js";
+import { DailyWorkRepositoryAccessError } from "./repository-errors.js";
 
 type PayloadTable =
   | typeof schema.dailyWorkTemplates
   | typeof schema.dailyWorkContextItems
   | typeof schema.dailyWorkContextDocuments
   | typeof schema.dailyWorkApprovals
-  | typeof schema.dailyWorkArtifacts
-  | typeof schema.dailyWorkSessions
-  | typeof schema.dailyWorkActivityEvents
   | typeof schema.dailyWorkConnectors
   | typeof schema.dailyWorkWorkflows;
+
+type ScopedPayloadTable =
+  | typeof schema.dailyWorkArtifacts
+  | typeof schema.dailyWorkSessions
+  | typeof schema.dailyWorkActivityEvents;
 
 type ArrayParser<T> = {
   parse(input: unknown): T[];
@@ -129,16 +142,17 @@ export class PostgresDailyWorkRepository implements DailyWorkRepository {
     );
   }
 
-  async listArtifacts() {
-    return this.listPayloadCollection(
+  async listArtifacts(query: CodingScopeQuery = {}) {
+    return this.listScopedPayloadCollection(
       schema.dailyWorkArtifacts,
       dailyWorkArtifactSchema.array(),
-      async () => cloneJson(defaultDailyWorkArtifacts)
+      async () => cloneJson(defaultDailyWorkArtifacts),
+      query
     );
   }
 
-  async listSessionSummaries() {
-    const details = await this.listSessionDetails();
+  async listSessionSummaries(query: CodingScopeQuery = {}) {
+    const details = await this.listSessionDetails(query);
 
     return dailyWorkSessionSummarySchema.array().parse(
       details.map(({ recentMessages, ...summary }) => {
@@ -148,19 +162,21 @@ export class PostgresDailyWorkRepository implements DailyWorkRepository {
     );
   }
 
-  async listSessionDetails() {
-    return this.listPayloadCollection(
+  async listSessionDetails(query: CodingScopeQuery = {}) {
+    return this.listScopedPayloadCollection(
       schema.dailyWorkSessions,
       dailyWorkSessionDetailSchema.array(),
-      async () => cloneJson(defaultDailyWorkSessionDetails)
+      async () => cloneJson(defaultDailyWorkSessionDetails),
+      query
     );
   }
 
-  async listEvents() {
-    return this.listPayloadCollection(
+  async listEvents(query: CodingScopeQuery = {}) {
+    return this.listScopedPayloadCollection(
       schema.dailyWorkActivityEvents,
       dailyActivityEventSchema.array(),
-      async () => cloneJson(defaultDailyActivityEvents)
+      async () => cloneJson(defaultDailyActivityEvents),
+      query
     );
   }
 
@@ -190,7 +206,12 @@ export class PostgresDailyWorkRepository implements DailyWorkRepository {
 
   async updateSessionDetail(session: DailyWorkSessionDetail) {
     const parsed = dailyWorkSessionDetailSchema.parse(session);
-    await this.upsertPayload(schema.dailyWorkSessions, parsed.id, parsed);
+    await this.upsertScopedPayload(
+      schema.dailyWorkSessions,
+      parsed.id,
+      parsed,
+      scopeFromSession(parsed)
+    );
 
     return cloneJson(parsed);
   }
@@ -203,16 +224,16 @@ export class PostgresDailyWorkRepository implements DailyWorkRepository {
     return (result.rowCount ?? 0) > 0;
   }
 
-  async upsertActivityEvent(event: DailyActivityEvent) {
+  async upsertActivityEvent(event: DailyActivityEvent, scope: CodingScopeQuery = {}) {
     const parsed = dailyActivityEventSchema.parse(event);
-    await this.upsertPayload(schema.dailyWorkActivityEvents, parsed.id, parsed);
+    await this.upsertScopedPayload(schema.dailyWorkActivityEvents, parsed.id, parsed, scope);
 
     return cloneJson(parsed);
   }
 
-  async upsertArtifact(artifact: DailyWorkArtifact) {
+  async upsertArtifact(artifact: DailyWorkArtifact, scope: CodingScopeQuery = {}) {
     const parsed = dailyWorkArtifactSchema.parse(artifact);
-    await this.upsertPayload(schema.dailyWorkArtifacts, parsed.id, parsed);
+    await this.upsertScopedPayload(schema.dailyWorkArtifacts, parsed.id, parsed, scope);
 
     return cloneJson(parsed);
   }
@@ -224,7 +245,12 @@ export class PostgresDailyWorkRepository implements DailyWorkRepository {
       .insert(schema.dailyWorkMessages)
       .values({
         id: parsedMessage.id,
+        ownerId: parsedMessage.ownerId ?? fallbackOwnerId,
         sessionId: parsedMessage.sessionId,
+        workspaceId: parsedMessage.workspaceId ?? fallbackWorkspaceId,
+        runtimeMode: normalizeRuntimeMode(
+          parsedMessage.workspaceRuntimeMode ?? fallbackRuntimeMode
+        ),
         role: parsedMessage.role,
         content: parsedMessage.content,
         payload: parsedMessage,
@@ -234,6 +260,11 @@ export class PostgresDailyWorkRepository implements DailyWorkRepository {
         target: schema.dailyWorkMessages.id,
         set: {
           sessionId: parsedMessage.sessionId,
+          ownerId: parsedMessage.ownerId ?? fallbackOwnerId,
+          workspaceId: parsedMessage.workspaceId ?? fallbackWorkspaceId,
+          runtimeMode: normalizeRuntimeMode(
+            parsedMessage.workspaceRuntimeMode ?? fallbackRuntimeMode
+          ),
           role: parsedMessage.role,
           content: parsedMessage.content,
           payload: parsedMessage,
@@ -241,11 +272,23 @@ export class PostgresDailyWorkRepository implements DailyWorkRepository {
         }
       });
 
-    const sessions = await this.listSessionDetails();
+    const messageScope: CodingScopeQuery = {
+      ownerId: parsedMessage.ownerId ?? fallbackOwnerId,
+      workspaceId: parsedMessage.workspaceId ?? fallbackWorkspaceId,
+      runtimeMode: normalizeRuntimeMode(
+        parsedMessage.workspaceRuntimeMode ?? fallbackRuntimeMode
+      )
+    };
+    const sessions = await this.listSessionDetails(messageScope);
     mergeChatMessageIntoSessions(sessions, parsedMessage);
     const session = sessions.find((item) => item.id === parsedMessage.sessionId);
     if (session) {
-      await this.updateSessionDetail(session);
+      await this.upsertScopedPayload(
+        schema.dailyWorkSessions,
+        session.id,
+        session,
+        messageScope
+      );
     }
 
     return cloneJson(parsedMessage);
@@ -258,7 +301,11 @@ export class PostgresDailyWorkRepository implements DailyWorkRepository {
       .insert(schema.toolCalls)
       .values({
         id: parsed.id,
+        ownerId: parsed.ownerId ?? fallbackOwnerId,
         sessionId: parsed.sessionId ?? null,
+        workspaceId: parsed.workspaceId ?? fallbackWorkspaceId,
+        runtimeMode: normalizeRuntimeMode(parsed.runtimeMode ?? fallbackRuntimeMode),
+        requestId: parsed.requestId ?? null,
         mode: inferToolCallMode(parsed.name),
         name: parsed.name,
         status: parsed.status,
@@ -268,17 +315,23 @@ export class PostgresDailyWorkRepository implements DailyWorkRepository {
         permissionRequired: parsed.permissionRequired,
         error: parsed.error ?? null,
         createdAt: new Date(parsed.createdAt),
+        startedAt: parsed.startedAt ? new Date(parsed.startedAt) : null,
         completedAt: parsed.completedAt ? new Date(parsed.completedAt) : null
       })
       .onConflictDoUpdate({
         target: schema.toolCalls.id,
         set: {
           sessionId: parsed.sessionId ?? null,
+          ownerId: parsed.ownerId ?? fallbackOwnerId,
+          workspaceId: parsed.workspaceId ?? fallbackWorkspaceId,
+          runtimeMode: normalizeRuntimeMode(parsed.runtimeMode ?? fallbackRuntimeMode),
+          requestId: parsed.requestId ?? null,
           status: parsed.status,
           outputJson: parsed.outputJson ?? null,
           previewOnly: parsed.previewOnly,
           permissionRequired: parsed.permissionRequired,
           error: parsed.error ?? null,
+          startedAt: parsed.startedAt ? new Date(parsed.startedAt) : null,
           completedAt: parsed.completedAt ? new Date(parsed.completedAt) : null
         }
       });
@@ -299,7 +352,10 @@ export class PostgresDailyWorkRepository implements DailyWorkRepository {
       .insert(schema.modelUsageRecords)
       .values({
         id: parsed.id,
+        ownerId: parsed.ownerId ?? fallbackOwnerId,
         sessionId: parsed.sessionId ?? null,
+        workspaceId: parsed.workspaceId ?? fallbackWorkspaceId,
+        runtimeMode: normalizeRuntimeMode(parsed.runtimeMode ?? fallbackRuntimeMode),
         provider: parsed.provider,
         model: parsed.model,
         promptTokens: parsed.promptTokens,
@@ -311,6 +367,9 @@ export class PostgresDailyWorkRepository implements DailyWorkRepository {
         target: schema.modelUsageRecords.id,
         set: {
           sessionId: parsed.sessionId ?? null,
+          ownerId: parsed.ownerId ?? fallbackOwnerId,
+          workspaceId: parsed.workspaceId ?? fallbackWorkspaceId,
+          runtimeMode: normalizeRuntimeMode(parsed.runtimeMode ?? fallbackRuntimeMode),
           provider: parsed.provider,
           model: parsed.model,
           promptTokens: parsed.promptTokens,
@@ -335,9 +394,12 @@ export class PostgresDailyWorkRepository implements DailyWorkRepository {
       .insert(schema.dailyWorkPermissionGrants)
       .values({
         id: parsed.id,
+        ownerId: parsed.ownerId ?? fallbackOwnerId,
         mode: parsed.mode,
         provider: parsed.provider,
         sessionId: parsed.sessionId,
+        workspaceId: parsed.workspaceId ?? fallbackWorkspaceId,
+        runtimeMode: normalizeRuntimeMode(parsed.runtimeMode ?? parsed.provider),
         action: parsed.action,
         decision: parsed.decision,
         status: parsed.status,
@@ -352,6 +414,9 @@ export class PostgresDailyWorkRepository implements DailyWorkRepository {
         target: schema.dailyWorkPermissionGrants.id,
         set: {
           status: parsed.status,
+          ownerId: parsed.ownerId ?? fallbackOwnerId,
+          workspaceId: parsed.workspaceId ?? fallbackWorkspaceId,
+          runtimeMode: normalizeRuntimeMode(parsed.runtimeMode ?? parsed.provider),
           reason: parsed.reason ?? null,
           payload: parsed,
           expiresAt: new Date(parsed.expiresAt),
@@ -418,6 +483,199 @@ export class PostgresDailyWorkRepository implements DailyWorkRepository {
     return cloneJson(parsed);
   }
 
+  async listCodingWorkspaces(query: CodingWorkspaceQuery) {
+    const conditions = [eq(schema.workspaces.ownerId, query.ownerId)];
+    if (query.runtimeMode) {
+      conditions.push(eq(schema.workspaces.runtimeMode, query.runtimeMode));
+    }
+    if (!query.includeDeleted) {
+      conditions.push(isNull(schema.workspaces.deletedAt));
+    }
+    const rows = await this.db
+      .select()
+      .from(schema.workspaces)
+      .where(and(...conditions))
+      .orderBy(desc(schema.workspaces.updatedAt));
+    return rows.map(mapWorkspaceRow);
+  }
+
+  async getCodingWorkspace(ownerId: string, workspaceId: string) {
+    const [row] = await this.db
+      .select()
+      .from(schema.workspaces)
+      .where(and(eq(schema.workspaces.ownerId, ownerId), eq(schema.workspaces.id, workspaceId)))
+      .limit(1);
+    return row ? mapWorkspaceRow(row) : null;
+  }
+
+  async upsertCodingWorkspace(workspace: CodingWorkspaceRecord) {
+    const parsed = codingWorkspaceRecordSchema.parse(workspace);
+    const repository = parsed.repository;
+    const row = {
+      id: parsed.workspaceId,
+      ownerId: parsed.ownerId,
+      name: parsed.name,
+      runtimeMode: parsed.runtimeMode,
+      status: parsed.status,
+      rootPath: parsed.rootPath,
+      repositoryUrl: repository?.url ?? null,
+      repositoryBranch: repository?.branch ?? null,
+      repositoryRevision: repository?.revision ?? null,
+      imageProfile: parsed.imageProfile ?? null,
+      credentialRef: parsed.credentialRef ?? null,
+      daemonId: parsed.daemonId ?? null,
+      containerRef: parsed.containerRef ?? null,
+      storageRef: parsed.storageRef ?? null,
+      errorCode: parsed.errorCode ?? null,
+      errorMessage: parsed.errorMessage ?? null,
+      lastActiveAt: parsed.lastActiveAt ? new Date(parsed.lastActiveAt) : null,
+      stoppedAt: parsed.stoppedAt ? new Date(parsed.stoppedAt) : null,
+      deletedAt: parsed.deletedAt ? new Date(parsed.deletedAt) : null,
+      createdAt: new Date(parsed.createdAt),
+      updatedAt: new Date(parsed.updatedAt)
+    };
+    const [inserted] = await this.db
+      .insert(schema.workspaces)
+      .values(row)
+      .onConflictDoNothing({ target: schema.workspaces.id })
+      .returning({ id: schema.workspaces.id });
+    if (!inserted) {
+      const { id: _id, createdAt: _createdAt, ...update } = row;
+      void _id;
+      void _createdAt;
+      const [updated] = await this.db
+        .update(schema.workspaces)
+        .set(update)
+        .where(and(
+          eq(schema.workspaces.id, parsed.workspaceId),
+          eq(schema.workspaces.ownerId, parsed.ownerId)
+        ))
+        .returning({ id: schema.workspaces.id });
+      if (!updated) {
+        throw new DailyWorkRepositoryAccessError("Workspace", parsed.workspaceId);
+      }
+    }
+    return cloneJson(parsed);
+  }
+
+  async listRuntimeOperations(query: RuntimeOperationQuery) {
+    const conditions = [eq(schema.workspaceRuntimeOperations.ownerId, query.ownerId)];
+    if (query.workspaceId) {
+      conditions.push(eq(schema.workspaceRuntimeOperations.workspaceId, query.workspaceId));
+    }
+    if (query.status) {
+      conditions.push(eq(schema.workspaceRuntimeOperations.status, query.status));
+    }
+    const rows = await this.db
+      .select()
+      .from(schema.workspaceRuntimeOperations)
+      .where(and(...conditions))
+      .orderBy(desc(schema.workspaceRuntimeOperations.createdAt))
+      .limit(normalizeTraceLimit(query.limit));
+    return rows.map(mapRuntimeOperationRow);
+  }
+
+  async getRuntimeOperationByIdempotencyKey(ownerId: string, idempotencyKey: string) {
+    const [row] = await this.db
+      .select()
+      .from(schema.workspaceRuntimeOperations)
+      .where(and(
+        eq(schema.workspaceRuntimeOperations.ownerId, ownerId),
+        eq(schema.workspaceRuntimeOperations.idempotencyKey, idempotencyKey)
+      ))
+      .limit(1);
+    return row ? mapRuntimeOperationRow(row) : null;
+  }
+
+  async upsertRuntimeOperation(operation: RuntimeOperation) {
+    const parsed = runtimeOperationSchema.parse(operation);
+    const row = operationToRow(parsed);
+    const [inserted] = await this.db
+      .insert(schema.workspaceRuntimeOperations)
+      .values(row)
+      .onConflictDoNothing({ target: schema.workspaceRuntimeOperations.id })
+      .returning({ id: schema.workspaceRuntimeOperations.id });
+    if (!inserted) {
+      const { id: _id, ownerId: _ownerId, createdAt: _createdAt, ...update } = row;
+      void _id;
+      void _ownerId;
+      void _createdAt;
+      const [updated] = await this.db
+        .update(schema.workspaceRuntimeOperations)
+        .set(update)
+        .where(and(
+          eq(schema.workspaceRuntimeOperations.id, parsed.id),
+          eq(schema.workspaceRuntimeOperations.ownerId, parsed.ownerId)
+        ))
+        .returning({ id: schema.workspaceRuntimeOperations.id });
+      if (!updated) {
+        throw new DailyWorkRepositoryAccessError("Runtime operation", parsed.id);
+      }
+    }
+    return cloneJson(parsed);
+  }
+
+  async listRepositoryCredentials(ownerId: string) {
+    const rows = await this.db
+      .select()
+      .from(schema.repositoryCredentials)
+      .where(eq(schema.repositoryCredentials.ownerId, ownerId))
+      .orderBy(desc(schema.repositoryCredentials.updatedAt));
+    return rows.map(mapCredentialMetadataRow);
+  }
+
+  async getRepositoryCredential(ownerId: string, credentialId: string) {
+    const [row] = await this.db
+      .select()
+      .from(schema.repositoryCredentials)
+      .where(and(
+        eq(schema.repositoryCredentials.ownerId, ownerId),
+        eq(schema.repositoryCredentials.id, credentialId)
+      ))
+      .limit(1);
+    return row ? mapCredentialRow(row) : null;
+  }
+
+  async upsertRepositoryCredential(credential: RepositoryCredentialRecord) {
+    const parsed = parseRepositoryCredential(credential);
+    const row = credentialToRow(parsed);
+    const [inserted] = await this.db
+      .insert(schema.repositoryCredentials)
+      .values(row)
+      .onConflictDoNothing({ target: schema.repositoryCredentials.id })
+      .returning({ id: schema.repositoryCredentials.id });
+    if (!inserted) {
+      const { id: _id, ownerId: _ownerId, createdAt: _createdAt, ...update } = row;
+      void _id;
+      void _ownerId;
+      void _createdAt;
+      const [updated] = await this.db
+        .update(schema.repositoryCredentials)
+        .set(update)
+        .where(and(
+          eq(schema.repositoryCredentials.id, parsed.id),
+          eq(schema.repositoryCredentials.ownerId, parsed.ownerId)
+        ))
+        .returning({ id: schema.repositoryCredentials.id });
+      if (!updated) {
+        throw new DailyWorkRepositoryAccessError("Repository credential", parsed.id);
+      }
+    }
+    return toCredentialMetadata(parsed);
+  }
+
+  async revokeRepositoryCredential(ownerId: string, credentialId: string, revokedAt: string) {
+    const [row] = await this.db
+      .update(schema.repositoryCredentials)
+      .set({ revokedAt: new Date(revokedAt), updatedAt: new Date(revokedAt) })
+      .where(and(
+        eq(schema.repositoryCredentials.ownerId, ownerId),
+        eq(schema.repositoryCredentials.id, credentialId)
+      ))
+      .returning();
+    return row ? mapCredentialMetadataRow(row) : null;
+  }
+
   async getDataLayerStatus(): Promise<DailyWorkDataLayerStatus> {
     let postgresReady = true;
 
@@ -470,12 +728,62 @@ export class PostgresDailyWorkRepository implements DailyWorkRepository {
     }
   }
 
+  private async listScopedPayloadCollection<T extends { id: string }>(
+    table: ScopedPayloadTable,
+    parser: ArrayParser<T>,
+    seed: () => Promise<T[]>,
+    query: CodingScopeQuery
+  ): Promise<T[]> {
+    const conditions = [];
+    if (query.ownerId) {
+      conditions.push(eq(table.ownerId, query.ownerId));
+    }
+    if (query.workspaceId) {
+      conditions.push(eq(table.workspaceId, query.workspaceId));
+    }
+    if (query.runtimeMode) {
+      conditions.push(eq(table.runtimeMode, query.runtimeMode));
+    }
+    const rows = await this.db
+      .select({ payload: table.payload })
+      .from(table)
+      .where(conditions.length > 0 ? and(...conditions) : undefined)
+      .orderBy(desc(table.updatedAt));
+
+    if (rows.length === 0) {
+      if (query.ownerId && query.ownerId !== fallbackOwnerId) {
+        return [];
+      }
+      const seedValues = await seed();
+      await this.upsertScopedPayloadCollection(table, seedValues);
+      return parser.parse(seedValues).filter((value) => scopedPayloadMatches(value, query));
+    }
+
+    try {
+      return parser.parse(rows.map((row) => row.payload));
+    } catch (error) {
+      throw new PostgresDailyWorkRepositoryDataError(
+        `Invalid scoped Postgres daily-work payload: ${formatSchemaError(error)}`,
+        error
+      );
+    }
+  }
+
   private async upsertPayloadCollection<T extends { id: string }>(
     table: PayloadTable,
     values: T[]
   ) {
     for (const value of values) {
       await this.upsertPayload(table, value.id, value);
+    }
+  }
+
+  private async upsertScopedPayloadCollection<T extends { id: string }>(
+    table: ScopedPayloadTable,
+    values: T[]
+  ) {
+    for (const value of values) {
+      await this.upsertScopedPayload(table, value.id, value, inferPayloadScope(value));
     }
   }
 
@@ -501,62 +809,278 @@ export class PostgresDailyWorkRepository implements DailyWorkRepository {
       });
   }
 
+  private async upsertScopedPayload<T>(
+    table: ScopedPayloadTable,
+    id: string,
+    payload: T,
+    scope: CodingScopeQuery = {}
+  ) {
+    const resolvedScope = {
+      ownerId: scope.ownerId ?? fallbackOwnerId,
+      workspaceId: scope.workspaceId ?? fallbackWorkspaceId,
+      runtimeMode: scope.runtimeMode ?? fallbackRuntimeMode
+    };
+    await this.db
+      .insert(table)
+      .values({
+        id,
+        ownerId: resolvedScope.ownerId,
+        workspaceId: resolvedScope.workspaceId,
+        runtimeMode: resolvedScope.runtimeMode,
+        mode: inferPayloadMode(payload),
+        payload,
+        updatedAt: new Date()
+      })
+      .onConflictDoUpdate({
+        target: table.id,
+        set: {
+          ownerId: resolvedScope.ownerId,
+          workspaceId: resolvedScope.workspaceId,
+          runtimeMode: resolvedScope.runtimeMode,
+          mode: inferPayloadMode(payload),
+          payload,
+          updatedAt: new Date()
+        }
+      });
+  }
+
   private async selectToolCallRows(query: DailyWorkTraceQuery) {
     const limit = normalizeTraceLimit(query.limit);
-
-    if (query.sessionId) {
-      return this.db
-        .select()
-        .from(schema.toolCalls)
-        .where(eq(schema.toolCalls.sessionId, query.sessionId))
-        .orderBy(asc(schema.toolCalls.createdAt))
-        .limit(limit);
-    }
-
+    const conditions = createTraceConditions(schema.toolCalls, query);
     return this.db
       .select()
       .from(schema.toolCalls)
+      .where(conditions)
       .orderBy(asc(schema.toolCalls.createdAt))
       .limit(limit);
   }
 
   private async selectModelUsageRows(query: DailyWorkTraceQuery) {
     const limit = normalizeTraceLimit(query.limit);
-
-    if (query.sessionId) {
-      return this.db
-        .select()
-        .from(schema.modelUsageRecords)
-        .where(eq(schema.modelUsageRecords.sessionId, query.sessionId))
-        .orderBy(asc(schema.modelUsageRecords.createdAt))
-        .limit(limit);
-    }
-
+    const conditions = createTraceConditions(schema.modelUsageRecords, query);
     return this.db
       .select()
       .from(schema.modelUsageRecords)
+      .where(conditions)
       .orderBy(asc(schema.modelUsageRecords.createdAt))
       .limit(limit);
   }
 
   private async selectPermissionGrantRows(query: DailyWorkPermissionGrantQuery) {
     const limit = normalizeTraceLimit(query.limit);
-
-    if (query.sessionId) {
-      return this.db
-        .select()
-        .from(schema.dailyWorkPermissionGrants)
-        .where(eq(schema.dailyWorkPermissionGrants.sessionId, query.sessionId))
-        .orderBy(asc(schema.dailyWorkPermissionGrants.createdAt))
-        .limit(limit);
-    }
-
+    const conditions = createTraceConditions(schema.dailyWorkPermissionGrants, query);
     return this.db
       .select()
       .from(schema.dailyWorkPermissionGrants)
+      .where(conditions)
       .orderBy(asc(schema.dailyWorkPermissionGrants.createdAt))
       .limit(limit);
   }
+}
+
+const fallbackOwnerId = "local-dev-user";
+const fallbackWorkspaceId = "workspace-seekdesk";
+const fallbackRuntimeMode = "server_local" as const;
+
+function createTraceConditions(
+  table: {
+    ownerId: AnyPgColumn;
+    sessionId: AnyPgColumn;
+    workspaceId: AnyPgColumn;
+    runtimeMode: AnyPgColumn;
+  },
+  query: DailyWorkTraceQuery
+) {
+  const conditions = [];
+  if (query.ownerId) {
+    conditions.push(eq(table.ownerId, query.ownerId));
+  }
+  if (query.sessionId) {
+    conditions.push(eq(table.sessionId, query.sessionId));
+  }
+  if (query.workspaceId) {
+    conditions.push(eq(table.workspaceId, query.workspaceId));
+  }
+  if (query.runtimeMode) {
+    conditions.push(eq(table.runtimeMode, query.runtimeMode));
+  }
+  return conditions.length > 0 ? and(...conditions) : undefined;
+}
+
+function mapWorkspaceRow(row: typeof schema.workspaces.$inferSelect): CodingWorkspaceRecord {
+  return codingWorkspaceRecordSchema.parse({
+    workspaceId: row.id,
+    ownerId: row.ownerId,
+    name: row.name,
+    runtimeMode: row.runtimeMode,
+    status: row.status,
+    rootPath: row.rootPath,
+    connected: row.runtimeMode === "server_local" || row.status === "ready" || row.status === "busy",
+    ...(row.repositoryUrl && row.repositoryBranch
+      ? {
+          repository: {
+            url: row.repositoryUrl,
+            branch: row.repositoryBranch,
+            ...(row.repositoryRevision ? { revision: row.repositoryRevision } : {})
+          }
+        }
+      : {}),
+    ...(row.imageProfile ? { imageProfile: row.imageProfile } : {}),
+    ...(row.credentialRef ? { credentialRef: row.credentialRef } : {}),
+    ...(row.daemonId ? { daemonId: row.daemonId } : {}),
+    ...(row.containerRef ? { containerRef: row.containerRef } : {}),
+    ...(row.storageRef ? { storageRef: row.storageRef } : {}),
+    ...(row.errorCode ? { errorCode: row.errorCode } : {}),
+    ...(row.errorMessage ? { errorMessage: row.errorMessage } : {}),
+    ...(row.lastActiveAt ? { lastActiveAt: row.lastActiveAt.toISOString() } : {}),
+    ...(row.stoppedAt ? { stoppedAt: row.stoppedAt.toISOString() } : {}),
+    ...(row.deletedAt ? { deletedAt: row.deletedAt.toISOString() } : {}),
+    supportedCapabilities: [],
+    createdAt: row.createdAt.toISOString(),
+    updatedAt: row.updatedAt.toISOString()
+  });
+}
+
+function mapRuntimeOperationRow(
+  row: typeof schema.workspaceRuntimeOperations.$inferSelect
+): RuntimeOperation {
+  return runtimeOperationSchema.parse({
+    id: row.id,
+    ownerId: row.ownerId,
+    workspaceId: row.workspaceId,
+    type: row.type,
+    status: row.status,
+    idempotencyKey: row.idempotencyKey,
+    requestPayload: row.requestPayload,
+    ...(row.resultPayload === null ? {} : { resultPayload: row.resultPayload }),
+    ...(row.errorCode ? { errorCode: row.errorCode } : {}),
+    ...(row.errorMessage ? { errorMessage: row.errorMessage } : {}),
+    createdAt: row.createdAt.toISOString(),
+    ...(row.startedAt ? { startedAt: row.startedAt.toISOString() } : {}),
+    ...(row.completedAt ? { completedAt: row.completedAt.toISOString() } : {})
+  });
+}
+
+function operationToRow(operation: RuntimeOperation) {
+  return {
+    id: operation.id,
+    ownerId: operation.ownerId,
+    workspaceId: operation.workspaceId,
+    type: operation.type,
+    status: operation.status,
+    idempotencyKey: operation.idempotencyKey,
+    requestPayload: operation.requestPayload,
+    resultPayload: operation.resultPayload ?? null,
+    errorCode: operation.errorCode ?? null,
+    errorMessage: operation.errorMessage ?? null,
+    createdAt: new Date(operation.createdAt),
+    startedAt: operation.startedAt ? new Date(operation.startedAt) : null,
+    completedAt: operation.completedAt ? new Date(operation.completedAt) : null
+  };
+}
+
+function mapCredentialRow(
+  row: typeof schema.repositoryCredentials.$inferSelect
+): RepositoryCredentialRecord {
+  return {
+    id: row.id,
+    ownerId: row.ownerId,
+    provider: parseCredentialProvider(row.provider),
+    label: row.label,
+    encryptedSecret: row.encryptedSecret,
+    keyVersion: row.keyVersion,
+    createdAt: row.createdAt.toISOString(),
+    updatedAt: row.updatedAt.toISOString(),
+    ...(row.revokedAt ? { revokedAt: row.revokedAt.toISOString() } : {})
+  };
+}
+
+function mapCredentialMetadataRow(
+  row: typeof schema.repositoryCredentials.$inferSelect
+): RepositoryCredentialMetadata {
+  return toCredentialMetadata(mapCredentialRow(row));
+}
+
+function parseRepositoryCredential(credential: RepositoryCredentialRecord) {
+  if (
+    !credential.id.trim() ||
+    !credential.ownerId.trim() ||
+    !credential.label.trim() ||
+    !credential.encryptedSecret.trim() ||
+    !credential.keyVersion.trim()
+  ) {
+    throw new PostgresDailyWorkRepositoryDataError("Repository credential fields are required.");
+  }
+  return cloneJson(credential);
+}
+
+function parseCredentialProvider(provider: string): "https_token" {
+  if (provider !== "https_token") {
+    throw new PostgresDailyWorkRepositoryDataError(`Unsupported credential provider: ${provider}`);
+  }
+  return provider;
+}
+
+function credentialToRow(credential: RepositoryCredentialRecord) {
+  return {
+    id: credential.id,
+    ownerId: credential.ownerId,
+    provider: credential.provider,
+    label: credential.label,
+    encryptedSecret: credential.encryptedSecret,
+    keyVersion: credential.keyVersion,
+    createdAt: new Date(credential.createdAt),
+    updatedAt: new Date(credential.updatedAt),
+    revokedAt: credential.revokedAt ? new Date(credential.revokedAt) : null
+  };
+}
+
+function toCredentialMetadata(credential: RepositoryCredentialRecord): RepositoryCredentialMetadata {
+  const { encryptedSecret: _encryptedSecret, ...metadata } = credential;
+  void _encryptedSecret;
+  return cloneJson(metadata);
+}
+
+function inferPayloadScope(value: unknown): CodingScopeQuery {
+  const record = value && typeof value === "object"
+    ? value as { ownerId?: unknown; workspaceId?: unknown; workspaceRuntimeMode?: unknown; runtimeMode?: unknown }
+    : {};
+  return {
+    ownerId: typeof record.ownerId === "string" ? record.ownerId : fallbackOwnerId,
+    workspaceId: typeof record.workspaceId === "string" ? record.workspaceId : fallbackWorkspaceId,
+    runtimeMode: normalizeRuntimeMode(
+      record.workspaceRuntimeMode ?? record.runtimeMode ?? fallbackRuntimeMode
+    )
+  };
+}
+
+function scopeFromSession(session: DailyWorkSessionDetail): CodingScopeQuery {
+  return {
+    ownerId: fallbackOwnerId,
+    workspaceId: session.workspaceId,
+    runtimeMode: normalizeRuntimeMode(session.workspaceRuntimeMode ?? fallbackRuntimeMode)
+  };
+}
+
+function scopedPayloadMatches(value: unknown, query: CodingScopeQuery) {
+  const scope = inferPayloadScope(value);
+  return (
+    (!query.ownerId || scope.ownerId === query.ownerId) &&
+    (!query.workspaceId || scope.workspaceId === query.workspaceId) &&
+    (!query.runtimeMode || scope.runtimeMode === query.runtimeMode)
+  );
+}
+
+function inferPayloadMode(payload: unknown) {
+  if (payload && typeof payload === "object" && "appMode" in payload) {
+    const appMode = (payload as { appMode?: unknown }).appMode;
+    return appMode === "coding_agent" ? "coding_agent" : "daily_work";
+  }
+  if (payload && typeof payload === "object" && "mode" in payload) {
+    const mode = (payload as { mode?: unknown }).mode;
+    return mode === "coding_agent" ? "coding_agent" : "daily_work";
+  }
+  return "daily_work";
 }
 
 function inferToolCallMode(name: string) {
@@ -566,7 +1090,11 @@ function inferToolCallMode(name: string) {
 function mapToolCallRow(row: typeof schema.toolCalls.$inferSelect): ToolCallRecord {
   return toolCallRecordSchema.parse({
     id: row.id,
+    ownerId: row.ownerId,
     ...(row.sessionId ? { sessionId: row.sessionId } : {}),
+    workspaceId: row.workspaceId,
+    runtimeMode: row.runtimeMode,
+    ...(row.requestId ? { requestId: row.requestId } : {}),
     name: row.name,
     status: row.status,
     inputJson: row.inputJson,
@@ -575,6 +1103,7 @@ function mapToolCallRow(row: typeof schema.toolCalls.$inferSelect): ToolCallReco
     permissionRequired: row.permissionRequired,
     ...(row.error ? { error: row.error } : {}),
     createdAt: row.createdAt.toISOString(),
+    ...(row.startedAt ? { startedAt: row.startedAt.toISOString() } : {}),
     ...(row.completedAt ? { completedAt: row.completedAt.toISOString() } : {})
   });
 }
@@ -586,7 +1115,10 @@ function mapPermissionGrantRow(
     id: row.id,
     mode: row.mode,
     provider: row.provider,
+    ownerId: row.ownerId,
     sessionId: row.sessionId,
+    workspaceId: row.workspaceId,
+    runtimeMode: row.runtimeMode,
     action: row.action,
     decision: row.decision,
     status: row.status,
@@ -621,7 +1153,10 @@ function mapModelUsageRow(
 ): ToolModelUsageRecord {
   return toolModelUsageRecordSchema.parse({
     id: row.id,
+    ownerId: row.ownerId,
     ...(row.sessionId ? { sessionId: row.sessionId } : {}),
+    workspaceId: row.workspaceId,
+    runtimeMode: row.runtimeMode,
     provider: row.provider,
     model: row.model,
     promptTokens: row.promptTokens,

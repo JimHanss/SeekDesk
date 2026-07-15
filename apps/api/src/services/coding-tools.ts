@@ -8,6 +8,7 @@ import {
   codingToolNameSchema,
   type CodingPermissionGrant,
   type CodingToolName,
+  type RuntimeMode,
   type ToolCallRecord
 } from "@seekdesk/shared";
 import {
@@ -49,7 +50,11 @@ export function createCodingToolRuntime(options: { runtime?: CodingRuntime } = {
 }
 
 export function createCodingPermissionGrant(input: {
+  ownerId: string;
   sessionId: string;
+  workspaceId?: string;
+  runtimeMode?: RuntimeMode;
+  provider?: RuntimeMode;
   action: CodingPermissionGrantAction;
   reason?: string;
 }): CodingPermissionGrant {
@@ -58,8 +63,11 @@ export function createCodingPermissionGrant(input: {
   return {
     id: `coding-grant-${randomUUID()}`,
     mode: "coding_agent",
-    provider: "local_daemon",
+    provider: input.provider ?? input.runtimeMode ?? "local_daemon",
+    ownerId: input.ownerId,
     sessionId: input.sessionId,
+    ...(input.workspaceId ? { workspaceId: input.workspaceId } : {}),
+    ...(input.runtimeMode ? { runtimeMode: input.runtimeMode } : {}),
     action: input.action,
     decision: "allow_for_session",
     status: "active",
@@ -71,12 +79,17 @@ export function createCodingPermissionGrant(input: {
 
 export async function executeAuthorizedCodingToolCall(input: {
   repository: DailyWorkRepository;
+  ownerId: string;
   toolCallId: string;
   sessionId: string;
   runtime?: CodingRuntime;
 }) {
   const toolCall = (
-    await input.repository.listToolCalls({ sessionId: input.sessionId, limit: 200 })
+    await input.repository.listToolCalls({
+      ownerId: input.ownerId,
+      sessionId: input.sessionId,
+      limit: 200
+    })
   ).find((candidate) => candidate.id === input.toolCallId);
 
   if (!toolCall) {
@@ -94,8 +107,11 @@ export async function executeAuthorizedCodingToolCall(input: {
 
   if (writeOrCommandTools.has(toolName)) {
     const grants = await input.repository.listPermissionGrants({
+      ownerId: input.ownerId,
       sessionId: input.sessionId,
-      provider: "local_daemon",
+      ...(toolCall.workspaceId ? { workspaceId: toolCall.workspaceId } : {}),
+      ...(toolCall.runtimeMode ? { runtimeMode: toolCall.runtimeMode } : {}),
+      provider: toolCall.runtimeMode ?? "local_daemon",
       action: toolName,
       activeOnly: true,
       limit: 100
@@ -128,7 +144,8 @@ export async function executeAuthorizedCodingToolCall(input: {
       inputJson: parsedInput,
       toolCallId: input.toolCallId,
       phase: "requested"
-    })
+    }),
+    createToolScope(input.ownerId, toolCall)
   );
 
   try {
@@ -157,7 +174,8 @@ export async function executeAuthorizedCodingToolCall(input: {
         outputJson,
         toolCallId: input.toolCallId,
         phase: "completed"
-      })
+      }),
+      createToolScope(input.ownerId, completedRecord)
     );
 
     return {
@@ -192,7 +210,8 @@ export async function executeAuthorizedCodingToolCall(input: {
         ...(failedRecord.error ? { error: failedRecord.error } : {}),
         toolCallId: input.toolCallId,
         phase: "completed"
-      })
+      }),
+      createToolScope(input.ownerId, failedRecord)
     );
     throw error;
   }
@@ -264,5 +283,13 @@ export function createPermissionRequiredCodingResult(input: {
     permissionRequired: true,
     message: `Tool "${input.name}" requires same-session authorization before it can run.`,
     inputJson: input.inputJson
+  };
+}
+
+function createToolScope(ownerId: string, toolCall: ToolCallRecord) {
+  return {
+    ownerId,
+    workspaceId: toolCall.workspaceId ?? "workspace-seekdesk",
+    runtimeMode: toolCall.runtimeMode ?? ("server_local" as const)
   };
 }

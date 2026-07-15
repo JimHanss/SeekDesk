@@ -150,7 +150,10 @@ export const toolCallRecordSchema = z.object({
 
 export const toolModelUsageRecordSchema = z.object({
   id: z.string(),
+  ownerId: z.string().trim().min(1).optional(),
   sessionId: z.string().optional(),
+  workspaceId: z.string().trim().min(1).optional(),
+  runtimeMode: runtimeModeInputSchema.optional(),
   provider: z.string(),
   model: z.string(),
   promptTokens: z.number().int().nonnegative().default(0),

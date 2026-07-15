@@ -43,10 +43,11 @@ export async function registerCodingRoutes(
     app.options(route, async (_request, reply) => reply.code(204).send());
   }
 
-  app.get<{ Querystring: { workspaceId?: string } }>("/api/coding/workspaces", async () => ({
+  app.get<{ Querystring: { workspaceId?: string } }>("/api/coding/workspaces", async (request) => ({
     mode: "coding_agent",
     workspaces: [
       ...(daemonRegistry?.listWorkspaces() ?? []),
+      ...(await repository.listCodingWorkspaces({ ownerId: request.actor.ownerId })),
       createServerLocalWorkspace(localRuntime)
     ]
   }));
@@ -131,6 +132,7 @@ export async function registerCodingRoutes(
     async (request) => ({
       mode: "coding_agent",
       grants: await repository.listPermissionGrants({
+        ownerId: request.actor.ownerId,
         ...(request.query.sessionId ? { sessionId: request.query.sessionId } : {}),
         provider: "local_daemon",
         activeOnly: request.query.activeOnly === "true",
@@ -151,7 +153,11 @@ export async function registerCodingRoutes(
 
       const grant = await repository.upsertPermissionGrant(
         createCodingPermissionGrant({
+          ownerId: request.actor.ownerId,
           sessionId: parsed.data.sessionId,
+          ...(parsed.data.workspaceId ? { workspaceId: parsed.data.workspaceId } : {}),
+          ...(parsed.data.runtimeMode ? { runtimeMode: parsed.data.runtimeMode } : {}),
+          provider: parsed.data.provider,
           action: parsed.data.action,
           ...(parsed.data.reason ? { reason: parsed.data.reason } : {})
         })
@@ -174,7 +180,10 @@ export async function registerCodingRoutes(
         return reply.code(400).send(createValidationError(parsed.error.issues));
       }
 
-      const grant = (await repository.listPermissionGrants({ limit: 200 })).find(
+      const grant = (await repository.listPermissionGrants({
+        ownerId: request.actor.ownerId,
+        limit: 200
+      })).find(
         (candidate) => candidate.id === request.params.grantId
       );
       if (!grant) {
@@ -216,6 +225,7 @@ export async function registerCodingRoutes(
       return safeRuntimeReply(reply, () =>
         executeAuthorizedCodingToolCall({
           repository,
+          ownerId: request.actor.ownerId,
           toolCallId: request.params.toolCallId,
           sessionId,
           runtime: getRuntime(typeof body.workspaceId === "string" ? body.workspaceId : undefined)

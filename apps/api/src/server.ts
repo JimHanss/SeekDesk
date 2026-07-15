@@ -16,6 +16,7 @@ import {
   type ChatRequest,
   type DailyActivityEvent,
   type ModelRoute,
+  type RuntimeMode,
   type ToolCallRecord,
   type ToolModelUsageRecord
 } from "@seekdesk/shared";
@@ -41,6 +42,11 @@ import {
 import { createDailyWorkAgentContext } from "./services/daily-work-agent-context.js";
 import { createCodingToolRuntime } from "./services/coding-tools.js";
 import { createToolActivityEvent } from "./services/daily-work-tool-activity.js";
+import {
+  ActorAuthError,
+  createActorContextResolver,
+  type ActorContextResolver
+} from "./services/actor-context.js";
 
 const defaultAllowedOrigins = [
   "http://localhost:3000",
@@ -50,6 +56,7 @@ const defaultToolRegistry = createDefaultToolRegistry();
 
 export async function buildServer(options?: {
   dailyWorkRepository?: DailyWorkRepository;
+  actorContextResolver?: ActorContextResolver;
 }) {
   const dailyWorkRepository =
     options?.dailyWorkRepository ?? createDailyWorkRepositoryFromEnv();
@@ -57,12 +64,28 @@ export async function buildServer(options?: {
     logger: true
   });
   const daemonRegistry = new DaemonRegistry();
+  const actorContextResolver = options?.actorContextResolver ?? createActorContextResolver();
 
   await app.register(websocket);
   await app.register(multipart);
+  app.decorateRequest("actor");
 
   app.addHook("onRequest", async (request, reply) => {
     applyCorsHeaders(request, reply);
+    if (isPublicRequest(request)) {
+      return;
+    }
+    try {
+      request.actor = await actorContextResolver.resolve(request);
+    } catch (error) {
+      if (error instanceof ActorAuthError) {
+        return reply.code(error.statusCode).send({
+          error: error.code,
+          message: error.message
+        });
+      }
+      throw error;
+    }
   });
 
   app.options("/api/chat", async (_request, reply) => reply.code(204).send());
@@ -74,7 +97,8 @@ export async function buildServer(options?: {
     status: "ok",
     service: "seekdesk-api",
     version: "0.1.0",
-    ...(await dailyWorkRepository.getDataLayerStatus())
+    ...(await dailyWorkRepository.getDataLayerStatus()),
+    auth: actorContextResolver.readiness
   }));
 
   app.post<{ Body: unknown }>("/api/chat", async (request, reply) => {
@@ -90,6 +114,7 @@ export async function buildServer(options?: {
     }
 
     const chatRequest = parsed.data;
+    const ownerId = request.actor.ownerId;
     const sessionId = chatRequest.sessionId ?? `chat-${randomUUID()}`;
     const incomingUserMessage = findIncomingUserMessage(chatRequest);
     const shouldGenerateSessionTitle =
@@ -119,6 +144,7 @@ export async function buildServer(options?: {
       dailyWorkRepository,
       chatRequest,
       sessionId,
+      ownerId,
       ...(chatWorkspace ? { workspace: chatWorkspace } : {})
     });
     const generatedSessionTitle = shouldGenerateSessionTitle && incomingUserMessage
@@ -130,7 +156,7 @@ export async function buildServer(options?: {
       : null;
 
     if (generatedSessionTitle) {
-      await updateChatSessionTitle(dailyWorkRepository, sessionId, generatedSessionTitle);
+      await updateChatSessionTitle(dailyWorkRepository, ownerId, sessionId, generatedSessionTitle);
     }
 
     const stream = modelStreamToReadableStream(
@@ -144,6 +170,11 @@ export async function buildServer(options?: {
       {
         dailyWorkRepository,
         sessionId,
+        ownerId,
+        workspaceId: chatWorkspace?.workspaceId ?? chatRequest.context?.workspaceId ?? "workspace-seekdesk",
+        runtimeMode: chatWorkspace?.runtimeMode ?? (
+          chatRequest.context?.workspaceId === "server-local-runtime" ? "server_local" : "local_daemon"
+        ),
         providerName: providerSelection.providerName,
         modelName: providerSelection.modelName
       }
@@ -171,16 +202,17 @@ export async function buildServer(options?: {
     "/api/chat/sessions/:sessionId/trace",
     async (request) => {
       const sessionId = request.params.sessionId.trim();
+      const ownerId = request.actor.ownerId;
       const [
         toolCalls,
         modelUsageRecords,
         activityEvents,
         permissionGrants
       ] = await Promise.all([
-        dailyWorkRepository.listToolCalls({ sessionId, limit: 100 }),
-        dailyWorkRepository.listModelUsageRecords({ sessionId, limit: 100 }),
-        dailyWorkRepository.listEvents(),
-        dailyWorkRepository.listPermissionGrants({ sessionId, limit: 100 })
+        dailyWorkRepository.listToolCalls({ ownerId, sessionId, limit: 100 }),
+        dailyWorkRepository.listModelUsageRecords({ ownerId, sessionId, limit: 100 }),
+        dailyWorkRepository.listEvents({ ownerId }),
+        dailyWorkRepository.listPermissionGrants({ ownerId, sessionId, limit: 100 })
       ]);
 
       return {
@@ -249,6 +281,11 @@ function applyCorsHeaders(request: FastifyRequest, reply: FastifyReply) {
     "Access-Control-Expose-Headers",
     "X-SeekDesk-Chat-Mode,X-SeekDesk-Chat-Provider,X-SeekDesk-Chat-Session-Id,X-SeekDesk-Chat-Session-Title"
   );
+}
+
+function isPublicRequest(request: FastifyRequest) {
+  const path = request.url.split("?", 1)[0];
+  return request.method === "OPTIONS" || path === "/health" || path === "/ws/daemon";
 }
 
 function getAllowedOrigins() {
@@ -340,6 +377,7 @@ async function recordIncomingChatMessage(input: {
   dailyWorkRepository: DailyWorkRepository;
   chatRequest: ChatRequest;
   sessionId: string;
+  ownerId: string;
   workspace?: { workspaceId: string; name: string; rootPath: string; runtimeMode: string };
 }) {
   const message = findIncomingUserMessage(input.chatRequest);
@@ -352,6 +390,7 @@ async function recordIncomingChatMessage(input: {
 
   await input.dailyWorkRepository.recordChatMessage({
     id: `message-${randomUUID()}`,
+    ownerId: input.ownerId,
     sessionId: input.sessionId,
     appMode: input.chatRequest.mode,
     role: message.role,
@@ -420,11 +459,12 @@ async function generateSessionTitle(input: {
 
 async function updateChatSessionTitle(
   dailyWorkRepository: DailyWorkRepository,
+  ownerId: string,
   sessionId: string,
   title: string
 ) {
   try {
-    const sessions = await dailyWorkRepository.listSessionDetails();
+    const sessions = await dailyWorkRepository.listSessionDetails({ ownerId });
     const session = sessions.find((item) => item.id === sessionId);
 
     if (!session) {
@@ -463,6 +503,9 @@ async function recordToolCallChunk(
   options: {
     dailyWorkRepository: DailyWorkRepository;
     sessionId: string;
+    ownerId: string;
+    workspaceId: string;
+    runtimeMode: RuntimeMode;
   },
   chunk: Extract<ModelStreamChunk, { type: "tool-call" }>
 ) {
@@ -475,7 +518,11 @@ async function recordToolCallChunk(
 
   await options.dailyWorkRepository.recordToolCall({
     id: chunk.id ?? `tool-call-${randomUUID()}`,
+    ownerId: options.ownerId,
     sessionId: options.sessionId,
+    workspaceId: options.workspaceId,
+    runtimeMode: options.runtimeMode,
+    requestId: chunk.id ?? `request-${randomUUID()}`,
     name: parsedName.data,
     status: "requested",
     inputJson: chunk.inputJson,
@@ -492,7 +539,12 @@ async function recordToolCallChunk(
       inputJson: chunk.inputJson,
       ...(chunk.id ? { toolCallId: chunk.id } : {}),
       phase: "requested"
-    })
+    }),
+    {
+      ownerId: options.ownerId,
+      workspaceId: options.workspaceId,
+      runtimeMode: options.runtimeMode
+    }
   );
 }
 
@@ -500,6 +552,9 @@ async function recordToolResultChunk(
   options: {
     dailyWorkRepository: DailyWorkRepository;
     sessionId: string;
+    ownerId: string;
+    workspaceId: string;
+    runtimeMode: RuntimeMode;
   },
   chunk: Extract<ModelStreamChunk, { type: "tool-result" }>
 ) {
@@ -514,7 +569,11 @@ async function recordToolResultChunk(
 
   await options.dailyWorkRepository.recordToolCall({
     id: chunk.id ?? result?.id ?? `tool-call-${randomUUID()}`,
+    ownerId: options.ownerId,
     sessionId: options.sessionId,
+    workspaceId: options.workspaceId,
+    runtimeMode: options.runtimeMode,
+    requestId: chunk.id ?? result?.id ?? `request-${randomUUID()}`,
     name: parsedName.data,
     status,
     inputJson: result?.inputJson ?? {},
@@ -538,7 +597,12 @@ async function recordToolResultChunk(
         ? { toolCallId: String(chunk.id ?? result?.id) }
         : {}),
       phase: "completed"
-    })
+    }),
+    {
+      ownerId: options.ownerId,
+      workspaceId: options.workspaceId,
+      runtimeMode: options.runtimeMode
+    }
   );
 }
 
@@ -546,6 +610,9 @@ async function recordModelUsageChunk(
   options: {
     dailyWorkRepository: DailyWorkRepository;
     sessionId: string;
+    ownerId: string;
+    workspaceId: string;
+    runtimeMode: RuntimeMode;
     providerName: ChatProvider;
     modelName: string;
   },
@@ -553,7 +620,10 @@ async function recordModelUsageChunk(
 ) {
   const record: ToolModelUsageRecord = {
     id: `model-usage-${randomUUID()}`,
+    ownerId: options.ownerId,
     sessionId: options.sessionId,
+    workspaceId: options.workspaceId,
+    runtimeMode: options.runtimeMode,
     provider: options.providerName,
     model: options.modelName,
     promptTokens: chunk.usage.promptTokens,
@@ -652,6 +722,9 @@ function modelStreamToReadableStream(
   options: {
     dailyWorkRepository: DailyWorkRepository;
     sessionId: string;
+    ownerId: string;
+    workspaceId: string;
+    runtimeMode: RuntimeMode;
     providerName: ChatProvider;
     modelName: string;
   }
@@ -687,7 +760,10 @@ function modelStreamToReadableStream(
         if (assistantContent.trim()) {
           await options.dailyWorkRepository.recordChatMessage({
             id: `message-${randomUUID()}`,
+            ownerId: options.ownerId,
             sessionId: options.sessionId,
+            workspaceId: options.workspaceId,
+            workspaceRuntimeMode: options.runtimeMode,
             role: "assistant",
             content: assistantContent,
             createdAt: new Date().toISOString()

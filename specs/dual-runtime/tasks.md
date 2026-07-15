@@ -56,19 +56,19 @@
 
 ## 阶段 3：数据模型、凭据与身份
 
-- [ ] T029 扩展 `apps/api/src/db/schema.ts` 的 `workspaces` 表，加入 owner、Runtime、状态、仓库、image、容器、存储、错误和生命周期字段。
-- [ ] T030 新增 `workspace_runtime_operations` 表及 owner/idempotency、workspace/time、status/time 索引。
-- [ ] T031 新增 `repository_credentials` 表，仅保存 owner、provider、标签、加密密文、创建/更新时间和撤销状态，不返回密文。
-- [ ] T032 为 session、message、tool call、permission grant、activity、artifact、model usage 增加结构化 owner/workspace/runtime 关联列和索引。
-- [ ] T033 生成新的 Drizzle migration，先 backfill legacy owner/workspace/runtime，再应用非空与索引约束。
-- [ ] T034 扩展 `DailyWorkRepository` 或拆出 `CodingWorkspaceRepository`，定义 owner-scoped workspace、operation、credential CRUD。
-- [ ] T035 更新 seed/JSON repository，使开发 fallback 支持 workspace/operation 且不持久化真实凭据。
-- [ ] T036 实现 Postgres workspace、operation、credential CRUD 和 owner-scoped session/tool/grant/activity 查询。
-- [ ] T037 实现 HTTPS token 的对称加密、解密、轮换标识和日志脱敏，密钥只读取 `SEEKDESK_CREDENTIAL_ENCRYPTION_KEY`。
-- [ ] T038 新增 `ActorContext`，开发环境从 `SEEKDESK_DEV_USER_ID` 提供身份，禁止客户端覆盖 `userId`。
-- [ ] T039 实现生产 OIDC/JWT adapter，通过 issuer、audience、JWKS 验证 token，并在未配置时禁用生产 `cloud_runtime`。
-- [ ] T040 为 API route 增加统一 actor/owner authorization hook，所有 workspace 和 coding trace 查询默认 owner-scoped。
-- [ ] T041 增加 migration、repository、凭据加密、JWT 验证、跨 owner 拒绝和历史数据 backfill 测试。
+- [x] T029 扩展 `apps/api/src/db/schema.ts` 的 `workspaces` 表，加入 owner、Runtime、状态、仓库、image、容器、存储、错误和生命周期字段。
+- [x] T030 新增 `workspace_runtime_operations` 表及 owner/idempotency、workspace/time、status/time 索引。
+- [x] T031 新增 `repository_credentials` 表，仅保存 owner、provider、标签、加密密文、创建/更新时间和撤销状态，不返回密文。
+- [x] T032 为 session、message、tool call、permission grant、activity、artifact、model usage 增加结构化 owner/workspace/runtime 关联列和索引。
+- [x] T033 生成新的 Drizzle migration，先 backfill legacy owner/workspace/runtime，再应用非空与索引约束。
+- [x] T034 扩展 `DailyWorkRepository` 或拆出 `CodingWorkspaceRepository`，定义 owner-scoped workspace、operation、credential CRUD。
+- [x] T035 更新 seed/JSON repository，使开发 fallback 支持 workspace/operation 且不持久化真实凭据。
+- [x] T036 实现 Postgres workspace、operation、credential CRUD 和 owner-scoped session/tool/grant/activity 查询。
+- [x] T037 实现 HTTPS token 的对称加密、解密、轮换标识和日志脱敏，密钥只读取 `SEEKDESK_CREDENTIAL_ENCRYPTION_KEY`。
+- [x] T038 新增 `ActorContext`，开发环境从 `SEEKDESK_DEV_USER_ID` 提供身份，禁止客户端覆盖 `userId`。
+- [x] T039 实现生产 OIDC/JWT adapter，通过 issuer、audience、JWKS 验证 token，并在未配置时禁用生产 `cloud_runtime`。
+- [x] T040 为 API route 增加统一 actor/owner authorization hook，所有 workspace 和 coding trace 查询默认 owner-scoped。
+- [x] T041 增加 migration、repository、凭据加密、JWT 验证、跨 owner 拒绝和历史数据 backfill 测试。
 
 ## 阶段 4：Runtime Resolver 与公开 API
 

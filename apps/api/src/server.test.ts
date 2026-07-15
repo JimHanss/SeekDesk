@@ -74,7 +74,15 @@ describe("api server", () => {
       jsonLocalReady: false,
       postgresConfigured: false,
       postgresReady: false,
-      futureDatabaseReady: false
+      futureDatabaseReady: false,
+      auth: {
+        mode: "development",
+        configured: true,
+        productionCloudRuntimeAllowed: true,
+        issuerConfigured: false,
+        audienceConfigured: false,
+        jwksConfigured: false
+      }
     });
 
     await app.close();
@@ -103,7 +111,15 @@ describe("api server", () => {
           jsonLocalReady: true,
           postgresConfigured: false,
           postgresReady: false,
-          futureDatabaseReady: false
+          futureDatabaseReady: false,
+          auth: {
+            mode: "development",
+            configured: true,
+            productionCloudRuntimeAllowed: true,
+            issuerConfigured: false,
+            audienceConfigured: false,
+            jwksConfigured: false
+          }
         });
       } finally {
         await app.close();

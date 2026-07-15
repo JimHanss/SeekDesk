@@ -12,6 +12,8 @@ import {
   dailyWorkSessionSummarySchema,
   dailyWorkTemplateSchema,
   dailyWorkWorkflowSchema,
+  codingWorkspaceRecordSchema,
+  runtimeOperationSchema,
   defaultDailyActivityEvents,
   defaultDailyContextDocuments,
   defaultDailyWorkApprovalRequests,
@@ -34,10 +36,16 @@ import {
   type DailyWorkSessionSummary,
   type DailyWorkTemplate,
   type DailyWorkWorkflow,
+  type CodingWorkspaceRecord,
+  type RuntimeMode,
+  type RuntimeOperation,
   type ToolCallRecord,
   type ToolModelUsageRecord
 } from "@seekdesk/shared";
 import { PostgresDailyWorkRepository } from "./postgres-daily-work-repository.js";
+import { DailyWorkRepositoryAccessError } from "./repository-errors.js";
+
+export { DailyWorkRepositoryAccessError } from "./repository-errors.js";
 
 type JsonCollectionKey =
   | "templates"
@@ -48,7 +56,9 @@ type JsonCollectionKey =
   | "sessions"
   | "events"
   | "connectors"
-  | "workflows";
+  | "workflows"
+  | "codingWorkspaces"
+  | "runtimeOperations";
 
 type JsonArrayParser<T> = {
   parse(input: unknown): T[];
@@ -65,6 +75,7 @@ export type DailyWorkDataLayerStatus = {
 
 export interface PersistedChatMessage {
   id: string;
+  ownerId?: string;
   sessionId: string;
   appMode?: DailyWorkSessionDetail["appMode"];
   role: DailyWorkSessionMessage["role"];
@@ -85,6 +96,42 @@ export interface DailyWorkPermissionGrantQuery extends DailyWorkTraceQuery {
   activeOnly?: boolean;
 }
 
+export interface CodingScopeQuery {
+  ownerId?: string;
+  workspaceId?: string;
+  runtimeMode?: RuntimeMode;
+}
+
+export interface CodingWorkspaceQuery {
+  ownerId: string;
+  runtimeMode?: RuntimeMode;
+  includeDeleted?: boolean;
+}
+
+export interface RuntimeOperationQuery {
+  ownerId: string;
+  workspaceId?: string;
+  status?: RuntimeOperation["status"];
+  limit?: number;
+}
+
+export interface RepositoryCredentialRecord {
+  id: string;
+  ownerId: string;
+  provider: "https_token";
+  label: string;
+  encryptedSecret: string;
+  keyVersion: string;
+  createdAt: string;
+  updatedAt: string;
+  revokedAt?: string;
+}
+
+export type RepositoryCredentialMetadata = Omit<
+  RepositoryCredentialRecord,
+  "encryptedSecret"
+>;
+
 export interface DailyWorkConnectorAccount {
   id: string;
   provider: string;
@@ -104,7 +151,9 @@ const jsonFileNames: Record<JsonCollectionKey, string> = {
   sessions: "sessions.json",
   events: "events.json",
   connectors: "connectors.json",
-  workflows: "workflows.json"
+  workflows: "workflows.json",
+  codingWorkspaces: "coding-workspaces.json",
+  runtimeOperations: "runtime-operations.json"
 };
 
 export interface DailyWorkRepository {
@@ -115,17 +164,17 @@ export interface DailyWorkRepository {
   listContextDocuments(): Promise<DailyContextDocument[]>;
   upsertContextDocument(document: DailyContextDocument): Promise<DailyContextDocument>;
   listApprovalRequests(): Promise<DailyApprovalRequest[]>;
-  listArtifacts(): Promise<DailyWorkArtifact[]>;
-  listSessionSummaries(): Promise<DailyWorkSessionSummary[]>;
-  listSessionDetails(): Promise<DailyWorkSessionDetail[]>;
-  listEvents(): Promise<DailyActivityEvent[]>;
+  listArtifacts(query?: CodingScopeQuery): Promise<DailyWorkArtifact[]>;
+  listSessionSummaries(query?: CodingScopeQuery): Promise<DailyWorkSessionSummary[]>;
+  listSessionDetails(query?: CodingScopeQuery): Promise<DailyWorkSessionDetail[]>;
+  listEvents(query?: CodingScopeQuery): Promise<DailyActivityEvent[]>;
   listConnectors(): Promise<DailyWorkConnector[]>;
   listWorkflows(): Promise<DailyWorkWorkflow[]>;
   updateApprovalRequest(request: DailyApprovalRequest): Promise<DailyApprovalRequest>;
   updateSessionDetail(session: DailyWorkSessionDetail): Promise<DailyWorkSessionDetail>;
   deleteSessionDetail(sessionId: string): Promise<boolean>;
-  upsertActivityEvent(event: DailyActivityEvent): Promise<DailyActivityEvent>;
-  upsertArtifact(artifact: DailyWorkArtifact): Promise<DailyWorkArtifact>;
+  upsertActivityEvent(event: DailyActivityEvent, scope?: CodingScopeQuery): Promise<DailyActivityEvent>;
+  upsertArtifact(artifact: DailyWorkArtifact, scope?: CodingScopeQuery): Promise<DailyWorkArtifact>;
   recordChatMessage(message: PersistedChatMessage): Promise<PersistedChatMessage>;
   recordToolCall(record: ToolCallRecord): Promise<ToolCallRecord>;
   listToolCalls(query?: DailyWorkTraceQuery): Promise<ToolCallRecord[]>;
@@ -143,10 +192,20 @@ export interface DailyWorkRepository {
   upsertConnectorAccount(
     account: DailyWorkConnectorAccount
   ): Promise<DailyWorkConnectorAccount>;
+  listCodingWorkspaces(query: CodingWorkspaceQuery): Promise<CodingWorkspaceRecord[]>;
+  getCodingWorkspace(ownerId: string, workspaceId: string): Promise<CodingWorkspaceRecord | null>;
+  upsertCodingWorkspace(workspace: CodingWorkspaceRecord): Promise<CodingWorkspaceRecord>;
+  listRuntimeOperations(query: RuntimeOperationQuery): Promise<RuntimeOperation[]>;
+  getRuntimeOperationByIdempotencyKey(ownerId: string, idempotencyKey: string): Promise<RuntimeOperation | null>;
+  upsertRuntimeOperation(operation: RuntimeOperation): Promise<RuntimeOperation>;
+  listRepositoryCredentials(ownerId: string): Promise<RepositoryCredentialMetadata[]>;
+  getRepositoryCredential(ownerId: string, credentialId: string): Promise<RepositoryCredentialRecord | null>;
+  upsertRepositoryCredential(credential: RepositoryCredentialRecord): Promise<RepositoryCredentialMetadata>;
+  revokeRepositoryCredential(ownerId: string, credentialId: string, revokedAt: string): Promise<RepositoryCredentialMetadata | null>;
   getDataLayerStatus(): Promise<DailyWorkDataLayerStatus>;
 }
 
-export interface DailyWorkTraceQuery {
+export interface DailyWorkTraceQuery extends CodingScopeQuery {
   sessionId?: string;
   limit?: number;
 }
@@ -176,6 +235,9 @@ export class SeedDailyWorkRepository implements DailyWorkRepository {
   private readonly permissionGrants: DailyWorkPermissionGrant[] = [];
   private readonly toolCalls: ToolCallRecord[] = [];
   private readonly modelUsageRecords: ToolModelUsageRecord[] = [];
+  private readonly codingWorkspaces: CodingWorkspaceRecord[] = [];
+  private readonly runtimeOperations: RuntimeOperation[] = [];
+  private readonly repositoryCredentials = new Map<string, RepositoryCredentialRecord>();
 
   async listTemplates() {
     return cloneJson(this.templates);
@@ -214,25 +276,25 @@ export class SeedDailyWorkRepository implements DailyWorkRepository {
     return cloneJson(this.approvalRequests);
   }
 
-  async listArtifacts() {
-    return cloneJson(this.artifacts);
+  async listArtifacts(query: CodingScopeQuery = {}) {
+    return cloneJson(filterFallbackScope(this.artifacts, query));
   }
 
-  async listSessionSummaries() {
+  async listSessionSummaries(query: CodingScopeQuery = {}) {
     return dailyWorkSessionSummarySchema.array().parse(
-      this.sessionDetails.map(({ recentMessages, ...summary }) => {
+      filterFallbackScope(this.sessionDetails, query).map(({ recentMessages, ...summary }) => {
         void recentMessages;
         return summary;
       })
     );
   }
 
-  async listSessionDetails() {
-    return cloneJson(this.sessionDetails);
+  async listSessionDetails(query: CodingScopeQuery = {}) {
+    return cloneJson(filterFallbackScope(this.sessionDetails, query));
   }
 
-  async listEvents() {
-    return cloneJson(this.events);
+  async listEvents(query: CodingScopeQuery = {}) {
+    return cloneJson(filterFallbackScope(this.events, query));
   }
 
   async listConnectors() {
@@ -267,14 +329,16 @@ export class SeedDailyWorkRepository implements DailyWorkRepository {
     return this.sessionDetails.length !== before;
   }
 
-  async upsertActivityEvent(event: DailyActivityEvent) {
+  async upsertActivityEvent(event: DailyActivityEvent, _scope: CodingScopeQuery = {}) {
+    void _scope;
     const parsed = dailyActivityEventSchema.parse(event);
     upsertFirstById(this.events, parsed);
 
     return cloneJson(parsed);
   }
 
-  async upsertArtifact(artifact: DailyWorkArtifact) {
+  async upsertArtifact(artifact: DailyWorkArtifact, _scope: CodingScopeQuery = {}) {
+    void _scope;
     const parsed = dailyWorkArtifactSchema.parse(artifact);
     replaceById(this.artifacts, parsed);
 
@@ -327,6 +391,103 @@ export class SeedDailyWorkRepository implements DailyWorkRepository {
     this.connectorAccounts.set(account.provider, cloneJson(account));
 
     return cloneJson(account);
+  }
+
+  async listCodingWorkspaces(query: CodingWorkspaceQuery) {
+    return cloneJson(
+      this.codingWorkspaces.filter(
+        (workspace) =>
+          workspace.ownerId === query.ownerId &&
+          (!query.runtimeMode || workspace.runtimeMode === query.runtimeMode) &&
+          (query.includeDeleted || !workspace.deletedAt)
+      )
+    );
+  }
+
+  async getCodingWorkspace(ownerId: string, workspaceId: string) {
+    const workspace = this.codingWorkspaces.find(
+      (candidate) => candidate.ownerId === ownerId && candidate.workspaceId === workspaceId
+    );
+    return workspace ? cloneJson(workspace) : null;
+  }
+
+  async upsertCodingWorkspace(workspace: CodingWorkspaceRecord) {
+    const parsed = codingWorkspaceRecordSchema.parse(workspace);
+    assertRecordOwner(
+      this.codingWorkspaces,
+      parsed.workspaceId,
+      parsed.ownerId,
+      (candidate) => candidate.workspaceId,
+      (candidate) => candidate.ownerId,
+      "Workspace"
+    );
+    replaceByWorkspaceId(this.codingWorkspaces, parsed);
+    return cloneJson(parsed);
+  }
+
+  async listRuntimeOperations(query: RuntimeOperationQuery) {
+    return cloneJson(
+      this.runtimeOperations
+        .filter(
+          (operation) =>
+            operation.ownerId === query.ownerId &&
+            (!query.workspaceId || operation.workspaceId === query.workspaceId) &&
+            (!query.status || operation.status === query.status)
+        )
+        .sort((left, right) => right.createdAt.localeCompare(left.createdAt))
+        .slice(0, normalizeTraceLimit(query.limit))
+    );
+  }
+
+  async getRuntimeOperationByIdempotencyKey(ownerId: string, idempotencyKey: string) {
+    const operation = this.runtimeOperations.find(
+      (candidate) => candidate.ownerId === ownerId && candidate.idempotencyKey === idempotencyKey
+    );
+    return operation ? cloneJson(operation) : null;
+  }
+
+  async upsertRuntimeOperation(operation: RuntimeOperation) {
+    const parsed = runtimeOperationSchema.parse(operation);
+    assertRecordOwner(
+      this.runtimeOperations,
+      parsed.id,
+      parsed.ownerId,
+      (candidate) => candidate.id,
+      (candidate) => candidate.ownerId,
+      "Runtime operation"
+    );
+    replaceById(this.runtimeOperations, parsed);
+    return cloneJson(parsed);
+  }
+
+  async listRepositoryCredentials(ownerId: string) {
+    return [...this.repositoryCredentials.values()]
+      .filter((credential) => credential.ownerId === ownerId)
+      .map(toCredentialMetadata);
+  }
+
+  async getRepositoryCredential(ownerId: string, credentialId: string) {
+    const credential = this.repositoryCredentials.get(credentialId);
+    return credential?.ownerId === ownerId ? cloneJson(credential) : null;
+  }
+
+  async upsertRepositoryCredential(credential: RepositoryCredentialRecord) {
+    const existing = this.repositoryCredentials.get(credential.id);
+    if (existing && existing.ownerId !== credential.ownerId) {
+      throw new DailyWorkRepositoryAccessError("Repository credential", credential.id);
+    }
+    this.repositoryCredentials.set(credential.id, cloneJson(credential));
+    return toCredentialMetadata(credential);
+  }
+
+  async revokeRepositoryCredential(ownerId: string, credentialId: string, revokedAt: string) {
+    const credential = await this.getRepositoryCredential(ownerId, credentialId);
+    if (!credential) {
+      return null;
+    }
+    const revoked = { ...credential, revokedAt, updatedAt: revokedAt };
+    this.repositoryCredentials.set(credentialId, revoked);
+    return toCredentialMetadata(revoked);
   }
 
   async getDataLayerStatus(): Promise<DailyWorkDataLayerStatus> {
@@ -414,16 +575,17 @@ export class JsonDailyWorkRepository implements DailyWorkRepository {
     );
   }
 
-  async listArtifacts() {
-    return this.readCollection(
+  async listArtifacts(query: CodingScopeQuery = {}) {
+    const artifacts = await this.readCollection(
       "artifacts",
       dailyWorkArtifactSchema.array(),
       () => this.seedRepository.listArtifacts()
     );
+    return filterFallbackScope(artifacts, query);
   }
 
-  async listSessionSummaries() {
-    const details = await this.listSessionDetails();
+  async listSessionSummaries(query: CodingScopeQuery = {}) {
+    const details = await this.listSessionDetails(query);
 
     return dailyWorkSessionSummarySchema.array().parse(
       details.map(({ recentMessages, ...summary }) => {
@@ -433,20 +595,22 @@ export class JsonDailyWorkRepository implements DailyWorkRepository {
     );
   }
 
-  async listSessionDetails() {
-    return this.readCollection(
+  async listSessionDetails(query: CodingScopeQuery = {}) {
+    const sessions = await this.readCollection(
       "sessions",
       dailyWorkSessionDetailSchema.array(),
       () => this.seedRepository.listSessionDetails()
     );
+    return filterFallbackScope(sessions, query);
   }
 
-  async listEvents() {
-    return this.readCollection(
+  async listEvents(query: CodingScopeQuery = {}) {
+    const events = await this.readCollection(
       "events",
       dailyActivityEventSchema.array(),
       () => this.seedRepository.listEvents()
     );
+    return filterFallbackScope(events, query);
   }
 
   async listConnectors() {
@@ -510,7 +674,8 @@ export class JsonDailyWorkRepository implements DailyWorkRepository {
     return true;
   }
 
-  async upsertActivityEvent(event: DailyActivityEvent) {
+  async upsertActivityEvent(event: DailyActivityEvent, _scope: CodingScopeQuery = {}) {
+    void _scope;
     const parsed = dailyActivityEventSchema.parse(event);
     const events = await this.listEvents();
     upsertFirstById(events, parsed);
@@ -519,7 +684,8 @@ export class JsonDailyWorkRepository implements DailyWorkRepository {
     return cloneJson(parsed);
   }
 
-  async upsertArtifact(artifact: DailyWorkArtifact) {
+  async upsertArtifact(artifact: DailyWorkArtifact, _scope: CodingScopeQuery = {}) {
+    void _scope;
     const parsed = dailyWorkArtifactSchema.parse(artifact);
     const artifacts = await this.listArtifacts();
     replaceById(artifacts, parsed);
@@ -581,6 +747,105 @@ export class JsonDailyWorkRepository implements DailyWorkRepository {
 
   async upsertConnectorAccount(account: DailyWorkConnectorAccount) {
     return cloneJson(account);
+  }
+
+  async listCodingWorkspaces(query: CodingWorkspaceQuery) {
+    const workspaces = await this.readCollection(
+      "codingWorkspaces",
+      codingWorkspaceRecordSchema.array(),
+      () => this.seedRepository.listCodingWorkspaces(query)
+    );
+    return workspaces.filter(
+      (workspace) =>
+        workspace.ownerId === query.ownerId &&
+        (!query.runtimeMode || workspace.runtimeMode === query.runtimeMode) &&
+        (query.includeDeleted || !workspace.deletedAt)
+    );
+  }
+
+  async getCodingWorkspace(ownerId: string, workspaceId: string) {
+    return (await this.listCodingWorkspaces({ ownerId, includeDeleted: true })).find(
+      (workspace) => workspace.workspaceId === workspaceId
+    ) ?? null;
+  }
+
+  async upsertCodingWorkspace(workspace: CodingWorkspaceRecord) {
+    const parsed = codingWorkspaceRecordSchema.parse(workspace);
+    const workspaces = await this.readCollection(
+      "codingWorkspaces",
+      codingWorkspaceRecordSchema.array(),
+      async () => []
+    );
+    assertRecordOwner(
+      workspaces,
+      parsed.workspaceId,
+      parsed.ownerId,
+      (candidate) => candidate.workspaceId,
+      (candidate) => candidate.ownerId,
+      "Workspace"
+    );
+    replaceByWorkspaceId(workspaces, parsed);
+    await this.writeCollection("codingWorkspaces", codingWorkspaceRecordSchema.array(), workspaces);
+    return cloneJson(parsed);
+  }
+
+  async listRuntimeOperations(query: RuntimeOperationQuery) {
+    const operations = await this.readCollection(
+      "runtimeOperations",
+      runtimeOperationSchema.array(),
+      async () => []
+    );
+    return operations
+      .filter(
+        (operation) =>
+          operation.ownerId === query.ownerId &&
+          (!query.workspaceId || operation.workspaceId === query.workspaceId) &&
+          (!query.status || operation.status === query.status)
+      )
+      .sort((left, right) => right.createdAt.localeCompare(left.createdAt))
+      .slice(0, normalizeTraceLimit(query.limit));
+  }
+
+  async getRuntimeOperationByIdempotencyKey(ownerId: string, idempotencyKey: string) {
+    return (await this.listRuntimeOperations({ ownerId, limit: 200 })).find(
+      (operation) => operation.idempotencyKey === idempotencyKey
+    ) ?? null;
+  }
+
+  async upsertRuntimeOperation(operation: RuntimeOperation) {
+    const parsed = runtimeOperationSchema.parse(operation);
+    const operations = await this.readCollection(
+      "runtimeOperations",
+      runtimeOperationSchema.array(),
+      async () => []
+    );
+    assertRecordOwner(
+      operations,
+      parsed.id,
+      parsed.ownerId,
+      (candidate) => candidate.id,
+      (candidate) => candidate.ownerId,
+      "Runtime operation"
+    );
+    replaceById(operations, parsed);
+    await this.writeCollection("runtimeOperations", runtimeOperationSchema.array(), operations);
+    return cloneJson(parsed);
+  }
+
+  async listRepositoryCredentials(ownerId: string) {
+    return this.seedRepository.listRepositoryCredentials(ownerId);
+  }
+
+  async getRepositoryCredential(ownerId: string, credentialId: string) {
+    return this.seedRepository.getRepositoryCredential(ownerId, credentialId);
+  }
+
+  async upsertRepositoryCredential(credential: RepositoryCredentialRecord) {
+    return this.seedRepository.upsertRepositoryCredential(credential);
+  }
+
+  async revokeRepositoryCredential(ownerId: string, credentialId: string, revokedAt: string) {
+    return this.seedRepository.revokeRepositoryCredential(ownerId, credentialId, revokedAt);
   }
 
   async getDataLayerStatus(): Promise<DailyWorkDataLayerStatus> {
@@ -873,6 +1138,9 @@ function filterPermissionGrants(
 
   return grants
     .filter((grant) => !query.sessionId || grant.sessionId === query.sessionId)
+    .filter((grant) => !query.ownerId || (grant.ownerId ?? fallbackOwnerId) === query.ownerId)
+    .filter((grant) => !query.workspaceId || (grant.workspaceId ?? fallbackWorkspaceId) === query.workspaceId)
+    .filter((grant) => !query.runtimeMode || normalizeRuntimeMode(grant.runtimeMode ?? grant.provider) === query.runtimeMode)
     .filter((grant) => !query.provider || grant.provider === query.provider)
     .filter((grant) => !query.action || grant.action === query.action)
     .filter(
@@ -894,8 +1162,77 @@ function filterTraceRecords<T extends { createdAt: string }>(
     .filter(
       (record) => !query.sessionId || getTraceSessionId(record) === query.sessionId
     )
+    .filter((record) => traceRecordMatchesScope(record, query))
     .sort((a, b) => a.createdAt.localeCompare(b.createdAt))
     .slice(0, limit);
+}
+
+const fallbackOwnerId = "local-dev-user";
+const fallbackWorkspaceId = "workspace-seekdesk";
+const fallbackRuntimeMode: RuntimeMode = "server_local";
+
+function traceRecordMatchesScope(record: unknown, query: CodingScopeQuery) {
+  const scoped = record && typeof record === "object"
+    ? record as { ownerId?: unknown; workspaceId?: unknown; runtimeMode?: unknown }
+    : {};
+  const ownerId = typeof scoped.ownerId === "string" ? scoped.ownerId : fallbackOwnerId;
+  const workspaceId = typeof scoped.workspaceId === "string" ? scoped.workspaceId : fallbackWorkspaceId;
+  const runtimeMode = normalizeRuntimeMode(scoped.runtimeMode ?? fallbackRuntimeMode);
+  return (
+    (!query.ownerId || query.ownerId === ownerId) &&
+    (!query.workspaceId || query.workspaceId === workspaceId) &&
+    (!query.runtimeMode || query.runtimeMode === runtimeMode)
+  );
+}
+
+function filterFallbackScope<T>(records: T[], query: CodingScopeQuery) {
+  return records.filter((record) => {
+    if (query.ownerId && query.ownerId !== fallbackOwnerId) {
+      return false;
+    }
+    const value = record && typeof record === "object"
+      ? record as { workspaceId?: unknown; workspaceRuntimeMode?: unknown; runtimeMode?: unknown }
+      : {};
+    const workspaceId = typeof value.workspaceId === "string"
+      ? value.workspaceId
+      : fallbackWorkspaceId;
+    const runtimeMode = normalizeRuntimeMode(
+      value.workspaceRuntimeMode ?? value.runtimeMode ?? fallbackRuntimeMode
+    );
+    return (
+      (!query.workspaceId || query.workspaceId === workspaceId) &&
+      (!query.runtimeMode || query.runtimeMode === runtimeMode)
+    );
+  });
+}
+
+function replaceByWorkspaceId(items: CodingWorkspaceRecord[], nextItem: CodingWorkspaceRecord) {
+  const index = items.findIndex((item) => item.workspaceId === nextItem.workspaceId);
+  if (index === -1) {
+    items.push(nextItem);
+  } else {
+    items[index] = nextItem;
+  }
+}
+
+function toCredentialMetadata(credential: RepositoryCredentialRecord): RepositoryCredentialMetadata {
+  const { encryptedSecret: _encryptedSecret, ...metadata } = cloneJson(credential);
+  void _encryptedSecret;
+  return metadata;
+}
+
+function assertRecordOwner<T>(
+  records: T[],
+  id: string,
+  ownerId: string,
+  getId: (record: T) => string,
+  getOwnerId: (record: T) => string,
+  resource: string
+) {
+  const existing = records.find((record) => getId(record) === id);
+  if (existing && getOwnerId(existing) !== ownerId) {
+    throw new DailyWorkRepositoryAccessError(resource, id);
+  }
 }
 
 function getTraceSessionId(record: unknown) {
