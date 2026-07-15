@@ -5,8 +5,8 @@
 - 功能：`dual-runtime`
 - 开发分支：`codex/dual-runtime`
 - 任务范围：T001-T124
-- 已完成：T001-T123
-- 当前阶段：T124 提交、push、合并与 main 回归
+- 已完成：T001-T124
+- 当前阶段：双 Runtime v1 已交付到 `main`
 - 强制验收阻塞：无
 
 ## 已完成能力
@@ -71,8 +71,8 @@
 
 ## 下一步
 
-1. 提交并 push `codex/dual-runtime`。
-2. 合并到 `main`，重新运行 build、migration、runtime/cloud integration 和 browser smoke。
+1. 生产化设备身份、短期 pairing token 与自动轮换。
+2. 云 Runtime 多节点调度、配额、可观测性和计费控制面。
 
 ## 最后更新
 

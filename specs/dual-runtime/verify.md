@@ -2,9 +2,9 @@
 
 ## 当前状态
 
-- T001-T123 已实现并完成验证。
-- T123 Git、migration、secret、文档与 checkbox 审计已通过。
-- T124 待提交、push、合并 `main` 并在 `main` 回归。
+- T001-T124 已实现并完成验证。
+- 功能分支 `codex/dual-runtime` 已提交并 push，随后以 fast-forward 合并到 `main`。
+- `main` 的 build、migration、runtime container、cloud lifecycle 与双 Runtime browser smoke 回归全部通过。
 - 先前 Docker/Postgres 环境阻塞已经解除，没有未解决的强制验收阻塞。
 
 ## 基础环境
@@ -103,7 +103,11 @@
 - 真实 UI 在 Windows Chrome 完成；`jim-mac` 当前没有可由 Playwright 启动的兼容 Chrome binary。
 - cloud integration fixture 依赖 GitHub HTTPS egress；离线环境应替换为企业内部 HTTPS Git fixture。
 
-## 最终待办
+## Main 回归
 
-1. 提交并 push `codex/dual-runtime`。
-2. 合并到 `main` 后重新执行 build、migration、runtime/cloud smoke 与 browser smoke。
+- `npm run build`：全部 workspace 通过，Next.js 路由产物正常。
+- `npm run db:migrate`：真实 Postgres migration 通过。
+- `npm run test:runtime-container`：9 个 coding tools 与容器安全边界通过。
+- `npm run test:cloud-runtime`：provision、execute、stop、restart、start、delete 全链路通过且零 Runtime 资源残留。
+- `SEEKDESK_BROWSER_SMOKE_CLOUD=1 npm run test:browser-smoke`：local daemon 与 cloud runtime 同时在线，workspace/session/trace 路由正确，smoke 通过并完成测试数据清理。
+- `main` 已成为完成 T001-T124 的交付基线；项目 Postgres 容器和持久化卷按设计保留运行。

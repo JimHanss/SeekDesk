@@ -169,7 +169,7 @@
 - [x] T121 同时启动 remote API、cloud-runtime 和 local daemon，运行完整 `npm run test:browser-smoke`。
 - [x] T122 清理测试容器、网络、临时 Git fixture 和 workspace 目录，确认用户数据与无关 Docker 资源未被删除。
 - [x] T123 检查 `git status`、migration、secret hygiene、文档和任务 checkbox，生成最终交付摘要。
-- [ ] T124 自动验证全部通过后提交并 push `codex/dual-runtime`，合并到 `main`，在 `main` 再运行 build、migration 和 browser smoke。
+- [x] T124 自动验证全部通过后提交并 push `codex/dual-runtime`，合并到 `main`，在 `main` 再运行 build、migration 和 browser smoke。
 
 ## 依赖与并行建议
 
