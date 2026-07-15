@@ -88,13 +88,13 @@
 
 ## 阶段 5：Runtime Worker 与 Node22 Image
 
-- [ ] T055 创建 `apps/runtime-worker` workspace、构建配置、CLI 入口和 health 命令。
-- [ ] T056 实现 JSON request/response transport，校验 requestId、workspaceId、toolName 和 input schema。
-- [ ] T057 将 worker 工具执行接入 `runtime-core`，固定 root 为 `/workspace`，拒绝 workspace 选择和服务器路径浏览。
-- [ ] T058 增加 worker 超时、进程信号、取消、非法 JSON、未知工具和输出上限处理。
-- [ ] T059 为 worker 添加协议、schema、错误映射和完整 coding tool fixture 测试。
-- [ ] T060 新增 `docker/runtime-worker.Dockerfile`，安装 Node.js 22、npm、Git、ripgrep、基础 Shell、Python 3 和非 root runtime 用户。
-- [ ] T061 配置 image 默认只读 rootfs、`/tmp` tmpfs 约定、`/workspace` volume、无 Docker socket、无 privileged 和最小 capabilities。
+- [x] T055 创建 `apps/runtime-worker` workspace、构建配置、CLI 入口和 health 命令。
+- [x] T056 实现 JSON request/response transport，校验 requestId、workspaceId、toolName 和 input schema。
+- [x] T057 将 worker 工具执行接入 `runtime-core`，固定 root 为 `/workspace`，拒绝 workspace 选择和服务器路径浏览。
+- [x] T058 增加 worker 超时、进程信号、取消、非法 JSON、未知工具和输出上限处理。
+- [x] T059 为 worker 添加协议、schema、错误映射和完整 coding tool fixture 测试。
+- [x] T060 新增 `docker/runtime-worker.Dockerfile`，安装 Node.js 22、npm、Git、ripgrep、基础 Shell、Python 3 和非 root runtime 用户。
+- [x] T061 配置 image 默认只读 rootfs、`/tmp` tmpfs 约定、`/workspace` volume、无 Docker socket、无 privileged 和最小 capabilities。
 - [ ] T062 构建 `seekdesk-runtime:node22`，运行 container fixture 验证文件、搜索、Git、写入、Shell 和测试结果与 local daemon 一致。
 
 ## 阶段 6：Cloud Runtime Service

@@ -5,7 +5,7 @@
 - 功能：`dual-runtime`
 - 分支：`codex/dual-runtime`
 - 任务范围：`T001-T124`
-- 当前批次：`T042-T054` 已完成，准备进入 `T055-T062`
+- 当前批次：`T055-T061` 已完成，`T062` 等待 Docker；准备进入 `T063-T081`
 - 基线 HEAD：`855c888606ca933acf4879dc933d3b2b3852f13b`
 
 ## 2026-07-15 基线检查
@@ -37,6 +37,8 @@
 - `T016-T028`：已完成。新增共享 `runtime-core`，daemon 与 server-local adapter 使用同一执行实现，并完成真实 daemon 审批执行验收。
 - `T029-T041`：已完成。新增双 Runtime 数据模型、显式历史回填迁移、owner-scoped repository、加密凭据和 OIDC/JWT actor 边界。
 - `T042-T054`：已完成。新增 RuntimeResolver、cloud client、公开 workspace lifecycle API、稳定错误映射、会话绑定和 workspace-scoped trace。
+- `T055-T061`：已完成。新增 runtime-worker workspace、JSON/NDJSON transport、完整 runtime-core tool 执行、超时/取消/上限处理及 Node.js 22 non-root image contract。
+- `T062`：等待可用 Docker Engine 后构建 `seekdesk-runtime:node22` 并运行真实 container fixture。
 
 ## T001-T015 批次验证
 
@@ -78,8 +80,17 @@
 - `npm run lint`、`npm run test --workspaces --if-present`、`npm run typecheck`、`npm run build`、`npm run verify:secrets`、`git diff --check`：全部通过。
 - `T004` 与 Docker/Postgres/cloud image 真实验证仍由 Docker Engine 环境阻塞。
 
+## T055-T061 批次验证
+
+- runtime-worker `health`、`execute`、`serve` 和 `idle` CLI 入口已建立；生产根目录固定 `/workspace`。
+- Runtime Worker tests：`6` 项通过，完整执行文件、搜索、Git、写入、编辑、Shell 和 test fixture，并验证错误与资源上限。
+- Shared tests：`13` 项通过；worker 和 runtime-core 错误码均进入统一 response schema。
+- Dockerfile/static contract 验证 Node.js 22、non-root、read-only/tmpfs/volume、network/capability/resource 限制和禁止 Docker socket/privileged。
+- `npm run lint`、`npm run test --workspaces --if-present`、`npm run typecheck`、`npm run build`、`npm run verify:secrets`、`git diff --check`：全部通过。
+- `T062` 尚未执行：Docker CLI 为断链，真实 image build/container fixture 继续等待环境恢复。
+
 ## 进行中
 
-- 功能：Runtime Worker 与 Node.js 22 image
-- 当前阶段：`T055-T062`
-- 下一步：创建独立 runtime-worker workspace、JSON transport、统一 runtime-core 执行、取消/超时处理和容器镜像安全约定。
+- 功能：Cloud Runtime Service
+- 当前阶段：`T063-T081`
+- 下一步：创建内部 Fastify service、service-token 身份、容器引擎抽象、workspace 存储/Git bootstrap、lifecycle、execute queue、reconcile 与清理流程。

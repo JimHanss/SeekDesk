@@ -62,13 +62,31 @@ export const runtimeErrorCodeSchema = z.enum([
   "runtime_not_ready",
   "runtime_request_timeout",
   "runtime_request_cancelled",
+  "runtime_request_conflict",
   "runtime_protocol_mismatch",
   "runtime_execution_failed",
+  "runtime_workspace_mismatch",
+  "invalid_json",
+  "invalid_runtime_request",
+  "runtime_input_too_large",
+  "runtime_output_too_large",
+  "runtime_tool_unsupported",
   "session_workspace_mismatch",
   "workspace_operation_conflict",
   "workspace_limit_exceeded",
   "repository_clone_failed",
-  "repository_credentials_invalid"
+  "repository_credentials_invalid",
+  "not_a_file",
+  "file_too_large",
+  "not_a_directory",
+  "path_outside_workspace",
+  "ignored_path",
+  "symlink_outside_workspace",
+  "replacement_count_mismatch",
+  "dangerous_command",
+  "git_repository_unavailable",
+  "binary_file",
+  "parent_directory_missing"
 ]);
 
 export const runtimeSafetyBoundarySchema = z.object({

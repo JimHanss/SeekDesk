@@ -38,6 +38,25 @@
 - `DaemonClient`：管理注册、heartbeat、request、cancel 和 response 协议。
 - `LocalWorkspaceRuntime`：组合共享 runtime-core，并保留本机目录选择能力。
 
+### Cloud Runtime Worker
+
+路径：
+- `apps/runtime-worker/src/cli.ts`
+- `apps/runtime-worker/src/worker.ts`
+- `docker/runtime-worker.Dockerfile`
+- `docker/runtime-worker-security.md`
+
+用途：
+- 在 cloud workspace 容器内通过单请求 JSON 或 NDJSON 执行共享 coding tools，生产根目录固定为 `/workspace`。
+- 提供 health、idle、execute 与 serve 命令，并处理 timeout、cancel、协议错误及输入/输出上限。
+- 记录 Node.js 22 non-root image 和 read-only/tmpfs/network/capability/resource 安全运行约定。
+
+关键导出：
+- `RuntimeWorker`：管理固定 workspace 的工具执行、active request、timeout 与 cancellation。
+- `handleRuntimeWorkerLine`：校验 transport envelope、coding tool 和 tool input，并输出共享 response schema。
+- `serveRuntimeWorker`：并发处理 requestId 关联的 NDJSON 请求与 cancel 消息。
+- `runRuntimeWorkerCli`：提供容器 health、idle、execute 和 serve 入口。
+
 ## 共享协议与执行核心
 
 ### Shared Runtime Contract
@@ -177,6 +196,8 @@
 - `apps/api/src/dual-runtime-api.test.ts`
 - `apps/api/src/services/runtime-resolver.test.ts`
 - `apps/api/src/services/cloud-runtime-client.test.ts`
+- `apps/runtime-worker/src/worker.test.ts`
+- `apps/runtime-worker/src/docker-contract.test.ts`
 - `apps/api/src/repositories/coding-workspace-repository.test.ts`
 - `apps/api/src/repositories/postgres-daily-work-repository.test.ts`
 - `packages/runtime-core/src/index.test.ts`

@@ -2,9 +2,9 @@
 
 ## 当前验收状态
 
-- 已完成并验证：`T001-T003`、`T005-T054`。
-- 环境阻塞：`T004` 的 Docker Engine/Postgres 真实可用性检查。
-- 下一批：`T055-T062` Runtime Worker 与 Node.js 22 image。
+- 已完成并验证：`T001-T003`、`T005-T061`。
+- 环境阻塞：`T004` 的 Docker Engine/Postgres 真实可用性检查，以及 `T062` 的真实 image/container fixture。
+- 下一批：`T063-T081` Cloud Runtime Service；其中真实 Docker integration 待环境恢复补跑。
 
 ## 已通过检查
 
@@ -31,6 +31,15 @@
 - cloud workspace create/start/stop/retry/delete 使用持久化 operation 和 idempotency key；跨 operation 重用 key 返回 `workspace_operation_conflict`。
 - coding chat、tool call、grant、trace、activity 和 model usage 均使用持久化 session workspace/Runtime 绑定，request body 仅参与一致性校验。
 - `/health` 公开 cloud 配置/readiness、daemon 连接数、身份模式与显式 server-local 状态，不输出 owner ID、service token 或 repository credential。
+
+### Runtime Worker 与 Node.js 22 Image Contract
+
+- Shared tests：`13` 项通过；新增 worker transport/runtime-core 稳定错误码契约。
+- Runtime Worker tests：`6` 项通过，覆盖完整 9 个 coding tools、二次 schema 校验、workspace 固定、NDJSON、timeout、cancel、非法 JSON、未知工具和输入/输出上限。
+- `health` CLI 已从构建产物运行成功，返回 service、protocol、workspace、Runtime 与 capabilities。
+- `runtime-worker.Dockerfile` 使用 Node.js 22、non-root UID/GID `10001`，安装 Git、ripgrep、Python 3 和基础 shell。
+- 静态安全契约验证 read-only rootfs、受限 `/tmp`、`/workspace` volume、`network none`、cap-drop、no-new-privileges、PID/CPU/内存限制及禁止 Docker socket/privileged。
+- `T062` 未完成：Docker CLI 仍指向不可见的 `/Volumes/SSD/Docker.app`，无法真实构建 `seekdesk-runtime:node22` 或运行 container fixture。
 
 ### 全仓命令
 
@@ -59,6 +68,10 @@
 - `apps/api/src/routes/coding-workspace-routes.ts`
 - `apps/api/src/routes/runtime-http.ts`
 - `apps/api/src/server.ts`
+- `apps/runtime-worker/src/worker.ts`
+- `apps/runtime-worker/src/cli.ts`
+- `docker/runtime-worker.Dockerfile`
+- `docker/runtime-worker-security.md`
 
 ## 已知风险与待补验证
 
@@ -68,6 +81,5 @@
 
 ## 后续任务
 
-- 创建 runtime worker 与 Node.js 22 容器镜像。
 - 实现 cloud-runtime lifecycle、执行队列、资源/网络限制和 reconcile。
 - 完成前端双 Runtime 选择、全链路 smoke、文档与最终合并。

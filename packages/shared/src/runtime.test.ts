@@ -7,6 +7,7 @@ import {
 } from "./permissions.js";
 import {
   normalizeRuntimeMode,
+  runtimeErrorCodeSchema,
   runtimeExecuteResponseSchema,
   runtimeModeSchema
 } from "./runtime.js";
@@ -132,5 +133,20 @@ describe("dual runtime contracts", () => {
         }
       })
     ).toMatchObject({ ok: false, requestId: "request-1" });
+  });
+
+  it("keeps worker transport and runtime-core errors inside the shared protocol", () => {
+    expect([
+      "invalid_json",
+      "invalid_runtime_request",
+      "runtime_input_too_large",
+      "runtime_output_too_large",
+      "runtime_tool_unsupported",
+      "runtime_request_conflict",
+      "runtime_workspace_mismatch",
+      "path_outside_workspace",
+      "binary_file",
+      "dangerous_command"
+    ].map((code) => runtimeErrorCodeSchema.parse(code))).toHaveLength(10);
   });
 });

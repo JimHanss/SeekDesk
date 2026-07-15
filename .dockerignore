@@ -1,0 +1,13 @@
+node_modules
+**/node_modules
+**/dist
+**/.next
+.git
+.env
+.env.*
+!.env.example
+.runtime
+.runtime-data
+.cloud-runtime
+coverage
+*.log
