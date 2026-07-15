@@ -169,6 +169,47 @@ describe("dual-runtime public API", () => {
     }
   });
 
+  it("decrypts repository credentials only for the internal lifecycle request", async () => {
+    const repository = new SeedDailyWorkRepository();
+    await repository.upsertRepositoryCredential({
+      id: "credential-a",
+      ownerId: "local-dev-user",
+      provider: "https_token",
+      label: "Private repository",
+      encryptedSecret: "encrypted-token-envelope",
+      keyVersion: "v1",
+      createdAt: now,
+      updatedAt: now
+    });
+    const cloudClient = new MockCloudRuntimeClient();
+    const app = await buildServer({
+      dailyWorkRepository: repository,
+      cloudRuntimeClient: cloudClient,
+      credentialCipher: {
+        decrypt: () => "plain-repository-token"
+      }
+    });
+    try {
+      const response = await app.inject({
+        method: "POST",
+        url: "/api/coding/workspaces/cloud",
+        payload: {
+          name: "Private cloud",
+          repositoryUrl: "https://github.com/example/private.git",
+          credentialId: "credential-a",
+          idempotencyKey: "private-cloud-a"
+        }
+      });
+      expect(response.statusCode).toBe(202);
+      expect(response.body).not.toContain("plain-repository-token");
+      expect(response.body).not.toContain("encrypted-token-envelope");
+      expect(cloudClient.lifecycleRequests[0]?.repositoryToken)
+        .toBe("plain-repository-token");
+    } finally {
+      await app.close();
+    }
+  });
+
   it("returns a stable conflict when cloud runtime is not configured", async () => {
     const app = await buildServer({
       dailyWorkRepository: new SeedDailyWorkRepository(),
@@ -212,6 +253,20 @@ class MockCloudRuntimeClient implements CloudRuntimeClient {
 
   async submitLifecycle(request: CloudRuntimeLifecycleRequest) {
     this.lifecycleRequests.push(request);
+  }
+
+  async getStatus(ownerId: string, workspaceId: string) {
+    const request = [...this.lifecycleRequests].reverse().find(
+      (candidate) => candidate.ownerId === ownerId && candidate.workspace.workspaceId === workspaceId
+    );
+    const workspace = request?.workspace ?? createReadyCloudWorkspace(workspaceId);
+    return {
+      workspace,
+      operations: request
+        ? [{ ...request.operation, status: "running" as const, startedAt: now }]
+        : [],
+      updatedAt: now
+    };
   }
 
   async execute(input: CloudRuntimeExecuteInput) {

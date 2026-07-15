@@ -99,24 +99,24 @@
 
 ## 阶段 6：Cloud Runtime Service
 
-- [ ] T063 创建 `apps/cloud-runtime` workspace、内部 Fastify 服务、健康检查、配置解析和 graceful shutdown。
-- [ ] T064 为所有 `/internal/*` route 增加 service token 验证、requestId 日志和 secret redaction。
-- [ ] T065 定义 `CloudContainerEngine` interface，覆盖 provision、inspect、start、stop、delete、execute 和 list managed containers。
-- [ ] T066 实现 Docker Engine adapter，使用非交互命令/API 参数，禁止字符串拼接 Shell。
-- [ ] T067 实现 workspace 存储目录创建、owner/workspace 安全路径、10 GB quota 检查和删除保护。
-- [ ] T068 实现公开 HTTPS Git clone、目标分支 checkout、revision 记录和 clone 超时。
-- [ ] T069 实现加密 HTTPS token 的短期注入，确保 token 不进入 URL 日志、process list、Git config 或错误响应。
-- [ ] T070 实现 provision 状态机：`provisioning -> cloning -> ready`，失败写入可重试的脱敏错误。
-- [ ] T071 实现 start/stop/retry/delete operation，并保证 owner + idempotency key 的重复请求只执行一次。
-- [ ] T072 实现 container `execute` transport，通过 runtime-worker 执行统一 tool schema 并返回结构化结果。
-- [ ] T073 为同一 workspace 实现读并发、写/命令串行队列和 request cancellation。
-- [ ] T074 应用 `2 CPU / 4 GB RAM / PID limit / no-new-privileges / cap-drop / read-only rootfs` 等容器限制。
+- [x] T063 创建 `apps/cloud-runtime` workspace、内部 Fastify 服务、健康检查、配置解析和 graceful shutdown。
+- [x] T064 为所有 `/internal/*` route 增加 service token 验证、requestId 日志和 secret redaction。
+- [x] T065 定义 `CloudContainerEngine` interface，覆盖 provision、inspect、start、stop、delete、execute 和 list managed containers。
+- [x] T066 实现 Docker Engine adapter，使用非交互命令/API 参数，禁止字符串拼接 Shell。
+- [x] T067 实现 workspace 存储目录创建、owner/workspace 安全路径、10 GB quota 检查和删除保护。
+- [x] T068 实现公开 HTTPS Git clone、目标分支 checkout、revision 记录和 clone 超时。
+- [x] T069 实现加密 HTTPS token 的短期注入，确保 token 不进入 URL 日志、process list、Git config 或错误响应。
+- [x] T070 实现 provision 状态机：`provisioning -> cloning -> ready`，失败写入可重试的脱敏错误。
+- [x] T071 实现 start/stop/retry/delete operation，并保证 owner + idempotency key 的重复请求只执行一次。
+- [x] T072 实现 container `execute` transport，通过 runtime-worker 执行统一 tool schema 并返回结构化结果。
+- [x] T073 为同一 workspace 实现读并发、写/命令串行队列和 request cancellation。
+- [x] T074 应用 `2 CPU / 4 GB RAM / PID limit / no-new-privileges / cap-drop / read-only rootfs` 等容器限制。
 - [ ] T075 实现 Git/bootstrap 网络与普通工具无外网的网络 profile 切换，并验证执行容器无法访问公网。
-- [ ] T076 实现 Docker 实际状态 reconcile，API/runtime service 重启后恢复 workspace 状态。
-- [ ] T077 实现 `lastActiveAt` 更新和 30 分钟空闲自动停止。
-- [ ] T078 实现删除时拒绝新请求、取消队列、停止容器、清理数据目录和失败重试。
-- [ ] T079 为 cloud service 添加 lifecycle、幂等、资源限制、token 脱敏、reconcile、idle stop、cleanup 和 container crash 测试。
-- [ ] T080 新增 `docker-compose.runtime.yml`，仅 cloud-runtime service 挂载 Docker socket，API 通过私有网络访问内部服务。
+- [x] T076 实现 Docker 实际状态 reconcile，API/runtime service 重启后恢复 workspace 状态。
+- [x] T077 实现 `lastActiveAt` 更新和 30 分钟空闲自动停止。
+- [x] T078 实现删除时拒绝新请求、取消队列、停止容器、清理数据目录和失败重试。
+- [x] T079 为 cloud service 添加 lifecycle、幂等、资源限制、token 脱敏、reconcile、idle stop、cleanup 和 container crash 测试。
+- [x] T080 新增 `docker-compose.runtime.yml`，仅 cloud-runtime service 挂载 Docker socket，API 通过私有网络访问内部服务。
 - [ ] T081 使用真实 Docker 和临时 Git fixture 完成 provision/start/execute/stop/restart/delete 集成测试，并确认无残留容器和目录。
 
 ## 阶段 7：审批、审计与关联闭环

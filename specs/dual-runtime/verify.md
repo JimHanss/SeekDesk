@@ -2,9 +2,19 @@
 
 ## 当前验收状态
 
-- 已完成并验证：`T001-T003`、`T005-T061`。
-- 环境阻塞：`T004` 的 Docker Engine/Postgres 真实可用性检查，以及 `T062` 的真实 image/container fixture。
-- 下一批：`T063-T081` Cloud Runtime Service；其中真实 Docker integration 待环境恢复补跑。
+- 已完成并验证：`T001-T003`、`T005-T061`、`T063-T074`、`T076-T080`。
+- 环境阻塞：`T004`、`T062`、`T075` 和 `T081` 的真实 Docker/Postgres/container/network 验证。
+- 下一批：`T082-T089` 审批、工具执行、activity、artifact、terminal 与 trace 的完整关联。
+
+### Cloud Runtime Service
+
+- cloud-runtime tests：`10` 项通过，覆盖认证、资源参数、quota、Git 输入边界、生命周期、幂等、执行队列、reconcile、idle stop、cleanup 和 container crash。
+- API tests：`120` 项通过、`4` 项按环境跳过；cloud status 可回写 workspace/operation。
+- 公开 HTTPS Git clone 真实验证通过，取得 40 字符 revision，临时 workspace 已清理。
+- repository token 仅通过临时 askpass 文件注入；状态文件和公开 API 响应均不含明文或密文。
+- Compose YAML 解析通过；仅 `cloud-runtime` 挂载 Docker socket，API 通过 `runtime-control` 私有网络访问。
+- `npm run lint`、`npm run test`、`npm run typecheck`、`npm run build`、`npm run verify:secrets`、`git diff --check` 全部通过。
+- Docker CLI 当前仍为断链，无法执行 image build、真实 container fixture 和实际公网阻断验证。
 
 ## 已通过检查
 

@@ -13,6 +13,7 @@ import type { FastifyInstance } from "fastify";
 
 import type { DailyWorkRepository } from "../repositories/daily-work-repository.js";
 import type { CloudRuntimeClient } from "../services/cloud-runtime-client.js";
+import type { CredentialCipher } from "../services/credential-crypto.js";
 import { CodingRuntimeError } from "../services/coding-runtime.js";
 import type { RuntimeResolver } from "../services/runtime-resolver.js";
 import { createValidationError, safeRuntimeReply } from "./runtime-http.js";
@@ -21,7 +22,8 @@ export async function registerCodingWorkspaceRoutes(
   app: FastifyInstance,
   repository: DailyWorkRepository,
   resolver: RuntimeResolver,
-  cloudRuntimeClient: CloudRuntimeClient
+  cloudRuntimeClient: CloudRuntimeClient,
+  credentialCipher?: Pick<CredentialCipher, "decrypt">
 ) {
   for (const route of [
     "/api/coding/workspaces",
@@ -42,12 +44,36 @@ export async function registerCodingWorkspaceRoutes(
   app.get<{ Params: { workspaceId: string } }>(
     "/api/coding/workspaces/:workspaceId",
     async (request, reply) => safeRuntimeReply(reply, async () => {
-      const workspace = await resolver.getWorkspaceRecord(
+      let workspace = await resolver.getWorkspaceRecord(
         request.actor.ownerId,
         request.params.workspaceId
       );
       if (!workspace) {
         throw workspaceNotFound(request.params.workspaceId);
+      }
+      if (workspace.runtimeMode === "cloud_runtime" && cloudRuntimeClient.configured) {
+        try {
+          const status = await cloudRuntimeClient.getStatus(
+            request.actor.ownerId,
+            workspace.workspaceId
+          );
+          workspace = status.workspace;
+          await repository.upsertCodingWorkspace(workspace);
+          for (const operation of status.operations) {
+            await repository.upsertRuntimeOperation(operation);
+          }
+        } catch (error) {
+          const message = error instanceof Error ? error.message : "Cloud runtime is unavailable.";
+          workspace = {
+            ...workspace,
+            status: "error",
+            connected: false,
+            errorCode: "runtime_unavailable",
+            errorMessage: message,
+            updatedAt: new Date().toISOString()
+          };
+          await repository.upsertCodingWorkspace(workspace);
+        }
       }
       const [latestOperation] = await repository.listRuntimeOperations({
         ownerId: request.actor.ownerId,
@@ -85,6 +111,7 @@ export async function registerCodingWorkspaceRoutes(
           });
           return sendAcceptedOperation(reply, repository, request.actor.ownerId, duplicate);
         }
+        let repositoryToken: string | undefined;
         if (parsed.data.credentialId) {
           const credential = await repository.getRepositoryCredential(
             request.actor.ownerId,
@@ -96,6 +123,16 @@ export async function registerCodingWorkspaceRoutes(
               "repository_credentials_invalid"
             );
           }
+          if (!credentialCipher) {
+            throw new CodingRuntimeError(
+              "Repository credential encryption is not configured.",
+              "repository_credentials_invalid"
+            );
+          }
+          repositoryToken = credentialCipher.decrypt(
+            credential.encryptedSecret,
+            request.actor.ownerId
+          );
         }
         const now = new Date().toISOString();
         const workspace: CodingWorkspaceRecord = {
@@ -125,7 +162,13 @@ export async function registerCodingWorkspaceRoutes(
         });
         await repository.upsertCodingWorkspace(workspace);
         await repository.upsertRuntimeOperation(operation);
-        await submitOperation(repository, cloudRuntimeClient, workspace, operation);
+        await submitOperation(
+          repository,
+          cloudRuntimeClient,
+          workspace,
+          operation,
+          repositoryToken
+        );
         return reply.code(202).send(createOperationResponse(workspace, operation));
       });
     }
@@ -139,6 +182,7 @@ export async function registerCodingWorkspaceRoutes(
         reply,
         repository,
         cloudRuntimeClient,
+        ...(credentialCipher ? { credentialCipher } : {}),
         action
       })
     );
@@ -151,6 +195,7 @@ export async function registerCodingWorkspaceRoutes(
       reply,
       repository,
       cloudRuntimeClient,
+      ...(credentialCipher ? { credentialCipher } : {}),
       action: "delete"
     })
   );
@@ -165,6 +210,7 @@ async function lifecycleAction(input: {
   reply: Parameters<typeof safeRuntimeReply>[0];
   repository: DailyWorkRepository;
   cloudRuntimeClient: CloudRuntimeClient;
+  credentialCipher?: Pick<CredentialCipher, "decrypt">;
   action: "start" | "stop" | "retry" | "delete";
 }) {
   const parsed = workspaceLifecycleRequestSchema.safeParse(input.request.body ?? {});
@@ -218,9 +264,20 @@ async function lifecycleAction(input: {
       idempotencyKey: parsed.data.idempotencyKey,
       requestPayload: parsed.data
     });
+    const repositoryToken = await resolveWorkspaceCredentialToken(
+      input.repository,
+      pendingWorkspace,
+      input.credentialCipher
+    );
     await input.repository.upsertCodingWorkspace(pendingWorkspace);
     await input.repository.upsertRuntimeOperation(operation);
-    await submitOperation(input.repository, input.cloudRuntimeClient, pendingWorkspace, operation);
+    await submitOperation(
+      input.repository,
+      input.cloudRuntimeClient,
+      pendingWorkspace,
+      operation,
+      repositoryToken
+    );
     return input.reply.code(202).send(createOperationResponse(pendingWorkspace, operation));
   });
 }
@@ -229,10 +286,16 @@ async function submitOperation(
   repository: DailyWorkRepository,
   client: CloudRuntimeClient,
   workspace: CodingWorkspaceRecord,
-  operation: RuntimeOperation
+  operation: RuntimeOperation,
+  repositoryToken?: string
 ) {
   try {
-    await client.submitLifecycle({ ownerId: workspace.ownerId, workspace, operation });
+    await client.submitLifecycle({
+      ownerId: workspace.ownerId,
+      workspace,
+      operation,
+      ...(repositoryToken ? { repositoryToken } : {})
+    });
     await repository.upsertRuntimeOperation({
       ...operation,
       status: "running",
@@ -258,6 +321,25 @@ async function submitOperation(
     });
     throw error;
   }
+}
+
+async function resolveWorkspaceCredentialToken(
+  repository: DailyWorkRepository,
+  workspace: CodingWorkspaceRecord,
+  credentialCipher?: Pick<CredentialCipher, "decrypt">
+) {
+  if (!workspace.credentialRef) return undefined;
+  const credential = await repository.getRepositoryCredential(
+    workspace.ownerId,
+    workspace.credentialRef
+  );
+  if (!credential || credential.revokedAt || !credentialCipher) {
+    throw new CodingRuntimeError(
+      "Repository credential is unavailable or has been revoked.",
+      "repository_credentials_invalid"
+    );
+  }
+  return credentialCipher.decrypt(credential.encryptedSecret, workspace.ownerId);
 }
 
 async function sendAcceptedOperation(

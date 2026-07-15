@@ -126,6 +126,31 @@
 - `CloudRuntimeClient`：定义 API 与 cloud-runtime internal service 的 lifecycle/execute 边界。
 - `HttpCloudRuntimeClient`：使用 service token、timeout 和结构化协议调用 internal service。
 
+### Cloud Runtime Service
+
+路径：
+- `apps/cloud-runtime/src/server.ts`
+- `apps/cloud-runtime/src/lifecycle-service.ts`
+- `apps/cloud-runtime/src/engine.ts`
+- `apps/cloud-runtime/src/execution-queue.ts`
+- `apps/cloud-runtime/src/storage.ts`
+- `apps/cloud-runtime/src/git-bootstrap.ts`
+- `docker/cloud-runtime.Dockerfile`
+- `docker-compose.runtime.yml`
+
+用途：
+- 通过内部 Fastify API 接收 cloud workspace 生命周期和 coding tool 请求，所有 `/internal/*` route 使用 service token。
+- 在专用存储目录 clone HTTPS Git 仓库，短期注入可选 token，并持久化脱敏状态和 operation。
+- 通过 Docker adapter 创建固定 `/workspace` 的隔离 worker；普通工具容器没有网络、socket 或 privileged 权限。
+- 使用读写队列实现并发读取、独占写入/命令、取消、idle stop、reconcile 和可重试清理。
+
+关键导出：
+- `CloudRuntimeLifecycleService`：生命周期、状态恢复、执行队列和清理协调器。
+- `CloudContainerEngine`：容器 provision/inspect/start/stop/delete/execute 抽象。
+- `DockerCliContainerEngine`：无 Shell 字符串拼接的 Docker CLI adapter。
+- `CloudWorkspaceStorage`：owner-scoped 路径、quota、marker 和删除保护。
+- `ProcessGitBootstrapper`：HTTPS clone、branch checkout、revision 和临时 askpass 管理。
+
 ### Coding Workspace API
 
 路径：

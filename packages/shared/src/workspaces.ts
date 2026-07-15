@@ -82,6 +82,19 @@ export const codingWorkspaceOperationResponseSchema = z.object({
   operation: runtimeOperationSchema.omit({ ownerId: true })
 });
 
+export const cloudRuntimeLifecycleSubmissionSchema = z.object({
+  ownerId: z.string().trim().min(1),
+  workspace: codingWorkspaceRecordSchema,
+  operation: runtimeOperationSchema,
+  repositoryToken: z.string().min(1).max(20_000).optional()
+});
+
+export const cloudRuntimeWorkspaceStatusSchema = z.object({
+  workspace: codingWorkspaceRecordSchema,
+  operations: z.array(runtimeOperationSchema),
+  updatedAt: z.string().datetime()
+});
+
 export const workspaceRuntimeSelectionSchema = z.object({
   workspaceId: z.string().trim().min(1),
   runtimeMode: userSelectableRuntimeModeSchema
@@ -106,6 +119,12 @@ export type CodingWorkspaceDetail = z.infer<
 >;
 export type CloudWorkspaceCreateRequest = z.infer<
   typeof cloudWorkspaceCreateRequestSchema
+>;
+export type CloudRuntimeLifecycleSubmission = z.infer<
+  typeof cloudRuntimeLifecycleSubmissionSchema
+>;
+export type CloudRuntimeWorkspaceStatus = z.infer<
+  typeof cloudRuntimeWorkspaceStatusSchema
 >;
 export type WorkspaceRuntimeSelection = z.infer<
   typeof workspaceRuntimeSelectionSchema

@@ -1,6 +1,8 @@
 import {
+  cloudRuntimeWorkspaceStatusSchema,
   runtimeExecuteResponseSchema,
   type CodingToolName,
+  type CloudRuntimeWorkspaceStatus,
   type CodingWorkspaceRecord,
   type RuntimeOperation
 } from "@seekdesk/shared";
@@ -20,6 +22,7 @@ export interface CloudRuntimeLifecycleRequest {
   ownerId: string;
   workspace: CodingWorkspaceRecord;
   operation: RuntimeOperation;
+  repositoryToken?: string;
 }
 
 export interface CloudRuntimeExecuteInput {
@@ -34,6 +37,11 @@ export interface CloudRuntimeClient {
   readonly configured: boolean;
   health(): Promise<CloudRuntimeHealth>;
   submitLifecycle(request: CloudRuntimeLifecycleRequest): Promise<void>;
+  getStatus(ownerId: string, workspaceId: string): Promise<{
+    workspace: CodingWorkspaceRecord;
+    operations: RuntimeOperation[];
+    updatedAt: string;
+  }>;
   execute(input: CloudRuntimeExecuteInput): Promise<unknown>;
 }
 
@@ -52,6 +60,15 @@ export class UnconfiguredCloudRuntimeClient implements CloudRuntimeClient {
 
   async submitLifecycle(_request: CloudRuntimeLifecycleRequest) {
     void _request;
+    throw createUnavailableError();
+  }
+
+  async getStatus(
+    _ownerId: string,
+    _workspaceId: string
+  ): Promise<CloudRuntimeWorkspaceStatus> {
+    void _ownerId;
+    void _workspaceId;
     throw createUnavailableError();
   }
 
@@ -106,6 +123,25 @@ export class HttpCloudRuntimeClient implements CloudRuntimeClient {
     if (!response.ok) {
       throw await createHttpRuntimeError(response, "Cloud runtime rejected the lifecycle operation.");
     }
+  }
+
+  async getStatus(ownerId: string, workspaceId: string) {
+    const response = await this.request(
+      `/internal/workspaces/${encodeURIComponent(workspaceId)}?ownerId=${encodeURIComponent(ownerId)}`,
+      { method: "GET" },
+      5_000
+    );
+    if (!response.ok) {
+      throw await createHttpRuntimeError(response, "Cloud runtime status could not be loaded.");
+    }
+    const parsed = cloudRuntimeWorkspaceStatusSchema.safeParse(await response.json());
+    if (!parsed.success) {
+      throw new CodingRuntimeError(
+        "Cloud runtime returned an invalid workspace status.",
+        "runtime_protocol_mismatch"
+      );
+    }
+    return parsed.data;
   }
 
   async execute(input: CloudRuntimeExecuteInput) {

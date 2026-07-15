@@ -1,0 +1,86 @@
+services:
+  postgres:
+    image: postgres:16-alpine
+    restart: unless-stopped
+    environment:
+      POSTGRES_DB: ${SEEKDESK_POSTGRES_DB:-seekdesk}
+      POSTGRES_USER: ${SEEKDESK_POSTGRES_USER:-seekdesk}
+      POSTGRES_PASSWORD: ${SEEKDESK_POSTGRES_PASSWORD:-seekdesk_dev_password}
+    volumes:
+      - seekdesk_postgres_data:/var/lib/postgresql/data
+    networks: [runtime-control]
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U \"$${POSTGRES_USER}\" -d \"$${POSTGRES_DB}\""]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+
+  cloud-runtime:
+    build:
+      context: .
+      dockerfile: docker/cloud-runtime.Dockerfile
+    restart: unless-stopped
+    environment:
+      SEEKDESK_CLOUD_RUNTIME_HOST: 0.0.0.0
+      SEEKDESK_CLOUD_RUNTIME_PORT: 4100
+      SEEKDESK_CLOUD_RUNTIME_SERVICE_TOKEN: ${SEEKDESK_CLOUD_RUNTIME_SERVICE_TOKEN:?required}
+      SEEKDESK_RUNTIME_IMAGE: ${SEEKDESK_RUNTIME_IMAGE:-seekdesk-runtime:node22}
+      SEEKDESK_RUNTIME_STORAGE_ROOT: ${SEEKDESK_RUNTIME_STORAGE_ROOT:-/var/lib/seekdesk/runtime}
+      SEEKDESK_RUNTIME_CPU_LIMIT: ${SEEKDESK_RUNTIME_CPU_LIMIT:-2}
+      SEEKDESK_RUNTIME_MEMORY_MB: ${SEEKDESK_RUNTIME_MEMORY_MB:-4096}
+      SEEKDESK_RUNTIME_DISK_GB: ${SEEKDESK_RUNTIME_DISK_GB:-10}
+      SEEKDESK_RUNTIME_PID_LIMIT: ${SEEKDESK_RUNTIME_PID_LIMIT:-256}
+      SEEKDESK_RUNTIME_IDLE_TTL_MINUTES: ${SEEKDESK_RUNTIME_IDLE_TTL_MINUTES:-30}
+      SEEKDESK_CLOUD_RUNTIME_UID: ${SEEKDESK_CLOUD_RUNTIME_UID:-10001}
+      SEEKDESK_CLOUD_RUNTIME_GID: ${SEEKDESK_CLOUD_RUNTIME_GID:-10001}
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock
+      - type: bind
+        source: ${SEEKDESK_RUNTIME_STORAGE_ROOT:-/var/lib/seekdesk/runtime}
+        target: ${SEEKDESK_RUNTIME_STORAGE_ROOT:-/var/lib/seekdesk/runtime}
+    networks: [runtime-control, bootstrap-egress]
+    healthcheck:
+      test:
+        - CMD
+        - node
+        - -e
+        - >-
+          fetch('http://127.0.0.1:4100/internal/health',{headers:{authorization:'Bearer '+process.env.SEEKDESK_CLOUD_RUNTIME_SERVICE_TOKEN}}).then(r=>{if(!r.ok)process.exit(1)}).catch(()=>process.exit(1))
+      interval: 10s
+      timeout: 5s
+      retries: 10
+
+  api:
+    build:
+      context: .
+      dockerfile: docker/api.Dockerfile
+    restart: unless-stopped
+    depends_on:
+      postgres:
+        condition: service_healthy
+      cloud-runtime:
+        condition: service_healthy
+    environment:
+      SEEKDESK_API_HOST: 0.0.0.0
+      SEEKDESK_API_PORT: 4000
+      DATABASE_URL: postgres://${SEEKDESK_POSTGRES_USER:-seekdesk}:${SEEKDESK_POSTGRES_PASSWORD:-seekdesk_dev_password}@postgres:5432/${SEEKDESK_POSTGRES_DB:-seekdesk}
+      SEEKDESK_CLOUD_RUNTIME_ENABLED: "true"
+      SEEKDESK_CLOUD_RUNTIME_URL: http://cloud-runtime:4100
+      SEEKDESK_CLOUD_RUNTIME_SERVICE_TOKEN: ${SEEKDESK_CLOUD_RUNTIME_SERVICE_TOKEN:?required}
+      SEEKDESK_CREDENTIAL_ENCRYPTION_KEY: ${SEEKDESK_CREDENTIAL_ENCRYPTION_KEY:-}
+      SEEKDESK_CREDENTIAL_ENCRYPTION_KEY_VERSION: ${SEEKDESK_CREDENTIAL_ENCRYPTION_KEY_VERSION:-v1}
+      SEEKDESK_AUTH_MODE: ${SEEKDESK_AUTH_MODE:-development}
+      SEEKDESK_DEV_USER_ID: ${SEEKDESK_DEV_USER_ID:-local-dev-user}
+      DEEPSEEK_API_KEY: ${DEEPSEEK_API_KEY:-}
+      DEEPSEEK_BASE_URL: ${DEEPSEEK_BASE_URL:-https://api.deepseek.com}
+    ports:
+      - "${SEEKDESK_API_HOST:-127.0.0.1}:${SEEKDESK_API_PORT:-4000}:4000"
+    networks: [runtime-control, bootstrap-egress]
+
+networks:
+  runtime-control:
+    internal: true
+  bootstrap-egress: {}
+
+volumes:
+  seekdesk_postgres_data:

@@ -5,7 +5,7 @@
 - 功能：`dual-runtime`
 - 分支：`codex/dual-runtime`
 - 任务范围：`T001-T124`
-- 当前批次：`T055-T061` 已完成，`T062` 等待 Docker；准备进入 `T063-T081`
+- 当前批次：`T063-T074`、`T076-T080` 已完成；`T062`、`T075`、`T081` 等待可用 Docker Engine
 - 基线 HEAD：`855c888606ca933acf4879dc933d3b2b3852f13b`
 
 ## 2026-07-15 基线检查
@@ -91,6 +91,18 @@
 
 ## 进行中
 
-- 功能：Cloud Runtime Service
-- 当前阶段：`T063-T081`
-- 下一步：创建内部 Fastify service、service-token 身份、容器引擎抽象、workspace 存储/Git bootstrap、lifecycle、execute queue、reconcile 与清理流程。
+- 功能：审批与工具执行一致性
+- 当前阶段：`T082-T089`
+- 下一步：收紧 grant scope、持久化 requestId、增加幂等执行门闩，并关联 activity、artifact、terminal 和 trace。
+
+## T063-T080 批次验证
+
+- 新增 `apps/cloud-runtime`，提供 service-token 保护的内部健康、生命周期、状态、执行和取消 API。
+- Docker adapter 只使用参数数组并固定 read-only rootfs、tmpfs、network none、cap-drop、no-new-privileges、PID/CPU/内存和非 root 用户。
+- workspace 存储按 owner hash + workspace 隔离，提供 quota、marker、删除保护和运行 UID/GID 归属处理。
+- Git bootstrap 只接受无内嵌凭据的 HTTPS URL；公开仓库真实 clone 已通过，revision 长度为 40，临时目录已清理。
+- lifecycle 覆盖 provision/start/stop/retry/delete、幂等冲突、失败重试、reconcile、idle stop、读并发、写串行和 cancellation。
+- API 可轮询 cloud 状态并回写 repository；仓库 token 只在生命周期提交时解密，测试确认不进入公开响应或状态文件。
+- 新增 `docker-compose.runtime.yml`；只有 cloud-runtime 挂载 Docker socket，API 通过私有控制网络访问内部服务。
+- cloud-runtime tests：`10` 项通过；API tests：`120` 项通过、`4` 项按环境跳过；整仓 lint/test/typecheck/build/secret/diff 检查通过。
+- Docker CLI 仍指向不存在的 `/Volumes/SSD/Docker.app`，因此真实 image/container 与无公网验证保留在 `T062`、`T075`、`T081`。

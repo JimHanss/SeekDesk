@@ -104,6 +104,14 @@ class MockCloudRuntimeClient implements CloudRuntimeClient {
     this.lifecycleRequests.push(request);
   }
 
+  async getStatus(ownerId: string, workspaceId: string) {
+    return {
+      workspace: createCloudWorkspace(ownerId, workspaceId, "ready"),
+      operations: [],
+      updatedAt: now
+    };
+  }
+
   async execute(input: CloudRuntimeExecuteInput) {
     this.executions.push(input);
     return { path: "README.md", content: "cloud result" };

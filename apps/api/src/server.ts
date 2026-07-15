@@ -43,6 +43,10 @@ import {
   type CloudRuntimeClient
 } from "./services/cloud-runtime-client.js";
 import {
+  createCredentialCipherFromEnv,
+  type CredentialCipher
+} from "./services/credential-crypto.js";
+import {
   createDailyModelUsageSnapshot,
   filterDailyActivityEvents
 } from "./services/daily-work-service.js";
@@ -68,6 +72,7 @@ export async function buildServer(options?: {
   actorContextResolver?: ActorContextResolver;
   daemonRegistry?: DaemonRegistry;
   cloudRuntimeClient?: CloudRuntimeClient;
+  credentialCipher?: Pick<CredentialCipher, "decrypt">;
   runtimeResolver?: RuntimeResolver;
 }) {
   const dailyWorkRepository =
@@ -78,6 +83,11 @@ export async function buildServer(options?: {
   const daemonRegistry = options?.daemonRegistry ?? new DaemonRegistry();
   const actorContextResolver = options?.actorContextResolver ?? createActorContextResolver();
   const cloudRuntimeClient = options?.cloudRuntimeClient ?? createCloudRuntimeClientFromEnv();
+  const credentialCipher = options?.credentialCipher ?? (
+    process.env.SEEKDESK_CREDENTIAL_ENCRYPTION_KEY
+      ? createCredentialCipherFromEnv()
+      : undefined
+  );
   const runtimeResolver = options?.runtimeResolver ?? new RuntimeResolver({
     repository: dailyWorkRepository,
     daemonRegistry,
@@ -114,7 +124,8 @@ export async function buildServer(options?: {
     app,
     dailyWorkRepository,
     runtimeResolver,
-    cloudRuntimeClient
+    cloudRuntimeClient,
+    credentialCipher
   );
 
   app.get("/health", async () => ({

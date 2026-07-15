@@ -23,6 +23,8 @@ describe("CloudRuntimeClient", () => {
       toolName: "coding.read_file",
       inputJson: { path: "README.md" }
     })).rejects.toMatchObject({ code: "runtime_unavailable" });
+    await expect(client.getStatus("owner-a", "cloud-a"))
+      .rejects.toMatchObject({ code: "runtime_unavailable" });
   });
 
   it("authenticates internal requests and parses structured execution results", async () => {
@@ -70,6 +72,32 @@ describe("CloudRuntimeClient", () => {
       toolName: "coding.git_status",
       inputJson: {}
     })).rejects.toMatchObject({ code: "runtime_protocol_mismatch" });
+  });
+
+  it("loads and validates owner-scoped cloud workspace status", async () => {
+    const client = new HttpCloudRuntimeClient(
+      "https://runtime.internal",
+      "service-token",
+      (async () => jsonResponse({
+        workspace: {
+          workspaceId: "cloud-a",
+          ownerId: "owner-a",
+          name: "Cloud A",
+          runtimeMode: "cloud_runtime",
+          status: "ready",
+          rootPath: "/workspace",
+          connected: true,
+          supportedCapabilities: [],
+          createdAt: "2026-07-15T00:00:00.000Z",
+          updatedAt: "2026-07-15T00:00:00.000Z"
+        },
+        operations: [],
+        updatedAt: "2026-07-15T00:00:00.000Z"
+      })) as typeof fetch
+    );
+    await expect(client.getStatus("owner-a", "cloud-a")).resolves.toMatchObject({
+      workspace: { workspaceId: "cloud-a", status: "ready" }
+    });
   });
 });
 
