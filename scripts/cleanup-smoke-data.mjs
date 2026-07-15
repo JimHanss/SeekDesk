@@ -25,7 +25,9 @@ const sessionPatterns = [
   "%daily.persist_artifact%",
   "%daily_persist_artifact%",
   "%Real agent verification%",
-  "%Please return Type%"
+  "%Please return Type%",
+  "%seekdesk ui diff approval smoke%",
+  "%Read package.json and summarize the main npm scripts%"
 ];
 
 const artifactPatterns = [
@@ -52,6 +54,7 @@ try {
   try {
     await client.query("create temp table cleanup_sessions(id text primary key) on commit drop");
     await client.query("create temp table cleanup_artifacts(id text primary key) on commit drop");
+    await client.query("create temp table cleanup_workspaces(id text primary key) on commit drop");
 
     const sessionPayloadMatches = sessionPatterns
       .map((_, index) => `s.payload::text ilike $${index + 1}`)
@@ -64,6 +67,7 @@ try {
        select s.id
        from daily_work_sessions s
        where s.id like 'remote-%'
+          or s.id like 'browser-smoke-%'
           or (
             s.id like 'chat-%'
             and (
@@ -86,8 +90,26 @@ try {
       `insert into cleanup_artifacts(id)
        select a.id
        from daily_work_artifacts a
-       where ${artifactMatches}`,
+       where ${artifactMatches}
+          or exists (
+            select 1
+            from cleanup_sessions c
+            where a.payload::text like '%' || c.id || '%'
+          )
+       on conflict (id) do nothing`,
       artifactPatterns
+    );
+    await client.query(
+      `insert into cleanup_workspaces(id)
+       select w.id
+       from workspaces w
+       where w.name = 'Browser cloud fixture'
+         and exists (
+           select 1
+           from workspace_runtime_operations o
+           where o.workspace_id = w.id
+             and o.idempotency_key like 'browser-cloud-%'
+         )`
     );
 
     const sessions = await client.query(
@@ -102,6 +124,12 @@ try {
        join cleanup_artifacts c on c.id = a.id
        order by a.created_at desc`
     );
+    const workspaces = await client.query(
+      `select w.id, w.name
+       from workspaces w
+       join cleanup_workspaces c on c.id = w.id
+       order by w.created_at desc`
+    );
 
     const counts = {
       sessions: sessions.rowCount,
@@ -110,7 +138,9 @@ try {
       messages: 0,
       toolCalls: 0,
       modelUsage: 0,
-      permissionGrants: 0
+      permissionGrants: 0,
+      runtimeOperations: 0,
+      workspaces: workspaces.rowCount
     };
 
     if (!dryRun) {
@@ -152,6 +182,16 @@ try {
           "delete from daily_work_sessions where id in (select id from cleanup_sessions) returning id"
         )
       ).rowCount;
+      counts.runtimeOperations = (
+        await client.query(
+          "delete from workspace_runtime_operations where workspace_id in (select id from cleanup_workspaces) returning id"
+        )
+      ).rowCount;
+      counts.workspaces = (
+        await client.query(
+          "delete from workspaces where id in (select id from cleanup_workspaces) returning id"
+        )
+      ).rowCount;
     }
 
     if (dryRun) {
@@ -166,7 +206,8 @@ try {
           status: dryRun ? "dry_run" : "cleaned",
           counts,
           sessionSamples: sessions.rows.slice(0, 8),
-          artifactSamples: artifacts.rows.slice(0, 8)
+          artifactSamples: artifacts.rows.slice(0, 8),
+          workspaceSamples: workspaces.rows.slice(0, 8)
         },
         null,
         2
@@ -193,11 +234,13 @@ async function hasRequiredTables() {
       "daily_work_activity_events",
       "tool_calls",
       "model_usage_records",
-      "daily_work_permission_grants"
+      "daily_work_permission_grants",
+      "workspaces",
+      "workspace_runtime_operations"
     ]]
   );
 
-  return result.rowCount >= 7;
+  return result.rowCount >= 9;
 }
 
 function loadEnvFile(filePath) {

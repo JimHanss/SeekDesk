@@ -48,6 +48,7 @@ interface DailyWorkAssistantViewProps {
   selectedContextTitle?: string | null;
   selectedTemplateTitle?: string | null;
   status: ChatStatus;
+  workspaceReady: boolean;
   onApplyPrompt: (prompt: string) => void;
   onAuthorizeToolCall: (toolCall: AgentToolCallTraceItem) => Promise<void> | void;
   onCancelRequest: () => void;
@@ -55,6 +56,7 @@ interface DailyWorkAssistantViewProps {
   onExecuteToolCall: (toolCall: AgentToolCallTraceItem) => Promise<void> | void;
   onInputChange: (value: string) => void;
   onRetry: () => void;
+  onSend: () => void;
 }
 
 type AssistantPanel = "prompts" | "runtime" | "trace" | null;
@@ -96,13 +98,15 @@ export function DailyWorkAssistantView({
   selectedContextTitle,
   selectedTemplateTitle,
   status,
+  workspaceReady,
   onApplyPrompt,
   onAuthorizeToolCall,
   onCancelRequest,
   onDismissError,
   onExecuteToolCall,
   onInputChange,
-  onRetry
+  onRetry,
+  onSend
 }: DailyWorkAssistantViewProps) {
   const [activePanel, setActivePanel] = useState<AssistantPanel>(null);
 
@@ -184,17 +188,19 @@ export function DailyWorkAssistantView({
             <textarea
               ref={inputRef}
               className="max-h-40 min-h-10 min-w-0 flex-1 resize-none bg-transparent py-2 text-sm leading-5 text-slate-950 outline-none placeholder:text-slate-400"
-              placeholder={modelInputPlaceholder}
+              placeholder={workspaceReady ? modelInputPlaceholder : "先新建对话并选择工作区"}
               aria-label="输入编程请求"
               value={input ?? ""}
               onChange={(event) => onInputChange(event.target.value)}
-              disabled={isBusy}
+              disabled={isBusy || !workspaceReady}
               rows={1}
             />
             <Button
               size="sm"
-              type="submit"
-              disabled={!input.trim() || isBusy}
+              type="button"
+              data-chat-send
+              disabled={!workspaceReady || !input.trim() || isBusy}
+              onClick={onSend}
               className="bg-orange-500 hover:bg-orange-600"
             >
               {isBusy ? (

@@ -1,106 +1,109 @@
 # SeekDesk 双 Runtime 验证记录
 
-## 当前验收状态
+## 当前状态
 
-- 已完成并验证：`T001-T003`、`T005-T061`、`T063-T074`、`T076-T080`、`T082-T089`。
-- 环境阻塞：`T004`、`T062`、`T075` 和 `T081` 的真实 Docker/Postgres/container/network 验证。
-- 下一批：`T090-T103` 双 Runtime 前端选择、生命周期、历史分组和工作台联动。
+- T001-T123 已实现并完成验证。
+- T123 Git、migration、secret、文档与 checkbox 审计已通过。
+- T124 待提交、push、合并 `main` 并在 `main` 回归。
+- 先前 Docker/Postgres 环境阻塞已经解除，没有未解决的强制验收阻塞。
 
-### 审批与工具执行一致性
+## 基础环境
 
-- grant 创建与查询使用可信 owner 和持久化 session，严格绑定 workspace、Runtime、action 与有效期；过期授权对外呈现 `expired`，不会参与执行。
-- coding tool call 创建即保存 owner、session、workspace、Runtime 和稳定 requestId；requestId 原样传到 local daemon 或 cloud runtime。
-- repository 提供原子 execution claim；重复执行仅一个请求能从 `permission_required` 进入 `running`，其余返回 `runtime_request_conflict`。
-- 执行前重新校验 session、workspace、tool call、grant、Runtime 状态；running/completed/failed/cancelled 同步到 tool call、activity 与 runtime operation。
-- 文件写入生成关联 coding artifact，回写 session artifactIds，并立即刷新当前 workspace/path 的 Git diff。
-- Shell/test trace 统一记录 command、cwd、stdout、stderr、exitCode、timeout/timedOut、truncated、workspace、Runtime 和 requestId。
-- 新增 4 项执行一致性测试，覆盖撤销、过期、跨 workspace、跨 Runtime、重复执行、写入产物、执行中断和审计关联。
-- 全仓 API tests 现为 `124` 项通过、`4` 项按环境跳过；lint、test、typecheck、build、secret hygiene 与 diff check 全部通过。
+- 主机：`jim-mac`，远程目录 `/Users/jimhuang/project/SeekDesk`。
+- Docker：Colima `default` profile，QEMU `aarch64`，4 CPU、8 GiB 内存、100 GiB VM 磁盘。
+- Docker client/server：29.x；Compose：5.3.1。
+- Runtime 存储所在主机磁盘验证时可用空间约 329 GiB。
+- Postgres：`postgres:16-alpine`，容器 `seekdesk-postgres`，开发端口 `25432`，health 为 healthy。
+- Runtime image：`seekdesk-runtime:node22`，基于 Node.js 22；Docker 构建固定 npm `11.6.2`，与 lockfile 生成版本一致。
 
-### Cloud Runtime Service
+## 自动化结果
 
-- cloud-runtime tests：`10` 项通过，覆盖认证、资源参数、quota、Git 输入边界、生命周期、幂等、执行队列、reconcile、idle stop、cleanup 和 container crash。
-- API tests：`120` 项通过、`4` 项按环境跳过；cloud status 可回写 workspace/operation。
-- 公开 HTTPS Git clone 真实验证通过，取得 40 字符 revision，临时 workspace 已清理。
-- repository token 仅通过临时 askpass 文件注入；状态文件和公开 API 响应均不含明文或密文。
-- Compose YAML 解析通过；仅 `cloud-runtime` 挂载 Docker socket，API 通过 `runtime-control` 私有网络访问。
-- `npm run lint`、`npm run test`、`npm run typecheck`、`npm run build`、`npm run verify:secrets`、`git diff --check` 全部通过。
-- Docker CLI 当前仍为断链，无法执行 image build、真实 container fixture 和实际公网阻断验证。
+### 静态与构建
 
-## 已通过检查
-
-### Shared Contract 与 Runtime Core
-
-- Shared tests：`12` 项通过。
-- Runtime Core tests：`7` 项通过。
-- Daemon tests：`8` 项通过。
-- 真实 local daemon 已完成注册、heartbeat、文件、搜索、Git 和审批后 Shell 执行验证。
-
-### 数据、凭据与身份
-
-- API tests：`109` 项通过，`4` 项按环境跳过。
-- Migration test 验证 legacy owner/workspace/runtime 先回填，再设置默认值、非空约束和索引。
-- Repository test 验证 workspace/operation owner scope、跨 owner upsert 拒绝及 JSON credential 不落盘。
-- Credential test 验证 AES-256-GCM、owner AAD、key version、旧 key 轮换解密和日志脱敏。
-- Actor test 验证开发 owner 不可由 header 覆盖、生产 OIDC 缺失时 fail closed、JWT subject 是唯一 owner 来源。
-
-### Runtime Resolver 与公开 API
-
-- API tests：`118` 项通过，`4` 项按环境跳过。
-- `RuntimeResolver` 仅按可信 owner、持久化 workspace、Runtime 类型和 lifecycle 状态选择执行端；未知 workspace 不再回退到其他 Runtime。
-- local daemon 断线后保留 workspace 元数据并标记 `offline`，工具请求稳定返回 `409 runtime_unavailable`。
-- cloud workspace create/start/stop/retry/delete 使用持久化 operation 和 idempotency key；跨 operation 重用 key 返回 `workspace_operation_conflict`。
-- coding chat、tool call、grant、trace、activity 和 model usage 均使用持久化 session workspace/Runtime 绑定，request body 仅参与一致性校验。
-- `/health` 公开 cloud 配置/readiness、daemon 连接数、身份模式与显式 server-local 状态，不输出 owner ID、service token 或 repository credential。
-
-### Runtime Worker 与 Node.js 22 Image Contract
-
-- Shared tests：`13` 项通过；新增 worker transport/runtime-core 稳定错误码契约。
-- Runtime Worker tests：`6` 项通过，覆盖完整 9 个 coding tools、二次 schema 校验、workspace 固定、NDJSON、timeout、cancel、非法 JSON、未知工具和输入/输出上限。
-- `health` CLI 已从构建产物运行成功，返回 service、protocol、workspace、Runtime 与 capabilities。
-- `runtime-worker.Dockerfile` 使用 Node.js 22、non-root UID/GID `10001`，安装 Git、ripgrep、Python 3 和基础 shell。
-- 静态安全契约验证 read-only rootfs、受限 `/tmp`、`/workspace` volume、`network none`、cap-drop、no-new-privileges、PID/CPU/内存限制及禁止 Docker socket/privileged。
-- `T062` 未完成：Docker CLI 仍指向不可见的 `/Volumes/SSD/Docker.app`，无法真实构建 `seekdesk-runtime:node22` 或运行 container fixture。
-
-### 全仓命令
-
-- `npm run lint`：通过。
-- `npm run test --workspaces --if-present`：通过。
-- `npm run typecheck`：通过。
-- `npm run build`：通过。
-- `npm run verify:secrets`：通过。
 - `git diff --check`：通过。
+- `npm run lint`：shared、agent、config、runtime-core、web、api、daemon、runtime-worker、cloud-runtime 全部通过。
+- `npm run typecheck`：全部 workspace 通过。
+- `npm run build`：全部 workspace 通过；Next.js 生成 `/`、`/_not-found`、`/templates`。
+- `npm run verify:secrets`：通过，扫描 217 个 tracked files，没有命中 API key、OAuth secret 或 private key。
 
-## 主要变更文件
+### 单元与 API 测试
 
-- `packages/shared/src/runtime.ts`
-- `packages/shared/src/workspaces.ts`
-- `packages/runtime-core/src/index.ts`
-- `apps/daemon/src/client.ts`
-- `apps/daemon/src/local-runtime.ts`
-- `apps/api/src/db/schema.ts`
-- `apps/api/drizzle/0003_massive_natasha_romanoff.sql`
-- `apps/api/src/repositories/daily-work-repository.ts`
-- `apps/api/src/repositories/postgres-daily-work-repository.ts`
-- `apps/api/src/services/actor-context.ts`
-- `apps/api/src/services/credential-crypto.ts`
-- `apps/api/src/services/runtime-resolver.ts`
-- `apps/api/src/services/cloud-runtime-client.ts`
-- `apps/api/src/routes/coding-workspace-routes.ts`
-- `apps/api/src/routes/runtime-http.ts`
-- `apps/api/src/server.ts`
-- `apps/runtime-worker/src/worker.ts`
-- `apps/runtime-worker/src/cli.ts`
-- `docker/runtime-worker.Dockerfile`
-- `docker/runtime-worker-security.md`
+- `npm run test --workspaces --if-present`：217 项通过，2 项 legacy `daily_work` 测试显式跳过。
+- shared：13 项通过。
+- agent：26 项通过。
+- runtime-core：7 项通过。
+- web：18 项通过。
+- api：128 项通过，2 项跳过；真实 Postgres repository integration 2/2 通过。
+- daemon：8 项通过。
+- runtime-worker：6 项通过。
+- cloud-runtime：11 项通过。
+- cloud lifecycle 的终态现在先写入 storage，再替换内存状态；服务看到 `completed` 时磁盘状态已经可恢复。
 
-## 已知风险与待补验证
+### Postgres
 
-- `jim-mac` Docker Desktop 的现有 backend/socket 无响应，且 CLI 指向不可见的 `/Volumes/SSD/Docker.app`；因此尚未执行真实 migration、runtime image 和 cloud lifecycle 验证。
-- Postgres integration 的 `2` 项测试等待 `SEEKDESK_TEST_DATABASE_URL`，将在 `T119` 执行。
-- Browser smoke 的默认 `3000` 端口被失联 Docker backend 占用，将在环境修复后使用可配置端口完成 `T121`。
+- `npm run db:migrate`：真实 Postgres migration 成功。
+- `SEEKDESK_TEST_DATABASE_URL` 指向真实 Postgres 时，workspace、operation、credential、session、tool、grant、activity、artifact、usage repository 测试通过。
+- smoke 数据清理扩展到 coding/browser session 与 browser cloud workspace；实际清理 7 个 session、16 条 message、4 条 tool call、3 条 grant、15 条 activity、6 条 usage、4 条 runtime operation 和 2 个测试 cloud workspace。
 
-## 后续任务
+## Runtime Worker 与安全边界
 
-- 实现 cloud-runtime lifecycle、执行队列、资源/网络限制和 reconcile。
-- 完成前端双 Runtime 选择、全链路 smoke、文档与最终合并。
+`npm run test:runtime-container` 使用真实 `seekdesk-runtime:node22` 通过：
+
+- 9 个 coding tools 全部执行成功：list/read/grep、Git status/diff、write/edit、Shell、tests。
+- rootfs 为 read-only。
+- execution network 为 `none`，容器内公网请求确认失败。
+- user 为非 root `10001:10001`。
+- CPU 2、内存 4 GiB、PID 256。
+- `cap-drop ALL` 与 `no-new-privileges=true` 生效。
+- 没有 Docker socket mount，也没有 privileged。
+- fixture 容器与 workspace tmpfs 在脚本结束后自动删除。
+
+## Cloud Runtime 真实生命周期
+
+`npm run test:cloud-runtime` 使用真实 Docker、公开 HTTPS Git fixture 和真实 worker image 通过：
+
+- clone `https://github.com/octocat/Hello-World.git` 的 `master` 分支。
+- provision -> execute -> stop -> service restart -> start -> delete 全部成功。
+- 文件读取、文件写入、精确编辑、Git status/diff、Shell 和无公网验证通过。
+- workspace 在 cloud service 重启后保持，重新 start 后仍能读取变更。
+- delete 后 managed container 数量为 0，workspace directory 已删除。
+- Git/bootstrap 使用宿主网络；普通 coding tool 只在 `network none` execution container 中运行。
+
+## API、Local Daemon 与浏览器
+
+带 `SEEKDESK_BROWSER_SMOKE_CLOUD=1` 的 `npm run test:browser-smoke` 已通过：
+
+- 同时启动 cloud-runtime、Postgres API、Next.js Web 和 local daemon。
+- local daemon workspace 与 cloud workspace 同时在线。
+- cloud workspace 通过 public API 创建、读取 Git 仓库、创建 chat session，并保持 `workspaceId + runtimeMode` trace 绑定。
+- local workspace 完成 tree/read/search、Git status/diff、chat、pending Shell、same-session grant 和批准执行。
+- cloud workspace 在 smoke 结束后通过 public API 删除。
+
+真实 UI 由 Windows 本机 Chrome 通过 SSH port forwarding 访问远程服务：
+
+- 新建对话弹窗可识别 ready cloud workspace，也可切回 local daemon 创建会话。
+- 默认对话区没有空白右侧栏；文件、搜索、Diff、终端、运行详情按需打开。
+- coding prompt、pending write、批准执行、trace 和 terminal 通过。
+- console、page error、HTTP response 与 API request 扫描无 fatal error、乱码、连续问号、邮箱/日历/连接器请求。
+- 最终结果：`[browser-ui-smoke] UI smoke passed`。
+
+## 清理结果
+
+- 失败 Docker build 容器已按精确 ID 删除。
+- browser cloud 临时 storage、runtime fixture、smoke artifact、临时日志和浏览器 symlink 已删除。
+- 误创建且从未使用的 Colima `true` profile 已删除，只保留运行中的 `default` profile。
+- 没有残留 `seekdesk.managed=true` 容器或 smoke volume。
+- 保留 `seekdesk-postgres` 与 `seekdesk_seekdesk_postgres_data`，因为它们是项目开发数据库，不是临时测试资源。
+- 无关 Docker 容器、volume 和用户目录未被删除。
+
+## 已知限制
+
+- v1 cloud runtime 是单机 Docker 服务，不含多节点调度、计费和租户配额控制面。
+- v1 local daemon pairing token 仍需在生产阶段升级为设备身份、短期 token 和轮换机制。
+- 真实 UI 在 Windows Chrome 完成；`jim-mac` 当前没有可由 Playwright 启动的兼容 Chrome binary。
+- cloud integration fixture 依赖 GitHub HTTPS egress；离线环境应替换为企业内部 HTTPS Git fixture。
+
+## 最终待办
+
+1. 提交并 push `codex/dual-runtime`。
+2. 合并到 `main` 后重新执行 build、migration、runtime/cloud smoke 与 browser smoke。

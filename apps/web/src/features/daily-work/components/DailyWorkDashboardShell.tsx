@@ -3,6 +3,7 @@
 import Link from "next/link";
 import { useState, type ReactNode } from "react";
 import { Archive, MoreHorizontal, Pencil, Pin, Plus, Settings2, Sparkles, Trash2, Wand2 } from "lucide-react";
+import type { RuntimeLifecycleStatus, RuntimeMode } from "@seekdesk/shared";
 
 import { Button } from "@/components/ui/button";
 import { cn } from "@/lib/utils";
@@ -47,6 +48,8 @@ export interface DailyWorkConversationGroup {
   id: string;
   label: string;
   description?: string;
+  runtimeMode?: RuntimeMode;
+  runtimeStatus?: RuntimeLifecycleStatus;
   items: DailyWorkConversationItem[];
 }
 
@@ -207,13 +210,23 @@ export function DailyWorkDashboardShell({
 
               {groupedConversationItems.map((group) => (
                 <div key={group.id} className="mt-2 first:mt-1">
-                  <div className="mb-1 flex items-center justify-between px-2 text-[11px] font-semibold text-slate-500">
-                    <span className="truncate">{group.label}</span>
-                    <span>{group.items.length}</span>
+                  <div className="mb-1 flex items-center justify-between gap-2 px-2 text-[11px] font-semibold text-slate-500">
+                    <span className="min-w-0 flex-1 truncate">{group.label}</span>
+                    {group.runtimeMode ? (
+                      <span className="shrink-0 rounded-[4px] bg-white/10 px-1.5 py-0.5 text-[10px] text-slate-400">
+                        {formatRuntimeMode(group.runtimeMode)}
+                      </span>
+                    ) : null}
+                    <span className="shrink-0">{group.items.length}</span>
                   </div>
-                  {group.description ? (
-                    <div className="mb-1 truncate px-2 text-[10px] text-slate-600">
-                      {group.description}
+                  {group.description || group.runtimeStatus ? (
+                    <div className="mb-1 flex items-center justify-between gap-2 px-2 text-[10px] text-slate-600">
+                      <span className="min-w-0 flex-1 truncate">{group.description}</span>
+                      {group.runtimeStatus ? (
+                        <span className={runtimeStatusClass(group.runtimeStatus)}>
+                          {formatRuntimeStatus(group.runtimeStatus)}
+                        </span>
+                      ) : null}
                     </div>
                   ) : null}
                   <div className="flex flex-col gap-1">
@@ -447,4 +460,42 @@ function formatConversationTime(value: string) {
     month: "2-digit",
     day: "2-digit"
   }).format(date);
+}
+
+function formatRuntimeMode(mode: RuntimeMode) {
+  if (mode === "cloud_runtime") {
+    return "云端";
+  }
+  if (mode === "local_daemon") {
+    return "本机";
+  }
+  return "开发";
+}
+
+function formatRuntimeStatus(status: RuntimeLifecycleStatus) {
+  const labels: Record<RuntimeLifecycleStatus, string> = {
+    provisioning: "准备中",
+    cloning: "克隆中",
+    ready: "就绪",
+    busy: "运行中",
+    stopping: "停止中",
+    stopped: "已停止",
+    starting: "启动中",
+    retrying: "重试中",
+    deleting: "删除中",
+    deleted: "已删除",
+    offline: "离线",
+    error: "异常"
+  };
+  return labels[status];
+}
+
+function runtimeStatusClass(status: RuntimeLifecycleStatus) {
+  if (status === "ready") {
+    return "shrink-0 text-emerald-500";
+  }
+  if (status === "error" || status === "offline") {
+    return "shrink-0 text-rose-400";
+  }
+  return "shrink-0 text-amber-400";
 }

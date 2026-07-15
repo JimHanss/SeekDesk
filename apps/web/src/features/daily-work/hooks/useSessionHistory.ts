@@ -19,7 +19,7 @@ export function useSessionHistory(
         ...current,
         syncStatus: "syncing",
         notice:
-          "正在从 /api/daily/sessions?mode=daily_work 刷新会话列表与摘要。"
+          "正在刷新编程会话列表。"
       }));
 
       try {
@@ -48,7 +48,7 @@ export function useSessionHistory(
             source: "api",
             syncStatus: "live",
             notice:
-              "已从 /api/daily/sessions?mode=daily_work 刷新会话列表、状态、关联产物、上下文和审批链路。",
+              "编程会话列表、工作区绑定和运行记录已刷新。",
             restorePreview
           };
         });
@@ -93,7 +93,7 @@ export function useSessionHistory(
           source: "api",
           syncStatus: "live",
           items: domain.replaceSessionHistoryItem(current.items, nextItem),
-          notice: `已从 /api/daily/sessions/${nextItem.id}?mode=daily_work 刷新会话详情、摘要和最近消息。`,
+          notice: `会话 ${nextItem.id} 的消息和运行记录已刷新。`,
           restorePreview:
             current.restorePreview.sessionId === nextItem.id
               ? current.restorePreview

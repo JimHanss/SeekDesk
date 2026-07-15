@@ -1,235 +1,151 @@
 # SeekDesk 代码地图
 
-## 应用入口
+## Shared Contracts
 
-### Web 工作台
+路径：`packages/shared/src/`
 
-路径：
-- `apps/web/src/app/page.tsx`
-- `apps/web/src/features/daily-work/DailyWorkDashboard.tsx`
+- `runtime.ts`：Runtime mode/status/capability/error、execute request/response。
+- `workspaces.ts`：workspace record/summary/detail、cloud create、lifecycle operation、credential metadata。
+- `daemon.ts`：daemon register、heartbeat、request/response/cancel 协议。
+- `sessions.ts`：session workspace/runtime 绑定与历史摘要。
+- `permissions.ts`：owner/session/workspace/runtime/action grant。
+- `tools.ts`：coding tool name、输入、tool call 状态和执行关联。
+- `chat.ts`：coding chat context、stream event 和 workspace mismatch 错误。
+- `index.ts`：公共导出。
 
-用途：
-- 渲染 coding agent 对话工作台、会话列表和按需打开的文件、搜索、Diff、终端与运行详情面板。
+测试：`runtime.test.ts`、`tools.test.ts`、`realtime-events.test.ts`。
 
-### API 服务
+## Runtime Core
 
-路径：
-- `apps/api/src/server.ts`
+路径：`packages/runtime-core/src/index.ts`
 
-用途：
-- 创建 Fastify 服务，注册统一 actor hook、聊天流、session trace、daemon WebSocket、健康检查及业务路由。
+`NodeWorkspaceRuntime` 提供 local daemon、server-local 和 cloud worker 共用实现：
 
-关键函数：
-- `buildServer`：组合 repository、身份解析、daemon registry 和公开 API。
-- `modelStreamToReadableStream`：把模型流写回消息、工具调用、用量和活动记录。
+- 安全 root/path/symlink/ignore 解析。
+- 文件树、文本读取、二进制/大小限制。
+- 写文件和精确替换。
+- grep/glob/结果截断。
+- Git status/diff。
+- Shell/test timeout、危险命令拒绝、输出截断、环境变量脱敏。
 
-### 本机 Daemon
+测试：`packages/runtime-core/src/index.test.ts`。
 
-路径：
-- `apps/daemon/src/cli.ts`
-- `apps/daemon/src/client.ts`
-- `apps/daemon/src/local-runtime.ts`
+## Local Daemon
 
-用途：
-- 从用户机器主动连接远程 API，注册 workspace、维持心跳并执行统一 coding tool request。
+路径：`apps/daemon/src/`
 
-关键函数：
-- `runDaemonCli`：解析 `health` 与 `start` 命令。
-- `DaemonClient`：管理注册、heartbeat、request、cancel 和 response 协议。
-- `LocalWorkspaceRuntime`：组合共享 runtime-core，并保留本机目录选择能力。
+- `cli.ts`：`health` 与 `start --api --token --workspace`。
+- `client.ts`：WebSocket 注册、heartbeat、重连、request/cancel/response。
+- `local-runtime.ts`：组合 runtime-core，并提供本机目录 browse/select/pick。
 
-### Cloud Runtime Worker
+测试：`cli.test.ts`、`local-runtime.test.ts`。
 
-路径：
-- `apps/runtime-worker/src/cli.ts`
-- `apps/runtime-worker/src/worker.ts`
-- `docker/runtime-worker.Dockerfile`
-- `docker/runtime-worker-security.md`
+## Runtime Worker
 
-用途：
-- 在 cloud workspace 容器内通过单请求 JSON 或 NDJSON 执行共享 coding tools，生产根目录固定为 `/workspace`。
-- 提供 health、idle、execute 与 serve 命令，并处理 timeout、cancel、协议错误及输入/输出上限。
-- 记录 Node.js 22 non-root image 和 read-only/tmpfs/network/capability/resource 安全运行约定。
+路径：`apps/runtime-worker/src/`
 
-关键导出：
-- `RuntimeWorker`：管理固定 workspace 的工具执行、active request、timeout 与 cancellation。
-- `handleRuntimeWorkerLine`：校验 transport envelope、coding tool 和 tool input，并输出共享 response schema。
-- `serveRuntimeWorker`：并发处理 requestId 关联的 NDJSON 请求与 cancel 消息。
-- `runRuntimeWorkerCli`：提供容器 health、idle、execute 和 serve 入口。
+- `worker.ts`：固定 `/workspace` 的 JSON/NDJSON 工具执行、timeout 和 cancel。
+- `cli.ts`：health、idle、execute、serve。
+- `docker/runtime-worker.Dockerfile`：Node 22、Git、ripgrep、Shell、Python 3、non-root image。
+- `docker/runtime-worker-security.md`：容器运行约束。
 
-## 共享协议与执行核心
+测试：`worker.test.ts`、`docker-contract.test.ts`。
 
-### Shared Runtime Contract
+## Cloud Runtime
 
-路径：
-- `packages/shared/src/runtime.ts`
-- `packages/shared/src/workspaces.ts`
-- `packages/shared/src/daemon.ts`
-- `packages/shared/src/sessions.ts`
-- `packages/shared/src/permissions.ts`
-- `packages/shared/src/tools.ts`
-- `packages/shared/src/chat.ts`
+路径：`apps/cloud-runtime/src/`
 
-用途：
-- 定义 Runtime mode/status/error、workspace lifecycle、daemon protocol、session binding、grant、tool call 和 chat request 的 Zod schema 与类型。
+- `server.ts`：带 service token 的 `/internal/*` Fastify 服务。
+- `config.ts`：image、storage、资源、网络、timeout、maintenance 配置。
+- `lifecycle-service.ts`：provision/start/stop/retry/delete、execute、reconcile、idle stop、cleanup，并保证 operation 终态持久化后才对外可见。
+- `engine.ts`：`CloudContainerEngine` 和 `DockerCliContainerEngine`。
+- `storage.ts`：owner/workspace 安全目录、marker、quota 和删除保护。
+- `git-bootstrap.ts`：HTTPS clone、branch/revision 和临时 askpass。
+- `execution-queue.ts`：并发读、串行写/命令和 cancellation。
+- `errors.ts`：稳定错误与 secret redaction。
+- `docker-compose.runtime.yml`：cloud service、API 与私有网络部署约定。
 
-关键函数：
-- `normalizeRuntimeMode`：兼容旧 Runtime 名称并统一输出当前枚举。
-- `assertSessionWorkspaceBinding`：验证会话和请求的 workspace/Runtime 绑定一致。
+测试：`engine.test.ts`、`storage.test.ts`、`execution-queue.test.ts`、`lifecycle-service.test.ts`。
 
-### Runtime Core
+## API
 
-路径：
-- `packages/runtime-core/src/index.ts`
+### 入口
 
-用途：
-- 提供 local daemon、server-local 和后续 cloud worker 共享的文件、搜索、Git、Shell 与测试实现。
+- `apps/api/src/server.ts`：Fastify、actor hook、health、chat stream、trace、WebSocket 与 route 注册。
+- `apps/api/src/routes/runtime-http.ts`：Runtime 错误到 HTTP 的统一映射。
 
-关键导出：
-- `NodeWorkspaceRuntime`：在锁定 workspace root 的前提下执行 coding tools。
-- `RuntimeError`：输出稳定、可映射的 Runtime 错误。
-- `resolveWorkspacePath`：拦截 traversal、symlink escape、ignore 目录与越界路径。
+### Public Coding Routes
 
-## API 路由与服务
+- `routes/coding-workspace-routes.ts`：workspace list/detail、cloud create/start/stop/retry/delete、credential metadata。
+- `routes/coding-routes.ts`：workspace browse/select/pick、files/search/Git、grant 和 tool execution。
+- `routes/daily-work-routes.ts`：session/activity/artifact/model usage 等历史兼容聚合。
 
-### Coding Routes
+### Runtime 与安全服务
 
-路径：
-- `apps/api/src/routes/coding-routes.ts`
+- `services/runtime-resolver.ts`：按可信 owner/workspace/runtime 选择唯一 adapter。
+- `services/daemon-registry.ts`：在线 daemon、heartbeat、workspace/request 路由和断线清理。
+- `services/cloud-runtime-client.ts`：internal service token、status/lifecycle/execute/cancel。
+- `services/coding-runtime.ts`：显式 server-local adapter 和稳定 Runtime error。
+- `services/coding-tools.ts`：tool plan、grant、原子 claim、执行和审计关联。
+- `services/actor-context.ts`：开发 actor 与生产 OIDC/JWT。
+- `services/credential-crypto.ts`：AES-256-GCM、key version、previous key 和 redaction。
+- `services/daily-work-agent-context.ts`：DeepSeek coding context。
 
-用途：
-- 提供 workspace、文件、搜索、Git、审批和 tool execution API，并从 `request.actor` 获取可信 owner。
+### 数据层
 
-### Coding Runtime Adapter
+- `db/schema.ts`：Drizzle tables 与索引。
+- `repositories/daily-work-repository.ts`：统一 repository interface 和 seed/JSON 实现。
+- `repositories/postgres-daily-work-repository.ts`：生产 Postgres 实现。
+- `repositories/repository-errors.ts`：owner scope 和数据访问错误。
+- `apps/api/drizzle/0003_massive_natasha_romanoff.sql`：dual-runtime backfill 与新表/索引迁移。
 
-路径：
-- `apps/api/src/services/coding-runtime.ts`
-- `apps/api/src/services/coding-tools.ts`
-- `apps/api/src/services/daemon-registry.ts`
+核心测试：`dual-runtime-api.test.ts`、`authorization-integration.test.ts`、`services/runtime-resolver.test.ts`、`services/coding-tools.test.ts`、`repositories/coding-workspace-repository.test.ts`。
 
-用途：
-- 组合 server-local runtime、只读工具自动执行、高风险工具审批，以及在线 daemon workspace/request 路由。
+## Web
 
-### Runtime Resolver
+### 入口与外壳
 
-路径：
-- `apps/api/src/services/runtime-resolver.ts`
-- `apps/api/src/services/cloud-runtime-client.ts`
+- `apps/web/src/app/page.tsx`：工作台组合入口。
+- `features/daily-work/components/DailyWorkDashboardShell.tsx`：全屏三段布局和按需侧栏。
+- `components/DailyWorkAssistantView.tsx`：聊天窗口。
+- `components/NewConversationWorkspaceDialog.tsx`：local/cloud 选择、cloud lifecycle 和 session 创建。
 
-用途：
-- 按可信 owner、workspace、Runtime 类型和 lifecycle 状态解析 local daemon、cloud runtime 或显式 server-local 执行端。
-- 通过内部 HTTP client 提交 cloud lifecycle operation 和结构化工具请求，并对内部错误做稳定映射与脱敏。
+### 状态 Hooks
 
-关键导出：
-- `RuntimeResolver`：合并持久化 workspace 与 daemon live 状态，解析唯一 Runtime adapter。
-- `LocalDaemonRuntimeAdapter`：把 coding 操作转发给指定 owner/workspace 的在线 daemon。
-- `CloudRuntimeClient`：定义 API 与 cloud-runtime internal service 的 lifecycle/execute 边界。
-- `HttpCloudRuntimeClient`：使用 service token、timeout 和结构化协议调用 internal service。
+- `chat/hooks/useChatController.ts`：chat stream、trace、grant 和 tool execution。
+- `hooks/useCodingWorkbench.ts`：workspace、files、search、Git 和 lifecycle API。
+- `hooks/useSessionHistory.ts`：历史 CRUD、置顶、工作区分组和倒序。
+- `hooks/useDailyWorkPanels.ts`：按需右侧面板。
+- `hooks/useActivityFeed.ts`、`useArtifacts.ts`、`useModelUsagePanel.ts`：关联数据刷新。
 
-### Cloud Runtime Service
+### Domain 与面板
 
-路径：
-- `apps/cloud-runtime/src/server.ts`
-- `apps/cloud-runtime/src/lifecycle-service.ts`
-- `apps/cloud-runtime/src/engine.ts`
-- `apps/cloud-runtime/src/execution-queue.ts`
-- `apps/cloud-runtime/src/storage.ts`
-- `apps/cloud-runtime/src/git-bootstrap.ts`
-- `docker/cloud-runtime.Dockerfile`
-- `docker-compose.runtime.yml`
+- `domain/workspace-runtime.ts`：共享 workspace 到 UI 的 mapper 和状态判断。
+- `domain/sessions.ts`：稳定排序和 Runtime 分组。
+- `domain/agent-trace.ts`：tool/grant/activity/terminal/artifact 映射。
+- `components/panels/CodingWorkbenchPanels.tsx`：文件、搜索、Diff、终端、运行详情。
 
-用途：
-- 通过内部 Fastify API 接收 cloud workspace 生命周期和 coding tool 请求，所有 `/internal/*` route 使用 service token。
-- 在专用存储目录 clone HTTPS Git 仓库，短期注入可选 token，并持久化脱敏状态和 operation。
-- 通过 Docker adapter 创建固定 `/workspace` 的隔离 worker；普通工具容器没有网络、socket 或 privileged 权限。
-- 使用读写队列实现并发读取、独占写入/命令、取消、idle stop、reconcile 和可重试清理。
+前端测试：`domain/workspace-runtime.test.ts`、`domain.test.ts`、`chat/mappers/message-content.test.ts`。
 
-关键导出：
-- `CloudRuntimeLifecycleService`：生命周期、状态恢复、执行队列和清理协调器。
-- `CloudContainerEngine`：容器 provision/inspect/start/stop/delete/execute 抽象。
-- `DockerCliContainerEngine`：无 Shell 字符串拼接的 Docker CLI adapter。
-- `CloudWorkspaceStorage`：owner-scoped 路径、quota、marker 和删除保护。
-- `ProcessGitBootstrapper`：HTTPS clone、branch checkout、revision 和临时 askpass 管理。
+## Agent
 
-### Coding Workspace API
+路径：`packages/agent/src/`
 
-路径：
-- `apps/api/src/routes/coding-workspace-routes.ts`
-- `apps/api/src/routes/runtime-http.ts`
+- provider：DeepSeek-compatible streaming、tool calls、usage 和 mock fallback。
+- tools：coding tool registry 与权限默认值。
+- loop：最多多轮模型/工具回填，不绕过 API/Runtime 审批边界。
 
-用途：
-- 提供 workspace list/detail 与 cloud create/start/stop/retry/delete API，持久化 operation 并保证 idempotency key 不跨操作复用。
-- 将 Runtime/repository 错误统一映射为稳定的 `404`、`403`、`409` 或脱敏 `500` 响应。
+## 自动化与规格
 
-### Actor Context
-
-路径：
-- `apps/api/src/services/actor-context.ts`
-
-用途：
-- 开发环境从受信任 env 提供 owner；生产环境通过 OIDC issuer、audience 和 remote JWKS 验证 bearer token。
-
-关键导出：
-- `ActorContextResolver`：解析可信 actor，并暴露 auth readiness。
-- `createActorContextResolver`：从进程环境创建 resolver。
-
-### Credential Crypto
-
-路径：
-- `apps/api/src/services/credential-crypto.ts`
-
-用途：
-- 使用 owner-bound AES-256-GCM 加密 HTTPS token，支持 key version、旧 key 解密和日志脱敏。
-
-关键导出：
-- `CredentialCipher`：加密和解密版本化 credential envelope。
-- `createCredentialCipherFromEnv`：只从 SeekDesk credential env 构建密钥环。
-- `redactCredentialText`：移除 URL、Bearer header 和 query 中的 secret。
-
-## 数据与持久化
-
-### Drizzle Schema
-
-路径：
-- `apps/api/src/db/schema.ts`
-- `apps/api/drizzle/0003_massive_natasha_romanoff.sql`
-
-用途：
-- 定义 owner-scoped workspace、runtime operation、repository credential，以及 session/tool/grant/activity/artifact/usage 关联列和索引。
-
-### Daily Work Repository Boundary
-
-路径：
-- `apps/api/src/repositories/daily-work-repository.ts`
-- `apps/api/src/repositories/postgres-daily-work-repository.ts`
-- `apps/api/src/repositories/repository-errors.ts`
-
-用途：
-- 统一 seed、JSON 和 Postgres repository；提供 workspace、operation、credential CRUD 和 owner-scoped trace 查询。
-
-关键导出：
-- `DailyWorkRepository`：API 使用的持久化接口。
-- `SeedDailyWorkRepository`：测试与无配置开发 fallback。
-- `JsonDailyWorkRepository`：持久化非敏感开发数据，凭据只保留在进程内。
-- `PostgresDailyWorkRepository`：生产 Postgres 实现。
-- `DailyWorkRepositoryAccessError`：拒绝跨 owner ID 覆盖。
-
-## 测试与规格
-
-路径：
-- `apps/api/src/authorization-integration.test.ts`
-- `apps/api/src/dual-runtime-api.test.ts`
-- `apps/api/src/services/runtime-resolver.test.ts`
-- `apps/api/src/services/cloud-runtime-client.test.ts`
-- `apps/runtime-worker/src/worker.test.ts`
-- `apps/runtime-worker/src/docker-contract.test.ts`
-- `apps/api/src/repositories/coding-workspace-repository.test.ts`
-- `apps/api/src/repositories/postgres-daily-work-repository.test.ts`
-- `packages/runtime-core/src/index.test.ts`
-- `specs/dual-runtime/spec.md`
-- `specs/dual-runtime/plan.md`
-- `specs/dual-runtime/tasks.md`
-- `specs/dual-runtime/verify.md`
-
-用途：
-- 覆盖身份隔离、migration backfill、repository/credential 安全、Runtime 边界与双 Runtime 交付进度。
+- `scripts/browser-smoke.cjs`：启动 API/web/daemon，验证 local workspace、文件、搜索、Git、chat 和审批执行；启用 `SEEKDESK_BROWSER_SMOKE_CLOUD=1` 时同时验证 public cloud lifecycle、双 Runtime 在线和 session 绑定。
+- `scripts/browser-ui-smoke.cjs`：真实 Chrome UI、console/network、ready cloud/local dialog 和写入审批检查。
+- `scripts/runtime-container-smoke.mjs`：真实 worker image 的 9 工具、只读 rootfs、资源限制、无网络和无 Docker socket 验证。
+- `scripts/cloud-runtime-integration.mjs`：真实 HTTPS Git、provision/execute/stop/service restart/start/delete 与残留资源验证。
+- `scripts/cleanup-smoke-data.mjs`：精确清理 browser/coding smoke session、activity、usage、operation 和 cloud workspace。
+- `scripts/verify-secret-hygiene.mjs`：secret 与已删除连接器痕迹检查。
+- `specs/dual-runtime/spec.md`：需求。
+- `specs/dual-runtime/plan.md`：技术计划。
+- `specs/dual-runtime/tasks.md`：T001-T124 状态。
+- `specs/dual-runtime/verify.md`：验证证据和环境阻塞。
+- `docs/architecture/runtime-security-boundary.md`：安全边界。
+- `docs/architecture/cloud-runtime-operations.md`：运维与事故处理。

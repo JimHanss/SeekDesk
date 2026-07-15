@@ -297,6 +297,7 @@ export class CloudRuntimeLifecycleService {
     const state = this.states.get(stateKey);
     const operation = state?.operations.find((item) => item.id === operationId);
     if (!state || !operation) return;
+    let terminalOperation: RuntimeOperation | undefined;
     operation.status = "running";
     operation.startedAt = this.isoNow();
     state.updatedAt = this.isoNow();
@@ -324,15 +325,21 @@ export class CloudRuntimeLifecycleService {
             400
           );
       }
-      operation.status = "completed";
-      operation.resultPayload = { status: state.workspace.status };
-      operation.completedAt = this.isoNow();
+      terminalOperation = {
+        ...operation,
+        status: "completed",
+        resultPayload: { status: state.workspace.status },
+        completedAt: this.isoNow()
+      };
     } catch (error) {
       const formatted = toCloudRuntimeServiceError(error);
-      operation.status = "failed";
-      operation.errorCode = formatted.code;
-      operation.errorMessage = formatted.message;
-      operation.completedAt = this.isoNow();
+      terminalOperation = {
+        ...operation,
+        status: "failed",
+        errorCode: formatted.code,
+        errorMessage: formatted.message,
+        completedAt: this.isoNow()
+      };
       state.workspace = {
         ...state.workspace,
         status: "error",
@@ -343,8 +350,17 @@ export class CloudRuntimeLifecycleService {
       };
     } finally {
       this.volatileTokens.delete(operationId);
-      state.updatedAt = this.isoNow();
-      await this.storage.saveState(state);
+      if (terminalOperation) {
+        const completedState: StoredWorkspaceState = {
+          ...state,
+          operations: state.operations.map((item) => (
+            item.id === operationId ? terminalOperation! : item
+          )),
+          updatedAt: this.isoNow()
+        };
+        await this.storage.saveState(completedState);
+        this.states.set(stateKey, completedState);
+      }
     }
   }
 

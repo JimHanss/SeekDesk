@@ -164,6 +164,202 @@ describe("dual-runtime public API", () => {
         runtimeMode: "cloud_runtime",
         workspace: expect.objectContaining({ workspaceId: "cloud-a" })
       }));
+
+      const sessions = await app.inject({
+        method: "GET",
+        url: "/api/daily/sessions?mode=coding_agent"
+      });
+      expect(sessions.statusCode).toBe(200);
+      expect(sessions.json().sessions).toEqual(expect.arrayContaining([
+        expect.objectContaining({
+          id: "cloud-session",
+          workspaceId: "cloud-a",
+          workspaceRuntimeMode: "cloud_runtime"
+        })
+      ]));
+    } finally {
+      await app.close();
+    }
+  });
+
+  it("executes cloud writes only with an active same-session grant and audits every result", async () => {
+    const repository = new SeedDailyWorkRepository();
+    const cloudClient = new MockCloudRuntimeClient();
+    await repository.upsertCodingWorkspace(createReadyCloudWorkspace("cloud-authorized"));
+    await repository.recordChatMessage({
+      id: "cloud-authorized-message",
+      ownerId: "local-dev-user",
+      sessionId: "cloud-authorized-session",
+      appMode: "coding_agent",
+      role: "user",
+      content: "Update the cloud workspace and run its tests.",
+      workspaceId: "cloud-authorized",
+      workspaceName: "cloud-authorized",
+      workspaceRuntimeMode: "cloud_runtime",
+      createdAt: now
+    });
+    await repository.recordToolCall({
+      id: "cloud-write-tool",
+      ownerId: "local-dev-user",
+      sessionId: "cloud-authorized-session",
+      workspaceId: "cloud-authorized",
+      runtimeMode: "cloud_runtime",
+      requestId: "cloud-write-request",
+      name: "coding.write_file",
+      status: "permission_required",
+      inputJson: { path: "notes.txt", content: "cloud runtime write" },
+      previewOnly: false,
+      permissionRequired: true,
+      createdAt: now
+    });
+    await repository.recordToolCall({
+      id: "cloud-tests-tool",
+      ownerId: "local-dev-user",
+      sessionId: "cloud-authorized-session",
+      workspaceId: "cloud-authorized",
+      runtimeMode: "cloud_runtime",
+      requestId: "cloud-tests-request",
+      name: "coding.run_tests",
+      status: "permission_required",
+      inputJson: { command: "npm test", timeoutMs: 30_000 },
+      previewOnly: false,
+      permissionRequired: true,
+      createdAt: now
+    });
+    const app = await buildServer({
+      dailyWorkRepository: repository,
+      cloudRuntimeClient: cloudClient
+    });
+
+    try {
+      const blocked = await app.inject({
+        method: "POST",
+        url: "/api/coding/tool-calls/cloud-write-tool/execute",
+        payload: {
+          sessionId: "cloud-authorized-session",
+          workspaceId: "cloud-authorized",
+          runtimeMode: "cloud_runtime"
+        }
+      });
+      expect(blocked.statusCode).toBe(403);
+
+      const granted = await app.inject({
+        method: "POST",
+        url: "/api/coding/permission-grants",
+        payload: {
+          sessionId: "cloud-authorized-session",
+          workspaceId: "cloud-authorized",
+          runtimeMode: "cloud_runtime",
+          provider: "cloud_runtime",
+          action: "coding.write_file",
+          reason: "dual-runtime integration approval"
+        }
+      });
+      expect(granted.statusCode).toBe(200);
+
+      const executed = await app.inject({
+        method: "POST",
+        url: "/api/coding/tool-calls/cloud-write-tool/execute",
+        payload: {
+          sessionId: "cloud-authorized-session",
+          workspaceId: "cloud-authorized",
+          runtimeMode: "cloud_runtime"
+        }
+      });
+      expect(executed.statusCode).toBe(200);
+      expect(executed.json()).toEqual(expect.objectContaining({
+        toolCall: expect.objectContaining({
+          id: "cloud-write-tool",
+          status: "completed",
+          workspaceId: "cloud-authorized",
+          runtimeMode: "cloud_runtime"
+        })
+      }));
+      expect(cloudClient.executions).toEqual(expect.arrayContaining([
+        expect.objectContaining({
+          workspaceId: "cloud-authorized",
+          requestId: "cloud-write-request",
+          toolName: "coding.write_file"
+        }),
+        expect.objectContaining({
+          workspaceId: "cloud-authorized",
+          toolName: "coding.git_diff"
+        })
+      ]));
+
+      const trace = await app.inject({
+        method: "GET",
+        url: "/api/chat/sessions/cloud-authorized-session/trace"
+      });
+      expect(trace.json()).toEqual(expect.objectContaining({
+        workspaceId: "cloud-authorized",
+        runtimeMode: "cloud_runtime",
+        permissionGrants: expect.arrayContaining([
+          expect.objectContaining({
+            action: "coding.write_file",
+            status: "active",
+            workspaceId: "cloud-authorized"
+          })
+        ]),
+        toolCalls: expect.arrayContaining([
+          expect.objectContaining({
+            id: "cloud-write-tool",
+            status: "completed",
+            requestId: "cloud-write-request"
+          })
+        ]),
+        toolActivityEvents: expect.arrayContaining([
+          expect.objectContaining({
+            id: expect.stringContaining("cloud-write-tool"),
+            metadata: expect.objectContaining({
+              toolName: "coding.write_file",
+              requestId: "cloud-write-request",
+              runtimeMode: "cloud_runtime"
+            })
+          })
+        ])
+      }));
+      const artifacts = await repository.listArtifacts({
+        ownerId: "local-dev-user",
+        workspaceId: "cloud-authorized"
+      });
+      expect(artifacts).toEqual(expect.arrayContaining([
+        expect.objectContaining({
+          id: "coding-artifact-cloud-write-tool",
+          sourceContextIds: ["cloud-authorized"]
+        })
+      ]));
+
+      const testsGrant = await app.inject({
+        method: "POST",
+        url: "/api/coding/permission-grants",
+        payload: {
+          sessionId: "cloud-authorized-session",
+          workspaceId: "cloud-authorized",
+          runtimeMode: "cloud_runtime",
+          action: "coding.run_tests"
+        }
+      });
+      const testsGrantId = testsGrant.json().grant.id as string;
+      const revoked = await app.inject({
+        method: "POST",
+        url: `/api/coding/permission-grants/${testsGrantId}/revoke`,
+        payload: { reason: "approval withdrawn" }
+      });
+      expect(revoked.json().grant.status).toBe("revoked");
+      const revokedExecution = await app.inject({
+        method: "POST",
+        url: "/api/coding/tool-calls/cloud-tests-tool/execute",
+        payload: {
+          sessionId: "cloud-authorized-session",
+          workspaceId: "cloud-authorized",
+          runtimeMode: "cloud_runtime"
+        }
+      });
+      expect(revokedExecution.statusCode).toBe(403);
+      expect(revokedExecution.json()).toEqual(expect.objectContaining({
+        error: "permission_required"
+      }));
     } finally {
       await app.close();
     }
@@ -190,6 +386,22 @@ describe("dual-runtime public API", () => {
       }
     });
     try {
+      const credentialList = await app.inject({
+        method: "GET",
+        url: "/api/coding/repository-credentials"
+      });
+      expect(credentialList.statusCode).toBe(200);
+      expect(credentialList.json()).toEqual({
+        mode: "coding_agent",
+        credentials: [expect.objectContaining({
+          id: "credential-a",
+          provider: "https_token",
+          label: "Private repository"
+        })]
+      });
+      expect(credentialList.body).not.toContain("encrypted-token-envelope");
+      expect(credentialList.body).not.toContain("plain-repository-token");
+
       const response = await app.inject({
         method: "POST",
         url: "/api/coding/workspaces/cloud",
@@ -271,7 +483,28 @@ class MockCloudRuntimeClient implements CloudRuntimeClient {
 
   async execute(input: CloudRuntimeExecuteInput) {
     this.executions.push(input);
-    return { ok: true };
+    if (input.toolName === "coding.git_diff") {
+      return {
+        command: "git diff -- notes.txt",
+        stdout: "diff --git a/notes.txt b/notes.txt\n+cloud runtime write",
+        stderr: "",
+        exitCode: 0,
+        timedOut: false,
+        truncated: false
+      };
+    }
+    if (input.toolName === "coding.run_tests") {
+      return {
+        command: "npm test",
+        cwd: "/workspace",
+        stdout: "tests passed",
+        stderr: "",
+        exitCode: 0,
+        timedOut: false,
+        truncated: false
+      };
+    }
+    return { path: "notes.txt", bytesWritten: 19 };
   }
 }
 

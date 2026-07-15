@@ -2,6 +2,7 @@
 
 import type { ReactNode } from "react";
 import { ArrowUp, CheckCircle2, FileCode2, Folder, FolderOpen, GitCompare, HardDrive, Home, Play, RefreshCw, Search, ShieldCheck, Terminal } from "lucide-react";
+import type { RuntimeMode } from "@seekdesk/shared";
 
 import { Button } from "@/components/ui/button";
 import { cn } from "@/lib/utils";
@@ -52,12 +53,13 @@ export function CodingWorkspacePanel({
       notice={state.notice}
       action={
         <PanelButton
-          onClick={() => onBrowseWorkspace(browser.currentPath || state.workspace?.workspaceRoot)}
+          onClick={() => onBrowseWorkspace(browser.currentPath || state.workspace?.rootPath)}
           label="浏览"
           icon={<RefreshCw className="size-4" aria-hidden="true" />}
         />
       }
       dataAttr="workspace"
+      workspace={state.workspace}
     >
       <div className="grid gap-3" data-coding-workspace-panel>
         <div className="rounded-[8px] border border-slate-200 bg-white p-3">
@@ -66,7 +68,7 @@ export function CodingWorkspacePanel({
             当前工作区
           </div>
           <div className="mt-2 break-all rounded-[8px] border border-slate-200 bg-slate-50 px-3 py-2 font-mono text-xs text-slate-700" data-coding-workspace-root>
-            {state.workspace?.workspaceRoot ?? "尚未连接 runtime"}
+            {state.workspace?.rootPath ?? "尚未连接 Runtime"}
           </div>
           <div className="mt-3 grid gap-2 md:grid-cols-[minmax(0,1fr)_auto_auto]">
             <input
@@ -185,6 +187,7 @@ export function CodingFilesPanel({ state, onOpenFile, onRefreshTree }: CodingFil
       notice={state.notice}
       action={<PanelButton onClick={onRefreshTree} label="刷新" icon={<RefreshCw className="size-4" aria-hidden="true" />} />}
       dataAttr="files"
+      workspace={state.workspace}
     >
       <div className="grid min-h-0 gap-3 xl:grid-cols-[minmax(0,0.85fr)_minmax(0,1.15fr)]" data-coding-files-panel>
         <div className="min-h-0 overflow-hidden rounded-[8px] border border-slate-200 bg-white">
@@ -233,6 +236,7 @@ export function CodingSearchPanel({ state, onOpenFile, onRunSearch, onUpdateSear
       notice={state.notice}
       action={<PanelButton onClick={onRunSearch} label="搜索" icon={<Search className="size-4" aria-hidden="true" />} />}
       dataAttr="search"
+      workspace={state.workspace}
     >
       <div className="grid gap-3" data-coding-search-panel>
         <div className="grid gap-2 rounded-[8px] border border-slate-200 bg-white p-3 md:grid-cols-[minmax(0,1fr)_160px_160px]">
@@ -308,6 +312,7 @@ export function CodingDiffPanel({
       notice={state.notice}
       action={<PanelButton onClick={onRefreshGit} label="刷新" icon={<RefreshCw className="size-4" aria-hidden="true" />} />}
       dataAttr="diff"
+      workspace={state.workspace}
     >
       <div className="grid gap-3" data-coding-diff-panel>
         <div className="rounded-[8px] border border-slate-200 bg-white" data-coding-diff-approval-count={fileChangePlans.length}>
@@ -325,6 +330,7 @@ export function CodingDiffPanel({
               <FileChangePlanCard
                 key={toolCall.id}
                 toolCall={toolCall}
+                runtimeMode={state.workspace?.runtimeMode}
                 onApproveAndApply={() => onApproveAndApplyToolCall(toolCall)}
               />
             ))}
@@ -344,9 +350,11 @@ export function CodingDiffPanel({
 
 function FileChangePlanCard({
   onApproveAndApply,
+  runtimeMode,
   toolCall
 }: {
   onApproveAndApply: () => void;
+  runtimeMode: RuntimeMode | undefined;
   toolCall: AgentToolCallTraceItem;
 }) {
   const input = asRecord(toolCall.inputJson);
@@ -383,7 +391,7 @@ function FileChangePlanCard({
             {targetPath}
           </div>
           <p className="mt-1 text-xs leading-5 text-slate-600">
-            审查目标文件和输入内容；批准后由本机 daemon 在当前 workspace 内执行。
+            审查目标文件和输入内容；批准后由{runtimeMode === "cloud_runtime" ? "云端 Runtime" : "本机 daemon"}在当前工作区内执行。
           </p>
         </div>
         <Button
@@ -423,6 +431,7 @@ export function CodingTerminalPanel({ state }: CodingPanelProps) {
       status={state.syncStatus}
       notice={state.notice}
       dataAttr="terminal"
+      workspace={state.workspace}
     >
       <div className="grid gap-3" data-coding-terminal-panel data-coding-terminal-count={state.terminalToolCalls.length}>
         {state.pendingWriteOrCommandToolCalls.length > 0 ? (
@@ -436,15 +445,29 @@ export function CodingTerminalPanel({ state }: CodingPanelProps) {
           const stdout = stringValue(output?.stdout);
           const stderr = stringValue(output?.stderr);
           const command = stringValue(output?.command) || summarizeInputCommand(toolCall.inputJson);
+          const cwd = stringValue(output?.cwd);
+          const requestId = stringValue(output?.requestId);
           const exitCode = typeof output?.exitCode === "number" ? output.exitCode : null;
+          const timeout = numberValue(output?.timeoutMs) ?? numberValue(output?.timeout);
+          const timedOut = output?.timedOut === true;
+          const truncated = output?.truncated === true;
+          const terminalOutput = [
+            stdout ? "$ stdout\n" + stdout : "",
+            stderr ? "$ stderr\n" + stderr : ""
+          ].filter(Boolean).join("\n\n");
 
           return (
             <CommandOutput
               key={toolCall.id}
               title={toolCall.name + " / " + toolCall.status}
               command={command || "命令尚未执行"}
-              output={[stdout, stderr].filter(Boolean).join("\n") || toolCall.error || "暂无输出"}
+              output={terminalOutput || toolCall.error || "暂无输出"}
               exitCode={exitCode}
+              cwd={cwd}
+              requestId={requestId}
+              timeout={timeout}
+              timedOut={timedOut}
+              truncated={truncated}
               large
             />
           );
@@ -468,7 +491,8 @@ function CodingPanelFrame({
   icon,
   notice,
   status,
-  title
+  title,
+  workspace
 }: {
   action?: ReactNode;
   children: ReactNode;
@@ -478,6 +502,7 @@ function CodingPanelFrame({
   notice: string;
   status: string;
   title: string;
+  workspace: CodingWorkbenchState["workspace"];
 }) {
   return (
     <section className="flex min-h-full flex-col gap-3" data-coding-panel={dataAttr}>
@@ -489,6 +514,16 @@ function CodingPanelFrame({
               <span>{title}</span>
             </div>
             <p className="mt-1 text-xs leading-5 text-slate-600">{description}</p>
+            <div className="mt-1 flex flex-wrap items-center gap-2 text-[11px] text-slate-500">
+              <span className="font-semibold text-slate-700">{workspace?.name ?? "未选择工作区"}</span>
+              {workspace ? (
+                <>
+                  <span>{workspace.runtimeMode === "cloud_runtime" ? "云端 Runtime" : workspace.runtimeMode === "local_daemon" ? "本机 daemon" : "开发 Runtime"}</span>
+                  <span>{workspace.status}</span>
+                  <span className="max-w-[38rem] truncate font-mono">{workspace.rootPath}</span>
+                </>
+              ) : null}
+            </div>
           </div>
           <div className="flex shrink-0 items-center gap-2">
             <span className={cn("rounded-[999px] px-2.5 py-1 text-[11px] font-medium", status === "live" ? "bg-emerald-100 text-emerald-800" : status === "syncing" ? "bg-sky-100 text-sky-800" : status === "degraded" ? "bg-red-100 text-red-800" : "bg-slate-100 text-slate-700")}>{statusLabel(status)}</span>
@@ -514,7 +549,7 @@ function FilePreview({ selectedFile }: { selectedFile: CodingWorkbenchState["sel
   );
 }
 
-function CommandOutput({ command, exitCode, large = false, output, title }: { command: string; exitCode: number | null; large?: boolean; output: string; title: string }) {
+function CommandOutput({ command, cwd, exitCode, large = false, output, requestId, timedOut = false, timeout, title, truncated = false }: { command: string; cwd?: string; exitCode: number | null; large?: boolean; output: string; requestId?: string; timedOut?: boolean; timeout?: number | null; title: string; truncated?: boolean }) {
   return (
     <div className="overflow-hidden rounded-[8px] border border-slate-200 bg-white">
       <div className="flex items-center justify-between gap-3 border-b border-slate-200 px-3 py-2 text-xs">
@@ -524,6 +559,15 @@ function CommandOutput({ command, exitCode, large = false, output, title }: { co
         </div>
         <span className={cn("shrink-0 rounded-[999px] px-2 py-0.5 text-[11px] font-medium", exitCode === null ? "bg-slate-100 text-slate-600" : exitCode === 0 ? "bg-emerald-100 text-emerald-800" : "bg-red-100 text-red-800")}>exit {exitCode ?? "-"}</span>
       </div>
+      {cwd || requestId || timeout !== undefined || timedOut || truncated ? (
+        <div className="flex flex-wrap gap-x-4 gap-y-1 border-b border-slate-200 bg-slate-50 px-3 py-2 font-mono text-[11px] text-slate-600">
+          {cwd ? <span>cwd: {cwd}</span> : null}
+          {timeout !== undefined && timeout !== null ? <span>timeout: {timeout}ms</span> : null}
+          {timedOut ? <span className="text-rose-700">timed out</span> : null}
+          {truncated ? <span className="text-amber-700">output truncated</span> : null}
+          {requestId ? <span className="min-w-0 truncate">request: {requestId}</span> : null}
+        </div>
+      ) : null}
       <pre className={cn("overflow-auto bg-slate-950 p-3 text-xs leading-5 text-slate-100", large ? "max-h-[62vh]" : "max-h-80")}><code>{output}</code></pre>
     </div>
   );
@@ -597,6 +641,10 @@ function asRecord(value: unknown): Record<string, unknown> | null {
 
 function stringValue(value: unknown) {
   return typeof value === "string" ? value : "";
+}
+
+function numberValue(value: unknown) {
+  return typeof value === "number" && Number.isFinite(value) ? value : null;
 }
 
 function summarizeInputCommand(value: unknown) {

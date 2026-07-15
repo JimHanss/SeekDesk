@@ -1,6 +1,8 @@
 FROM node:22-bookworm-slim AS build
 
 WORKDIR /opt/seekdesk
+ARG NPM_CONFIG_REGISTRY=https://registry.npmjs.org
+ARG NPM_VERSION=11.6.2
 COPY package.json package-lock.json tsconfig.base.json ./
 COPY packages/shared/package.json packages/shared/tsconfig*.json ./packages/shared/
 COPY packages/agent/package.json packages/agent/tsconfig*.json ./packages/agent/
@@ -11,7 +13,8 @@ COPY apps/api/package.json apps/api/tsconfig*.json ./apps/api/
 COPY apps/daemon/package.json ./apps/daemon/package.json
 COPY apps/runtime-worker/package.json ./apps/runtime-worker/package.json
 COPY apps/cloud-runtime/package.json ./apps/cloud-runtime/package.json
-RUN npm ci --ignore-scripts
+RUN npm install --global "npm@$NPM_VERSION" --registry="$NPM_CONFIG_REGISTRY" --no-audit --no-fund \
+  && npm ci --ignore-scripts --registry="$NPM_CONFIG_REGISTRY" --no-audit --no-fund
 COPY packages/shared/src ./packages/shared/src
 COPY packages/agent/src ./packages/agent/src
 COPY packages/runtime-core/src ./packages/runtime-core/src

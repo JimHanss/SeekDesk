@@ -1,4 +1,5 @@
 import type { LucideIcon } from "lucide-react";
+import type { CodingWorkspaceSummary, RuntimeMode } from "@seekdesk/shared";
 
 export type AppMode = "daily_work" | "coding_agent";
 export type ChatRole = "user" | "assistant";
@@ -17,6 +18,9 @@ export interface AgentToolCallTraceItem {
   id: string;
   name: string;
   status: string;
+  workspaceId: string | null;
+  runtimeMode: RuntimeMode | null;
+  requestId: string | null;
   inputJson?: unknown;
   outputJson?: unknown;
   previewOnly: boolean;
@@ -45,6 +49,8 @@ export interface AgentPermissionGrantTraceItem {
   id: string;
   provider: string;
   sessionId: string;
+  workspaceId: string | null;
+  runtimeMode: RuntimeMode | null;
   action: string;
   decision: string;
   status: string;
@@ -82,6 +88,9 @@ export interface AgentPermissionBoundary {
 export interface AgentTraceState {
   sessionId: string | null;
   provider: string | null;
+  workspaceId: string | null;
+  runtimeMode: RuntimeMode | null;
+  workspace: CodingWorkspaceSummary | null;
   syncStatus: AgentTraceSyncStatus;
   toolCalls: AgentToolCallTraceItem[];
   toolActivityEvents: AgentToolActivityTraceItem[];
@@ -95,6 +104,9 @@ export interface AgentTraceState {
 export interface AgentTraceResponseDto {
   mode?: AppMode;
   sessionId?: string;
+  workspaceId?: string;
+  runtimeMode?: RuntimeMode;
+  workspace?: CodingWorkspaceSummary;
   toolCalls?: unknown[];
   toolActivityEvents?: DailyActivityEventDto[];
   modelUsageRecords?: unknown[];
@@ -252,7 +264,7 @@ export interface WorkflowSnapshotItem {
   workspaceId: string;
   workspaceName?: string;
   workspaceRoot?: string;
-  workspaceRuntimeMode?: "local_daemon" | "server_local" | "cloud_workspace";
+  workspaceRuntimeMode?: RuntimeMode;
   createdAt: string;
   updatedAt: string;
   summary: string;
@@ -296,7 +308,7 @@ export interface DailyWorkSessionDto {
   workspaceId?: string;
   workspaceName?: string;
   workspaceRoot?: string;
-  workspaceRuntimeMode?: "local_daemon" | "server_local" | "cloud_workspace";
+  workspaceRuntimeMode?: RuntimeMode;
   appMode?: AppMode;
   title?: string;
   pinned?: boolean;

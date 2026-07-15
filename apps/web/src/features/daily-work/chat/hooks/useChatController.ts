@@ -2,6 +2,7 @@
 
 import type { FormEvent } from "react";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import type { RuntimeMode } from "@seekdesk/shared";
 
 import {
   activeMode,
@@ -29,6 +30,7 @@ interface ChatRequestContext {
   connectorIds?: string[];
   workflowIds?: string[];
   workspaceId?: string;
+  runtimeMode?: RuntimeMode;
 }
 
 interface UseChatControllerOptions {
@@ -69,6 +71,10 @@ export function useChatController({
   async function handleSubmit(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
 
+    await submitCurrentInput();
+  }
+
+  async function submitCurrentInput() {
     const prompt = input.trim();
     if (!prompt) {
       return;
@@ -82,13 +88,18 @@ export function useChatController({
       return;
     }
 
+    if (!requestContext?.workspaceId || !requestContext.runtimeMode) {
+      setError("请先新建对话并选择一个已就绪的工作区。");
+      return;
+    }
+
     const userMessage: ChatMessage = {
-      id: crypto.randomUUID(),
+      id: createClientId(),
       role: "user",
       content: prompt
     };
     const assistantMessage: ChatMessage = {
-      id: crypto.randomUUID(),
+      id: createClientId(),
       role: "assistant",
       content: ""
     };
@@ -105,7 +116,7 @@ export function useChatController({
       createEmptyAgentTraceState({
         sessionId: activeSessionId,
         syncStatus: "syncing",
-        notice: "Waiting for the model stream to produce an agent trace."
+        notice: "正在等待模型生成运行计划。"
       })
     );
     setMessages((current) => [...current, userMessage, assistantMessage]);
@@ -160,7 +171,7 @@ export function useChatController({
             sessionId: responseSessionId,
             provider: responseProvider,
             syncStatus: "syncing",
-            notice: "Model stream connected; syncing agent trace after completion."
+            notice: "模型流已连接，完成后同步运行详情。"
           })
         );
       }
@@ -309,8 +320,14 @@ export function useChatController({
       },
       body: JSON.stringify({
         mode: activeMode,
-        provider: "local_daemon",
+        provider: requestContext?.runtimeMode,
         sessionId: activeSessionId,
+        ...(requestContext?.workspaceId
+          ? { workspaceId: requestContext.workspaceId }
+          : {}),
+        ...(requestContext?.runtimeMode
+          ? { runtimeMode: requestContext.runtimeMode }
+          : {}),
         action: toolCall.name,
         reason: "User allowed this coding tool for the current session."
       })
@@ -322,7 +339,7 @@ export function useChatController({
 
     await refreshAgentTrace(activeSessionId, agentTrace.provider);
     await onActivityChanged?.();
-  }, [activeSessionId, agentTrace.provider, apiBaseUrl, onActivityChanged, refreshAgentTrace]);
+  }, [activeSessionId, agentTrace.provider, apiBaseUrl, onActivityChanged, refreshAgentTrace, requestContext?.runtimeMode, requestContext?.workspaceId]);
 
   const executeToolCall = useCallback(async (toolCall: AgentToolCallTraceItem) => {
     if (!activeSessionId) {
@@ -341,6 +358,9 @@ export function useChatController({
           sessionId: activeSessionId,
           ...(requestContext?.workspaceId
             ? { workspaceId: requestContext.workspaceId }
+            : {}),
+          ...(requestContext?.runtimeMode
+            ? { runtimeMode: requestContext.runtimeMode }
             : {})
         })
       }
@@ -352,7 +372,7 @@ export function useChatController({
 
     await refreshAgentTrace(activeSessionId, agentTrace.provider);
     await onActivityChanged?.();
-  }, [activeSessionId, agentTrace.provider, apiBaseUrl, onActivityChanged, refreshAgentTrace, requestContext?.workspaceId]);
+  }, [activeSessionId, agentTrace.provider, apiBaseUrl, onActivityChanged, refreshAgentTrace, requestContext?.runtimeMode, requestContext?.workspaceId]);
 
   const startCurrentConversation = useCallback(() => {
     abortRef.current?.abort();
@@ -407,6 +427,7 @@ export function useChatController({
     setError,
     setInput,
     startCurrentConversation,
+    submitCurrentInput,
     status
   };
 }
@@ -450,6 +471,14 @@ function createRequestContextPayload(context: ChatRequestContext | undefined) {
     payload["timezone"] = timezone;
   }
 
+  if (context?.workspaceId) {
+    payload["workspaceId"] = context.workspaceId;
+  }
+
+  if (context?.runtimeMode) {
+    payload["runtimeMode"] = context.runtimeMode;
+  }
+
   return Object.keys(payload).length ? payload : undefined;
 }
 
@@ -469,4 +498,12 @@ function assignIds(
   if (ids.length) {
     payload[key] = ids;
   }
+}
+
+function createClientId() {
+  const randomUuid = globalThis.crypto?.randomUUID;
+  if (typeof randomUuid === "function") {
+    return randomUuid.call(globalThis.crypto);
+  }
+  return `${Date.now()}-${Math.random().toString(16).slice(2)}`;
 }

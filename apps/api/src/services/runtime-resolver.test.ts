@@ -45,6 +45,69 @@ describe("RuntimeResolver", () => {
     ]);
   });
 
+  it("keeps local daemon and cloud requests isolated while both runtimes are online", async () => {
+    const repository = new SeedDailyWorkRepository();
+    const cloudClient = new MockCloudRuntimeClient();
+    const daemonRegistry = new DaemonRegistry("owner-a");
+    const daemonSocket = new FakeDaemonSocket();
+    daemonRegistry.handleConnection(
+      daemonSocket as unknown as Parameters<DaemonRegistry["handleConnection"]>[0]
+    );
+    daemonSocket.emitMessage({
+      type: "daemon.register",
+      token: "seekdesk-local-dev",
+      status: {
+        daemonId: "daemon-dual-runtime",
+        machineName: "windows-workstation",
+        platform: "win32",
+        workspaceRoot: "E:\\Project\\LocalOnly",
+        supportedCapabilities: ["coding.read_file"],
+        pid: 42
+      }
+    });
+    const localWorkspace = daemonRegistry.listWorkspaces("owner-a")[0];
+    expect(localWorkspace).toBeDefined();
+    daemonSocket.workspaceId = localWorkspace!.workspaceId;
+    const cloudWorkspace = createCloudWorkspace("owner-a", "cloud-concurrent", "ready");
+    await repository.upsertCodingWorkspace(cloudWorkspace);
+    const resolver = new RuntimeResolver({
+      repository,
+      daemonRegistry,
+      cloudRuntimeClient: cloudClient,
+      serverLocalEnabled: false
+    });
+
+    const [localResolution, cloudResolution] = await Promise.all([
+      resolver.resolve("owner-a", localWorkspace!.workspaceId, "local_daemon"),
+      resolver.resolve("owner-a", cloudWorkspace.workspaceId, "cloud_runtime")
+    ]);
+    const [localRead, cloudRead] = await Promise.all([
+      localResolution.runtime.readFile({ path: "README.md", maxBytes: 1000 }),
+      cloudResolution.runtime.readFile({ path: "README.md", maxBytes: 1000 })
+    ]);
+
+    expect(localRead).toEqual({
+      path: "README.md",
+      content: "local daemon result",
+      workspaceId: localWorkspace!.workspaceId
+    });
+    expect(cloudRead).toEqual({ path: "README.md", content: "cloud result" });
+    expect(daemonSocket.toolRequests).toEqual([
+      expect.objectContaining({
+        command: "tool.execute",
+        payload: expect.objectContaining({ toolName: "coding.read_file" })
+      })
+    ]);
+    expect(cloudClient.executions).toEqual([
+      expect.objectContaining({
+        ownerId: "owner-a",
+        workspaceId: "cloud-concurrent",
+        toolName: "coding.read_file"
+      })
+    ]);
+    daemonSocket.close();
+  });
+
   it("returns stable failures for unknown, offline, and not-ready workspaces", async () => {
     const repository = new SeedDailyWorkRepository();
     const resolver = createResolver(repository, new MockCloudRuntimeClient());
@@ -115,6 +178,53 @@ class MockCloudRuntimeClient implements CloudRuntimeClient {
   async execute(input: CloudRuntimeExecuteInput) {
     this.executions.push(input);
     return { path: "README.md", content: "cloud result" };
+  }
+}
+
+class FakeDaemonSocket {
+  readonly readyState = 1;
+  readonly toolRequests: Array<Record<string, unknown>> = [];
+  workspaceId = "local-daemon-workspace";
+  private readonly listeners = new Map<string, Array<(value: Buffer | Error) => void>>();
+
+  send(data: string) {
+    const message = JSON.parse(data) as Record<string, unknown>;
+    if (message.type !== "daemon.request") {
+      return;
+    }
+    this.toolRequests.push(message);
+    const payload = message.payload as { toolName?: string } | undefined;
+    queueMicrotask(() => this.emitMessage({
+      type: "daemon.response",
+      requestId: message.requestId,
+      ok: true,
+      result: {
+        path: "README.md",
+        content: "local daemon result",
+        workspaceId: this.workspaceId
+      },
+      toolName: payload?.toolName
+    }));
+  }
+
+  close() {
+    this.emit("close", Buffer.alloc(0));
+  }
+
+  on(event: "message" | "close" | "error", listener: (value: Buffer | Error) => void) {
+    const current = this.listeners.get(event) ?? [];
+    current.push(listener);
+    this.listeners.set(event, current);
+  }
+
+  emitMessage(message: unknown) {
+    this.emit("message", Buffer.from(JSON.stringify(message)));
+  }
+
+  private emit(event: string, value: Buffer | Error) {
+    for (const listener of this.listeners.get(event) ?? []) {
+      listener(value);
+    }
   }
 }
 

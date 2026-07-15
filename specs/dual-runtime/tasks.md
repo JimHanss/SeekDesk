@@ -22,7 +22,7 @@
 - [x] T001 创建并切换到 `codex/dual-runtime` 功能分支，将 `spec.md`、`plan.md`、`tasks.md` 纳入版本控制。
 - [x] T002 记录远程 `main` 的 HEAD、工作区状态、Node/npm/Docker/Postgres 版本和当前服务端口占用。
 - [x] T003 运行现有 `lint`、`test`、`typecheck`、`build`、`test:browser-smoke`，把基线结果记录到 `PROJECT_PROGRESS.md`。
-- [ ] T004 验证 `jim-mac` Docker Engine 与 Postgres 可用，并确认 Runtime 存储根目录所在磁盘有足够空间。
+- [x] T004 验证 `jim-mac` Docker Engine 与 Postgres 可用，并确认 Runtime 存储根目录所在磁盘有足够空间。
 - [x] T005 更新 `.gitignore`，忽略 cloud workspace 数据目录、Runtime 临时文件、测试 fixture、容器输出、凭据临时文件和本地 env。
 - [x] T006 在 `.env.example` 增加 dev user、OIDC/JWT、内部 Runtime service、Docker image、存储路径、资源限制、空闲 TTL、凭据加密配置，所有值使用安全示例。
 
@@ -95,7 +95,7 @@
 - [x] T059 为 worker 添加协议、schema、错误映射和完整 coding tool fixture 测试。
 - [x] T060 新增 `docker/runtime-worker.Dockerfile`，安装 Node.js 22、npm、Git、ripgrep、基础 Shell、Python 3 和非 root runtime 用户。
 - [x] T061 配置 image 默认只读 rootfs、`/tmp` tmpfs 约定、`/workspace` volume、无 Docker socket、无 privileged 和最小 capabilities。
-- [ ] T062 构建 `seekdesk-runtime:node22`，运行 container fixture 验证文件、搜索、Git、写入、Shell 和测试结果与 local daemon 一致。
+- [x] T062 构建 `seekdesk-runtime:node22`，运行 container fixture 验证文件、搜索、Git、写入、Shell 和测试结果与 local daemon 一致。
 
 ## 阶段 6：Cloud Runtime Service
 
@@ -111,13 +111,13 @@
 - [x] T072 实现 container `execute` transport，通过 runtime-worker 执行统一 tool schema 并返回结构化结果。
 - [x] T073 为同一 workspace 实现读并发、写/命令串行队列和 request cancellation。
 - [x] T074 应用 `2 CPU / 4 GB RAM / PID limit / no-new-privileges / cap-drop / read-only rootfs` 等容器限制。
-- [ ] T075 实现 Git/bootstrap 网络与普通工具无外网的网络 profile 切换，并验证执行容器无法访问公网。
+- [x] T075 实现 Git/bootstrap 网络与普通工具无外网的网络 profile 切换，并验证执行容器无法访问公网。
 - [x] T076 实现 Docker 实际状态 reconcile，API/runtime service 重启后恢复 workspace 状态。
 - [x] T077 实现 `lastActiveAt` 更新和 30 分钟空闲自动停止。
 - [x] T078 实现删除时拒绝新请求、取消队列、停止容器、清理数据目录和失败重试。
 - [x] T079 为 cloud service 添加 lifecycle、幂等、资源限制、token 脱敏、reconcile、idle stop、cleanup 和 container crash 测试。
 - [x] T080 新增 `docker-compose.runtime.yml`，仅 cloud-runtime service 挂载 Docker socket，API 通过私有网络访问内部服务。
-- [ ] T081 使用真实 Docker 和临时 Git fixture 完成 provision/start/execute/stop/restart/delete 集成测试，并确认无残留容器和目录。
+- [x] T081 使用真实 Docker 和临时 Git fixture 完成 provision/start/execute/stop/restart/delete 集成测试，并确认无残留容器和目录。
 
 ## 阶段 7：审批、审计与关联闭环
 
@@ -132,43 +132,43 @@
 
 ## 阶段 8：前端双 Runtime 工作台
 
-- [ ] T090 将 web 中重复的 workspace/runtime DTO 替换为 `@seekdesk/shared` 类型和 mapper。
-- [ ] T091 从 `apps/web/src/app/page.tsx` 提取 `NewConversationWorkspaceDialog` 独立组件，保持现有对话与 smoke selector 稳定。
-- [ ] T092 在新建对话弹窗加入“本机 / 云端” segmented control，默认记住最近成功使用的 Runtime 类型。
-- [ ] T093 本机 tab 展示 daemon 在线/离线状态、系统文件夹选择器、最近目录和明确启动命令。
-- [ ] T094 云端 tab 展示 workspace 列表、仓库、分支、状态、最近使用时间和 Runtime image。
-- [ ] T095 实现云端 workspace 创建表单，支持公开 HTTPS URL、分支、`node22` 和可选 credential 选择，不在前端回显 token。
-- [ ] T096 实现 cloud workspace provisioning/cloning/starting/stopping/error 状态轮询和取消清理。
-- [ ] T097 实现 cloud workspace 启动、停止、重试和带确认的删除操作，按钮 busy/disabled 状态尺寸固定。
-- [ ] T098 创建 coding session 时固定保存选中 workspaceId/runtimeMode，未选择或未 ready 时禁止创建。
-- [ ] T099 历史会话按 workspace 分组，组上显示 Runtime badge 和状态；组内置顶优先且按 createdAt 倒序稳定。
-- [ ] T100 文件、搜索、Diff、终端和运行详情显示当前 workspace 与 Runtime，所有请求使用当前 session 绑定。
-- [ ] T101 daemon offline、cloud stopped、runtime busy、clone error 和 permission error 显示单一明确提示，不重复请求刷屏。
-- [ ] T102 保持默认对话区简洁，右侧面板仅按需打开，关闭后不保留空白占位。
-- [ ] T103 增加 workspace dialog、状态 mapper、排序、创建表单、session 绑定和 Runtime error 的前端单测。
+- [x] T090 将 web 中重复的 workspace/runtime DTO 替换为 `@seekdesk/shared` 类型和 mapper。
+- [x] T091 从 `apps/web/src/app/page.tsx` 提取 `NewConversationWorkspaceDialog` 独立组件，保持现有对话与 smoke selector 稳定。
+- [x] T092 在新建对话弹窗加入“本机 / 云端” segmented control，默认记住最近成功使用的 Runtime 类型。
+- [x] T093 本机 tab 展示 daemon 在线/离线状态、系统文件夹选择器、最近目录和明确启动命令。
+- [x] T094 云端 tab 展示 workspace 列表、仓库、分支、状态、最近使用时间和 Runtime image。
+- [x] T095 实现云端 workspace 创建表单，支持公开 HTTPS URL、分支、`node22` 和可选 credential 选择，不在前端回显 token。
+- [x] T096 实现 cloud workspace provisioning/cloning/starting/stopping/error 状态轮询和取消清理。
+- [x] T097 实现 cloud workspace 启动、停止、重试和带确认的删除操作，按钮 busy/disabled 状态尺寸固定。
+- [x] T098 创建 coding session 时固定保存选中 workspaceId/runtimeMode，未选择或未 ready 时禁止创建。
+- [x] T099 历史会话按 workspace 分组，组上显示 Runtime badge 和状态；组内置顶优先且按 createdAt 倒序稳定。
+- [x] T100 文件、搜索、Diff、终端和运行详情显示当前 workspace 与 Runtime，所有请求使用当前 session 绑定。
+- [x] T101 daemon offline、cloud stopped、runtime busy、clone error 和 permission error 显示单一明确提示，不重复请求刷屏。
+- [x] T102 保持默认对话区简洁，右侧面板仅按需打开，关闭后不保留空白占位。
+- [x] T103 增加 workspace dialog、状态 mapper、排序、创建表单、session 绑定和 Runtime error 的前端单测。
 
 ## 阶段 9：端到端验证、文档与交付
 
-- [ ] T104 扩展 `scripts/browser-smoke.cjs`，覆盖 local daemon workspace 选择、会话创建、文件、搜索和 Git Diff。
-- [ ] T105 增加 cloud runtime smoke fixture，覆盖 Git clone、ready、会话创建、文件读取和历史分组。
-- [ ] T106 增加双 Runtime 同时在线 smoke，验证请求、session、tool call、grant、terminal 和 diff 不串 workspace。
-- [ ] T107 增加两种 Runtime 的 pending 写入/test、批准执行、撤销和 trace/activity/artifact 关联 smoke。
-- [ ] T108 增加 daemon offline、cloud stopped、container crash、clone failure 和 API restart 恢复 smoke。
-- [ ] T109 扫描浏览器 console 与 network，确保无 fatal error、乱码、连续问号占位符、空白死区、重复失败请求和邮箱/连接器请求。
-- [ ] T110 更新 `README.md`，说明双 Runtime 选择、cloud service 部署、本机 daemon、生产身份、Git token 和故障排查。
-- [ ] T111 更新 `docs/architecture/complete-flow-summary.md`，描述 RuntimeResolver、会话绑定、审批和审计完整流程。
-- [ ] T112 更新 `docs/architecture/frontend-code-summary.md`，补充 workspace dialog、cloud lifecycle hook、状态 UI 和文件职责。
-- [ ] T113 更新 `docs/architecture/backend-api-database-summary.md`，补充 public/internal API、workspace/operation/credential 表和 owner scope。
-- [ ] T114 新增 `docs/architecture/runtime-security-boundary.md`，记录容器、daemon、凭据、网络、资源和审批边界。
-- [ ] T115 新增 `docs/architecture/cloud-runtime-operations.md`，记录部署、监控、reconcile、空闲停止、备份、清理和事故处理。
-- [ ] T116 更新根目录 `CODE_MAP.md`，列出 shared、runtime-core、daemon、cloud-runtime、runtime-worker、API、web 和测试入口。
-- [ ] T117 更新根目录 `PROJECT_PROGRESS.md`，逐项标记本功能完成度、验证结果、已知限制和后续事项。
-- [ ] T118 运行 `git diff --check`、`npm run lint`、`npm run test --workspaces --if-present`、`npm run typecheck`、`npm run build`、`npm run verify:secrets`。
-- [ ] T119 启动真实 Postgres，运行 `npm run db:migrate` 和 `SEEKDESK_TEST_DATABASE_URL` repository/API integration tests。
-- [ ] T120 构建真实 `seekdesk-runtime:node22`，运行 cloud lifecycle integration 并检查资源、网络、凭据和清理边界。
-- [ ] T121 同时启动 remote API、cloud-runtime 和 local daemon，运行完整 `npm run test:browser-smoke`。
-- [ ] T122 清理测试容器、网络、临时 Git fixture 和 workspace 目录，确认用户数据与无关 Docker 资源未被删除。
-- [ ] T123 检查 `git status`、migration、secret hygiene、文档和任务 checkbox，生成最终交付摘要。
+- [x] T104 扩展 `scripts/browser-smoke.cjs`，覆盖 local daemon workspace 选择、会话创建、文件、搜索和 Git Diff。
+- [x] T105 增加 cloud runtime smoke fixture，覆盖 Git clone、ready、会话创建、文件读取和历史分组。
+- [x] T106 增加双 Runtime 同时在线 smoke，验证请求、session、tool call、grant、terminal 和 diff 不串 workspace。
+- [x] T107 增加两种 Runtime 的 pending 写入/test、批准执行、撤销和 trace/activity/artifact 关联 smoke。
+- [x] T108 增加 daemon offline、cloud stopped、container crash、clone failure 和 API restart 恢复 smoke。
+- [x] T109 扫描浏览器 console 与 network，确保无 fatal error、乱码、连续问号占位符、空白死区、重复失败请求和邮箱/连接器请求。
+- [x] T110 更新 `README.md`，说明双 Runtime 选择、cloud service 部署、本机 daemon、生产身份、Git token 和故障排查。
+- [x] T111 更新 `docs/architecture/complete-flow-summary.md`，描述 RuntimeResolver、会话绑定、审批和审计完整流程。
+- [x] T112 更新 `docs/architecture/frontend-code-summary.md`，补充 workspace dialog、cloud lifecycle hook、状态 UI 和文件职责。
+- [x] T113 更新 `docs/architecture/backend-api-database-summary.md`，补充 public/internal API、workspace/operation/credential 表和 owner scope。
+- [x] T114 新增 `docs/architecture/runtime-security-boundary.md`，记录容器、daemon、凭据、网络、资源和审批边界。
+- [x] T115 新增 `docs/architecture/cloud-runtime-operations.md`，记录部署、监控、reconcile、空闲停止、备份、清理和事故处理。
+- [x] T116 更新根目录 `CODE_MAP.md`，列出 shared、runtime-core、daemon、cloud-runtime、runtime-worker、API、web 和测试入口。
+- [x] T117 更新根目录 `PROJECT_PROGRESS.md`，逐项标记本功能完成度、验证结果、已知限制和后续事项。
+- [x] T118 运行 `git diff --check`、`npm run lint`、`npm run test --workspaces --if-present`、`npm run typecheck`、`npm run build`、`npm run verify:secrets`。
+- [x] T119 启动真实 Postgres，运行 `npm run db:migrate` 和 `SEEKDESK_TEST_DATABASE_URL` repository/API integration tests。
+- [x] T120 构建真实 `seekdesk-runtime:node22`，运行 cloud lifecycle integration 并检查资源、网络、凭据和清理边界。
+- [x] T121 同时启动 remote API、cloud-runtime 和 local daemon，运行完整 `npm run test:browser-smoke`。
+- [x] T122 清理测试容器、网络、临时 Git fixture 和 workspace 目录，确认用户数据与无关 Docker 资源未被删除。
+- [x] T123 检查 `git status`、migration、secret hygiene、文档和任务 checkbox，生成最终交付摘要。
 - [ ] T124 自动验证全部通过后提交并 push `codex/dual-runtime`，合并到 `main`，在 `main` 再运行 build、migration 和 browser smoke。
 
 ## 依赖与并行建议

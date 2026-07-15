@@ -36,9 +36,10 @@ async function launchBrowser() {
     return await chromium.launch({ channel: "chrome", headless: true });
   } catch {
     const candidatePaths = [
+      process.env.BROWSER_PATH,
       "/Applications/Google Chrome.app/Contents/MacOS/Google Chrome",
       "/Volumes/SSD/Google Chrome.app/Contents/MacOS/Google Chrome"
-    ];
+    ].filter(Boolean);
     for (const executablePath of candidatePaths) {
       try {
         return await chromium.launch({ executablePath, headless: true });
@@ -80,13 +81,13 @@ async function waitForChatIdle(page, minMessages) {
 
 async function submitPrompt(page, prompt) {
   const input = page.locator('textarea[aria-label="输入编程请求"]');
-  const sendButton = page.locator('form button[type="submit"]');
+  const sendButton = page.locator("[data-chat-send]");
   await input.click();
   await input.fill("");
   await input.pressSequentially(prompt, { delay: 1 });
   await page.waitForFunction(
     () => {
-      const button = document.querySelector('form button[type="submit"]');
+        const button = document.querySelector("[data-chat-send]");
       const textarea = document.querySelector('textarea[aria-label="输入编程请求"]');
       return Boolean(
         button &&
@@ -148,6 +149,12 @@ async function main() {
     workspaces.find((item) => item.runtimeMode === "local_daemon" && item.connected) ||
     workspaces.find((item) => item.workspaceId === "server-local-runtime") ||
     workspaces[0];
+  const readyCloudWorkspace = workspaces.find(
+    (item) =>
+      item.runtimeMode === "cloud_runtime" &&
+      item.connected &&
+      ["ready", "busy"].includes(item.status)
+  );
   if (!workspace?.workspaceId) {
     fail("Workspace selection failed.");
   }
@@ -159,6 +166,7 @@ async function main() {
   const consoleErrors = [];
   const pageErrors = [];
   const responseErrors = [];
+  const requests = [];
 
   page.on("console", (message) => {
     if (message.type() !== "error") return;
@@ -175,6 +183,9 @@ async function main() {
     consoleErrors.push(`${text} @${location.url}:${location.lineNumber}:${location.columnNumber}`);
   });
   page.on("pageerror", (error) => pageErrors.push(error.message));
+  page.on("request", (request) => {
+    if (request.url().includes("/api/")) requests.push(`${request.method()} ${request.url()}`);
+  });
   page.on("response", (response) => {
     const status = response.status();
     if (status < 400) return;
@@ -194,15 +205,87 @@ async function main() {
     await page.waitForSelector("[data-daily-new-conversation]", { timeout: 30_000 });
 
     await page.click("[data-daily-new-conversation]");
-    await page.waitForSelector("[data-coding-dialog-create]", { timeout: 15_000 });
+    try {
+      await page.waitForSelector("[data-coding-dialog-create]", { timeout: 15_000 });
+    } catch (error) {
+      const state = await page.evaluate(() => ({
+        url: window.location.href,
+        activeView: document.querySelector("[data-daily-active-view]")?.getAttribute("data-daily-active-view"),
+        sendDisabled: document.querySelector("[data-chat-send]")?.hasAttribute("disabled"),
+        newConversationButtons: document.querySelectorAll("[data-daily-new-conversation]").length,
+        dialogButtons: document.querySelectorAll("[data-coding-dialog-create]").length,
+        scripts: Array.from(document.scripts).map((script) => script.src || "inline").slice(0, 20),
+        nextResources: performance
+          .getEntriesByType("resource")
+          .map((entry) => entry.name)
+          .filter((name) => name.includes("/_next/"))
+          .slice(0, 30),
+        bodyText: document.body.innerText.slice(0, 1600)
+      }));
+      throw new Error(
+        `Workspace dialog did not open: ${JSON.stringify({
+          ...state,
+          consoleErrors,
+          pageErrors,
+          responseErrors,
+          requests
+        })}; ${
+          error instanceof Error ? error.message : String(error)
+        }`
+      );
+    }
+    await page.getByRole("tab", { name: "云端工作区" }).click();
+    await page.getByPlaceholder("https://github.com/org/repo.git").waitFor({ state: "visible" });
+    if (await page.locator('input[type="password"]').count()) {
+      fail("Cloud workspace form must not render a repository token field.");
+    }
+    if (readyCloudWorkspace) {
+      const cloudSelector = `[data-coding-dialog-workspace="${readyCloudWorkspace.workspaceId}"]`;
+      await page.locator(cloudSelector).click();
+      await page.waitForTimeout(300);
+      if (!(await page.locator("[data-coding-dialog-create]").isEnabled())) {
+        fail("Ready cloud workspace did not enable conversation creation.");
+      }
+    } else if (await page.locator("[data-coding-dialog-create]").isEnabled()) {
+      fail("Conversation creation must stay disabled without a ready cloud workspace.");
+    }
+    await page.getByRole("tab", { name: "本机项目" }).click();
     const workspaceSelector = `[data-coding-dialog-workspace="${workspace.workspaceId}"]`;
     if (await page.locator(workspaceSelector).count()) {
       await page.click(workspaceSelector);
     } else if (await page.locator("[data-coding-dialog-workspace]").count()) {
       await page.locator("[data-coding-dialog-workspace]").first().click();
     }
+    await page.waitForTimeout(500);
+    if (!(await page.locator("[data-coding-dialog-create]").isEnabled())) {
+      const dialogState = await page.evaluate(() => ({
+        workspaces: Array.from(document.querySelectorAll("[data-coding-dialog-workspace]")).map(
+          (node) => ({
+            id: node.getAttribute("data-coding-dialog-workspace"),
+            className: node.getAttribute("class"),
+            text: node.textContent
+          })
+        ),
+        createDisabled: document
+          .querySelector("[data-coding-dialog-create]")
+          ?.hasAttribute("disabled"),
+        bodyText: document.body.innerText.slice(0, 1600)
+      }));
+      fail(
+        `Ready local daemon workspace did not enable conversation creation: ${JSON.stringify(dialogState)}`
+      );
+    }
     await page.click("[data-coding-dialog-create]");
     await page.waitForSelector("[data-chat-thread]", { timeout: 15_000 });
+    if (await page.locator("[data-coding-panel]").count()) {
+      fail("Default chat view rendered a right-side workbench panel before it was opened.");
+    }
+    const legacyText = await page.locator("body").innerText();
+    for (const forbidden of ["客户更新邮件", "例会纪要压缩", "资料研究简报", "daily_work"]) {
+      if (legacyText.includes(forbidden)) {
+        fail(`Default coding UI still renders legacy text: ${forbidden}`);
+      }
+    }
 
     await submitPrompt(
       page,
@@ -230,6 +313,24 @@ async function main() {
     await page.waitForSelector("[data-coding-terminal-panel]", { timeout: 15_000 });
 
     await delay(500);
+    const finalBodyText = await page.locator("body").innerText();
+    if (/\uFFFD|\?{3,}/.test(finalBodyText)) {
+      fail("The rendered page contains mojibake or repeated question-mark placeholders.");
+    }
+    const forbiddenNetworkTerms = [
+      "/connectors/",
+      "/oauth/",
+      "gmail",
+      "outlook",
+      "google_calendar",
+      "microsoft/oauth"
+    ];
+    const forbiddenRequests = requests.filter((request) =>
+      forbiddenNetworkTerms.some((term) => request.toLowerCase().includes(term))
+    );
+    if (forbiddenRequests.length) {
+      fail(`Removed connector requests were observed: ${forbiddenRequests.join(" | ")}`);
+    }
     if (pageErrors.length) {
       fail(`Page errors: ${pageErrors.join(" | ")}`);
     }

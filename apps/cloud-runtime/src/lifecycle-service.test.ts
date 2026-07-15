@@ -16,6 +16,7 @@ import type {
   CloudContainerSpec
 } from "./engine.js";
 import type { GitBootstrapRequest, GitBootstrapper } from "./git-bootstrap.js";
+import { CloudRuntimeServiceError } from "./errors.js";
 import { CloudRuntimeLifecycleService } from "./lifecycle-service.js";
 import { createCloudRuntimeServer } from "./server.js";
 import { CloudWorkspaceStorage } from "./storage.js";
@@ -110,6 +111,62 @@ describe("CloudRuntimeLifecycleService", () => {
       status: "error",
       errorCode: "runtime_unavailable"
     });
+  });
+
+  it("surfaces clone failures, retries cleanly, and restores ready state after a service restart", async () => {
+    const root = await mkdtemp(join(tmpdir(), "seekdesk-cloud-recovery-"));
+    const config = testConfig(root);
+    const storage = new CloudWorkspaceStorage(root, config.workspaceQuotaBytes);
+    const engine = new FakeEngine();
+    const git = new FakeGit();
+    git.failuresRemaining = 1;
+    const service = new CloudRuntimeLifecycleService(config, storage, engine, git);
+    openServices.push(service);
+    await service.initialize();
+    const workspace = createWorkspace();
+    const failedProvision = createOperation("provision", "clone-failure");
+    await service.submitLifecycle({
+      ownerId: workspace.ownerId,
+      workspace,
+      operation: failedProvision
+    });
+    await waitForTerminalOperation(
+      service,
+      workspace.ownerId,
+      workspace.workspaceId,
+      failedProvision.id
+    );
+    expect(service.getStatus(workspace.ownerId, workspace.workspaceId).workspace).toMatchObject({
+      status: "error",
+      connected: false,
+      errorCode: "repository_clone_failed"
+    });
+
+    const retry = createOperation("retry", "clone-retry");
+    await service.submitLifecycle({
+      ownerId: workspace.ownerId,
+      workspace: service.getStatus(workspace.ownerId, workspace.workspaceId).workspace,
+      operation: retry
+    });
+    await waitForOperation(service, workspace.ownerId, workspace.workspaceId, retry.id);
+    expect(service.getStatus(workspace.ownerId, workspace.workspaceId).workspace.status).toBe("ready");
+
+    service.close();
+    const restarted = new CloudRuntimeLifecycleService(config, storage, engine, git);
+    openServices.push(restarted);
+    await restarted.initialize();
+    expect(restarted.getStatus(workspace.ownerId, workspace.workspaceId).workspace).toMatchObject({
+      status: "ready",
+      connected: true,
+      repository: expect.objectContaining({ revision: "a".repeat(40) })
+    });
+    await expect(restarted.execute({
+      requestId: "request-after-restart",
+      ownerId: workspace.ownerId,
+      workspaceId: workspace.workspaceId,
+      toolName: "coding.read_file",
+      inputJson: { path: "README.md" }
+    })).resolves.toMatchObject({ ok: true });
   });
 
   it("serializes start, stop, retry, and cleanup recovery with strict idempotency", async () => {
@@ -213,9 +270,17 @@ describe("cloud runtime internal API", () => {
 
 class FakeGit implements GitBootstrapper {
   readonly tokens: Array<string | undefined> = [];
+  failuresRemaining = 0;
 
   async clone(request: GitBootstrapRequest) {
     this.tokens.push(request.token);
+    if (this.failuresRemaining > 0) {
+      this.failuresRemaining -= 1;
+      throw new CloudRuntimeServiceError(
+        "Repository clone failed.",
+        "repository_clone_failed"
+      );
+    }
     return { revision: "a".repeat(40) };
   }
 }

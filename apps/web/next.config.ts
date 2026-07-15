@@ -6,8 +6,17 @@ const apiProxyTarget = (
   "http://127.0.0.1:4000"
 ).replace(/\/$/, "");
 
+const allowedDevOrigins = [
+  "127.0.0.1",
+  "localhost",
+  ...(process.env.SEEKDESK_ALLOWED_DEV_ORIGINS ?? "")
+    .split(",")
+    .map((origin) => origin.trim())
+    .filter(Boolean)
+];
+
 const nextConfig: NextConfig = {
-  allowedDevOrigins: ["127.0.0.1", "localhost"],
+  allowedDevOrigins: [...new Set(allowedDevOrigins)],
   transpilePackages: ["@seekdesk/shared", "@seekdesk/agent"],
   async rewrites() {
     return [

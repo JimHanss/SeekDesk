@@ -26,6 +26,8 @@
     "typecheck": "npm run typecheck --workspaces --if-present",
     "lint": "npm run lint --workspaces --if-present",
     "test": "npm run test --workspaces --if-present",
+    "test:cloud-runtime": "node scripts/cloud-runtime-integration.mjs",
+    "test:runtime-container": "node scripts/runtime-container-smoke.mjs",
     "test:browser-smoke": "node scripts/browser-smoke.cjs",
     "verify:secrets": "node scripts/verify-secret-hygiene.mjs",
     "db:generate": "drizzle-kit generate",

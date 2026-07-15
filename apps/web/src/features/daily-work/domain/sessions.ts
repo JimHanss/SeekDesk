@@ -1,5 +1,4 @@
 import {
-  CalendarClock,
   Mail,
   Presentation,
   Search,
@@ -32,144 +31,7 @@ export const sessionHistoryFilters: SessionHistoryFilter[] = [
   "已归档"
 ];
 
-export const sessionHistoryItems: SessionHistoryItem[] = [
-  {
-    id: "daily-weekly-report-risk",
-    title: "周报与风险同步",
-    status: "进行中",
-    workspaceId: "workspace-seekdesk",
-    workspaceName: "SeekDesk",
-    workspaceRoot: "SeekDesk",
-    workspaceRuntimeMode: "server_local",
-    createdAt: "2026-06-03T11:20:00.000Z",
-    updatedAt: "今天 11:20",
-    summary: "已把项目简报、会议记录和团队备忘合并成周报骨架，风险段落还需要补齐负责人和截止时间。",
-    artifactCount: 2,
-    approvalCount: 1,
-    contextCount: 3,
-    artifactIds: ["weekly-report-artifact", "task-list-artifact"],
-    approvalRequestIds: ["review-weekly-report-risk"],
-    contextItemIds: ["project-brief", "meeting-notes", "team-notes"],
-    messageCount: 7,
-    lastAction: "继续补齐风险说明，并把待复核会议结论标记为需要确认。",
-    mode: "daily_work",
-    tags: ["周报", "风险", "待复核"],
-    recentMessages: [
-      {
-        id: "daily-weekly-report-risk-message-1",
-        role: "assistant",
-        content: "已生成周报骨架，并把风险段落标记为待复核。",
-        createdAt: "今天 11:20",
-        artifactIds: ["weekly-report-artifact"],
-        contextItemIds: ["project-brief", "meeting-notes"],
-        approvalRequestIds: ["review-weekly-report-risk"]
-      }
-    ],
-    icon: CalendarClock
-  },
-  {
-    id: "daily-customer-email",
-    title: "客户更新邮件",
-    status: "进行中",
-    workspaceId: "workspace-seekdesk",
-    workspaceName: "SeekDesk",
-    workspaceRoot: "SeekDesk",
-    workspaceRuntimeMode: "server_local",
-    createdAt: "2026-06-03T09:55:00.000Z",
-    updatedAt: "今天 09:55",
-    summary: "已根据客户邮件整理交付时间线和范围变化说明，外发语气仍需审批后再润色。",
-    artifactCount: 1,
-    approvalCount: 2,
-    contextCount: 2,
-    artifactIds: ["email-draft-artifact"],
-    approvalRequestIds: ["read-customer-email-context", "draft-external-reply"],
-    contextItemIds: ["customer-email", "meeting-notes"],
-    messageCount: 8,
-    lastAction: "确认外发授权边界，再生成克制专业的客户版回复。",
-    mode: "daily_work",
-    tags: ["客户沟通", "审批", "邮件"],
-    recentMessages: [
-      {
-        id: "daily-customer-email-message-1",
-        role: "assistant",
-        content: "已整理客户回复草稿，等待外发前审批。",
-        createdAt: "今天 09:55",
-        artifactIds: ["email-draft-artifact"],
-        contextItemIds: ["customer-email"],
-        approvalRequestIds: ["draft-external-reply"]
-      }
-    ],
-    icon: Mail
-  },
-  {
-    id: "daily-meeting-summary",
-    title: "例会纪要压缩",
-    status: "已完成",
-    workspaceId: "workspace-seekdesk",
-    workspaceName: "SeekDesk",
-    workspaceRoot: "SeekDesk",
-    workspaceRuntimeMode: "server_local",
-    createdAt: "2026-06-02T18:10:00.000Z",
-    updatedAt: "昨天 18:10",
-    summary: "会议记录已压缩为可分享摘要，保留关键决策、负责人、开放问题和审批追踪。",
-    artifactCount: 3,
-    approvalCount: 1,
-    contextCount: 2,
-    artifactIds: ["meeting-summary-artifact", "task-list-artifact"],
-    approvalRequestIds: ["use-internal-meeting-notes"],
-    contextItemIds: ["meeting-notes", "team-notes"],
-    messageCount: 6,
-    lastAction: "将最终纪要复制到项目同步渠道，并保留上下文来源说明。",
-    mode: "daily_work",
-    tags: ["会议纪要", "可复用", "决策"],
-    recentMessages: [
-      {
-        id: "daily-meeting-summary-message-1",
-        role: "assistant",
-        content: "会议摘要已整理完成，包含决策、风险、负责人和开放问题。",
-        createdAt: "昨天 18:10",
-        artifactIds: ["meeting-summary-artifact"],
-        contextItemIds: ["meeting-notes", "team-notes"],
-        approvalRequestIds: []
-      }
-    ],
-    icon: Presentation
-  },
-  {
-    id: "daily-research-brief",
-    title: "资料研究简报",
-    status: "已完成",
-    workspaceId: "workspace-seekdesk",
-    workspaceName: "SeekDesk",
-    workspaceRoot: "SeekDesk",
-    workspaceRuntimeMode: "server_local",
-    createdAt: "2026-06-01T16:40:00.000Z",
-    updatedAt: "周一 16:40",
-    summary: "公开资料已整理为研究简报，结论、引用依据和仍需验证的问题已经分组。",
-    artifactCount: 2,
-    approvalCount: 0,
-    contextCount: 1,
-    artifactIds: ["research-note-artifact", "research-brief-artifact"],
-    approvalRequestIds: [],
-    contextItemIds: ["research-links"],
-    messageCount: 5,
-    lastAction: "把可引用依据同步到简报，并在下一轮补充二次验证结论。",
-    mode: "daily_work",
-    tags: ["研究", "公开资料", "引用"],
-    recentMessages: [
-      {
-        id: "daily-research-brief-message-1",
-        role: "assistant",
-        content: "已把公开资料整理为研究简报，并列出仍需验证的问题。",
-        createdAt: "周一 16:40",
-        artifactIds: ["research-note-artifact"],
-        contextItemIds: ["research-links"],
-        approvalRequestIds: []
-      }
-    ],
-    icon: Search
-  }
-];
+export const sessionHistoryItems: SessionHistoryItem[] = [];
 
 export function createFallbackSessionHistoryPanelState(): SessionHistoryPanelState {
   const firstSession = sessionHistoryItems[0] ?? null;
@@ -179,7 +41,7 @@ export function createFallbackSessionHistoryPanelState(): SessionHistoryPanelSta
     source: "fallback",
     syncStatus: "syncing",
     notice:
-      "正在从 /api/daily/sessions?mode=daily_work 同步会话列表；连接完成前先展示本地快照。",
+      "正在同步编程会话列表。",
     restorePreview: createLocalSessionRestorePreviewState(firstSession)
   };
 }
@@ -187,7 +49,7 @@ export function createFallbackSessionHistoryPanelState(): SessionHistoryPanelSta
 export function createLocalSessionRestorePreviewState(
   item: SessionHistoryItem | null,
   syncStatus: SessionRestorePreviewSyncStatus = "idle",
-  notice = "尚未调用恢复预演；点击恢复后会先生成仅预览的输入框提示。"
+  notice = "选择历史会话后可恢复消息和工作区绑定。"
 ): SessionRestorePreviewPanelState {
   return {
     sessionId: item?.id ?? "",
@@ -196,7 +58,7 @@ export function createLocalSessionRestorePreviewState(
     previewOnly: true,
     externalEffects: ["none"],
     safetyStatement:
-      "仅预览：当前恢复动作只填入输入框，不发送邮件、不写入文档、不创建日历或任务，也不读取真实外部数据。",
+      "恢复操作只加载会话内容；工具执行仍遵循当前工作区和审批边界。",
     restorePrompt: item ? buildSessionRestorePrompt(item) : "",
     generatedAt: "本地示例",
     notice
@@ -205,7 +67,7 @@ export function createLocalSessionRestorePreviewState(
 
 export function mapSessionsResponse(payload: DailyWorkSessionsResponseDto) {
   if (payload.mode !== activeMode) {
-    throw new Error("Daily-work sessions response did not match the active mode.");
+    throw new Error("Session response did not match the active application mode.");
   }
 
   return (payload.sessions ?? []).map((session, index) =>
@@ -215,7 +77,7 @@ export function mapSessionsResponse(payload: DailyWorkSessionsResponseDto) {
 
 export function mapSessionResponse(payload: DailyWorkSessionResponseDto) {
   if (payload.mode !== activeMode || !payload.session) {
-    throw new Error("Daily-work session response did not include a matching session.");
+    throw new Error("Session response did not include a matching session.");
   }
 
   return mapSessionDtoToItem(payload.session, 0);
@@ -228,11 +90,11 @@ export function mapSessionDtoToItem(
   const artifactIds = sanitizeSessionIds(session.artifactIds);
   const approvalRequestIds = sanitizeSessionIds(session.approvalRequestIds);
   const contextItemIds = sanitizeSessionIds(session.contextItemIds);
-  const title = nonEmptyText(session.title, `Daily work session ${index + 1}`);
+  const title = nonEmptyText(session.title, `Coding session ${index + 1}`);
   const recentMessages = mapSessionRecentMessages(session.recentMessages);
 
   return {
-    id: nonEmptyText(session.id, `daily-work-session-${index + 1}`),
+    id: nonEmptyText(session.id, `coding-session-${index + 1}`),
     title,
     status: mapSessionHistoryStatus(session.status),
     workspaceId: nonEmptyText(session.workspaceId, "workspace-seekdesk"),
@@ -289,12 +151,12 @@ export function mapSessionRestorePreviewResponse(
     externalEffects: normalizedExternalEffects,
     safetyStatement: nonEmptyText(
       preview.safetyBoundary?.statement,
-      "仅预览：后端声明恢复预演不会产生外部效果。"
+      "恢复预演不会执行工具或修改工作区。"
     ),
     restorePrompt: nonEmptyText(preview.restorePrompt, buildSessionRestorePrompt(item)),
     generatedAt: formatSessionHistoryTimestamp(preview.generatedAt),
     notice:
-      "已从 /api/daily/sessions/:sessionId/restore-preview 同步；后端声明这是仅预览恢复提示，不会产生外部效果。"
+      "会话恢复预演已同步；确认发送前不会执行工具。"
   };
 }
 
@@ -422,7 +284,7 @@ export function buildSessionRestorePrompt(item: SessionHistoryItem) {
     `最近消息：${formatSessionRecentMessagePreview(item)}`,
     `标签：${item.tags.join("、")}`,
     "",
-    "边界：这是 daily_work restore-preview，只填入输入框等待我确认；不要发送邮件、写入文档、创建日历或任务，也不要读取真实外部数据。",
+    "边界：只恢复会话提示并等待确认，不执行文件写入、命令或测试。",
     "请先复述当前可继续的工作状态，再建议下一步行动。"
   ].join("\n");
 }

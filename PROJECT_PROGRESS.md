@@ -3,74 +3,77 @@
 ## 当前功能
 
 - 功能：`dual-runtime`
-- 分支：`codex/dual-runtime`
-- 任务范围：`T001-T124`
-- 已完成：`T001-T003`、`T005-T061`、`T063-T074`、`T076-T080`、`T082-T089`
-- 环境阻塞：`T004`、`T062`、`T075`、`T081`
-- 当前批次：`T090-T103` 双 Runtime 前端工作台
+- 开发分支：`codex/dual-runtime`
+- 任务范围：T001-T124
+- 已完成：T001-T123
+- 当前阶段：T124 提交、push、合并与 main 回归
+- 强制验收阻塞：无
 
 ## 已完成能力
 
-### Shared Contract 与 Runtime Core
+### 统一 Runtime 协议
 
-- 建立统一 Runtime、workspace、session、grant、tool call、operation 和错误协议。
-- `runtime-core` 提供文件、搜索、Git、写入、编辑、Shell 和测试的安全实现。
-- local daemon、server-local 和 cloud worker 共用同一执行核心。
-- 路径越界、symlink、ignore、大文件、二进制、危险命令、超时和输出截断均有稳定错误码。
+- shared 定义 `local_daemon`、`cloud_runtime`、显式开发 fallback、workspace、session、grant、tool、operation 和错误协议。
+- runtime-core 为 daemon 与 cloud worker 提供一致的文件、搜索、Git、写入、Shell 和测试实现。
+- 路径越界、symlink、ignore、二进制、大文件、危险命令、timeout、cancel 和输出截断都有稳定错误。
 
-### 数据、身份与凭据
+### Local Daemon
 
-- Seed、JSON 和 Postgres repository 支持 owner-scoped workspace、operation、tool、grant、message、usage 与 artifact。
-- Drizzle migration 已包含 owner/workspace/Runtime 回填、非空约束和索引。
-- repository credential 使用 owner-bound AES-256-GCM，支持 key version 与轮换。
-- 开发身份来自受信任环境变量；生产身份通过 OIDC/JWT 验证，客户端 header 不能覆盖 owner。
+- daemon 主动连接远程 API，支持注册、heartbeat、断线重连、稳定 workspaceId 和本机目录 browse/select/pick。
+- 文件读取、搜索、Git、写入、Shell 和测试都在用户电脑执行。
+- daemon 离线时返回 `runtime_unavailable`，不会降级到服务器目录。
 
-### 双 Runtime 后端
+### Cloud Runtime
 
-- `RuntimeResolver` 根据可信 owner、workspace、Runtime 类型和 lifecycle 状态选择执行端。
-- local daemon 支持主动注册、heartbeat、重连、文件、搜索、Git 和审批后命令执行。
-- cloud runtime 支持 provision、start、stop、retry、delete、execute、cancel、reconcile 和 idle stop。
-- cloud worker 容器契约包括 read-only rootfs、tmpfs、network none、cap-drop、no-new-privileges、资源限制和 non-root 用户。
-- Git bootstrap 仅接受 HTTPS URL，凭据通过临时 askpass 文件注入，不进入 URL、参数、状态或日志。
+- cloud workspace 支持 HTTPS Git、branch、`node22` image profile、可选加密 repository credential。
+- lifecycle 支持 provision、clone、start、stop、retry、delete、reconcile、idle stop、service restart 恢复和清理。
+- operation 终态先持久化再对外可见，避免 completed 与磁盘状态之间的竞态。
+- worker 固定 `/workspace`，执行容器为 non-root、read-only rootfs、network none、cap-drop、no-new-privileges，并限制 CPU、内存、PID、tmpfs 和 workspace quota。
+- 同一 workspace 支持并发读、串行写/命令和 request cancellation。
 
-### 审批与执行一致性
+### 身份、数据与审批
 
-- grant 严格绑定 `ownerId + sessionId + workspaceId + runtimeMode + action`，并校验撤销与有效期。
-- coding tool call 在创建时保存 owner、session、workspace、Runtime 和稳定 requestId。
-- requestId 原样贯穿 API、local daemon 和 cloud runtime。
-- repository 原子认领 pending tool call，重复点击不会重复执行。
-- 执行前重新读取并校验 session、workspace、tool call、grant 和 Runtime 状态。
-- running、completed、failed、cancelled 同步写入 tool call、activity event 和 runtime operation。
-- 文件写入生成关联 artifact、回写 session，并刷新当前 workspace/path 的 Git diff。
-- Shell/test trace 包含 command、cwd、stdout、stderr、exitCode、timeout、truncated、workspace、Runtime 和 requestId。
+- 开发 actor 来自服务端 env；生产 actor 使用 OIDC/JWT issuer、audience、JWKS。
+- Postgres/Drizzle 持久化 owner-scoped workspace、operation、session、tool、grant、activity、artifact 和 usage。
+- Git token 使用 owner-bound AES-256-GCM，支持 key version、previous key 和日志脱敏；浏览器只见 metadata。
+- grant 绑定 `ownerId + sessionId + workspaceId + runtimeMode + action`，支持过期和撤销。
+- tool call 使用稳定 requestId 与 repository 原子 claim，防止重复执行。
+- 写入关联 artifact 与 Git diff；Shell/test trace 保存 command、cwd、stdout、stderr、exitCode、timeout 和 truncated。
 
-## 自动验证
+### 前端工作台
 
-- Shared tests：`13` 项通过。
-- Agent tests：`26` 项通过。
-- Runtime Core tests：`7` 项通过。
-- Web tests：`12` 项通过。
-- API tests：`124` 项通过，`4` 项按环境跳过。
-- Daemon tests：`8` 项通过。
-- Runtime Worker tests：`6` 项通过。
-- Cloud Runtime tests：`10` 项通过。
-- `git diff --check`：通过。
-- `npm run lint`：通过。
-- `npm run test --workspaces --if-present`：通过。
-- `npm run typecheck`：通过。
-- `npm run build`：通过。
-- `npm run verify:secrets`：通过。
+- 新建对话提供“本机项目 / 云端工作区”选择，并记住最近成功 Runtime。
+- local tab 展示在线 daemon、目录选择与启动命令；cloud tab 支持创建、启动、停止、重试、删除。
+- session 固定绑定 workspace/runtime；历史按 workspace 分组，置顶优先且组内按 createdAt 倒序稳定。
+- 文件、搜索、Diff、终端和运行详情使用当前 session 绑定，默认聊天页不保留空白右栏。
+- daemon offline、cloud stopped、clone error、permission error 使用明确单一提示。
+- 页面无旧邮箱请求、乱码、连续问号、无响应入口和选中态跳动。
 
-## 环境阻塞
+## 最终验证证据
 
-- `jim-mac` 当前没有可用 Docker CLI；旧链接指向不存在的 `/Volumes/SSD/Docker.app`。
-- 因此真实 Postgres migration、runtime image、container fixture 和无公网验证暂未执行。
-- Postgres integration 的 `2` 项测试等待 `SEEKDESK_TEST_DATABASE_URL`。
-- Browser smoke 默认端口 `3000` 被失联 Docker backend 占用，最终验收将使用可配置端口。
+- `git diff --check`、lint、typecheck、build、secret hygiene：通过。
+- workspace tests：217 项通过，2 项 legacy daily-work case 显式跳过。
+- Postgres migration 与真实 repository integration：通过。
+- `seekdesk-runtime:node22` 真实容器 9 工具与安全参数：通过。
+- cloud lifecycle provision/execute/stop/restart/start/delete：通过，零残留容器与 workspace directory。
+- remote API + cloud-runtime + local daemon 同时在线 browser smoke：通过。
+- Windows Chrome 通过 SSH 访问远程 Web/API 的真实 UI smoke：通过。
+- smoke session、activity、usage、operation、cloud workspace 和测试文件清理：完成。
+
+完整命令、结果和限制见 `specs/dual-runtime/verify.md`。
+
+## 已知限制
+
+- cloud runtime v1 为单机 Docker，不包含多节点调度和云计费控制面。
+- local daemon v1 pairing token 尚未升级为生产级设备身份与短期轮换 token。
+- `jim-mac` 无 Playwright 可直接启动的 Chrome；真实 UI 使用 Windows Chrome 经 SSH port forwarding 验证。
+- public cloud fixture 需要 HTTPS Git egress。
 
 ## 下一步
 
-1. 完成 `T090-T103`：新建会话 Runtime 选择、local/cloud 表单、cloud lifecycle、历史分组和工作台状态联动。
-2. 完成 `T104-T117`：双 Runtime smoke、故障恢复、文案/网络扫描、README 与架构文档。
-3. Docker 恢复后补跑 `T004`、`T062`、`T075`、`T081`、`T119-T122`。
-4. 完成 `T118-T124` 全量验收、清理、提交、合并和 main 回归。
+1. 提交并 push `codex/dual-runtime`。
+2. 合并到 `main`，重新运行 build、migration、runtime/cloud integration 和 browser smoke。
+
+## 最后更新
+
+2026-07-16

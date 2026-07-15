@@ -4,6 +4,7 @@ import {
   cloudWorkspaceCreateRequestSchema,
   codingWorkspaceDetailSchema,
   codingWorkspaceSummarySchema,
+  repositoryCredentialListResponseSchema,
   workspaceLifecycleRequestSchema,
   type CodingWorkspaceRecord,
   type RuntimeLifecycleStatus,
@@ -31,7 +32,8 @@ export async function registerCodingWorkspaceRoutes(
     "/api/coding/workspaces/cloud",
     "/api/coding/workspaces/:workspaceId/start",
     "/api/coding/workspaces/:workspaceId/stop",
-    "/api/coding/workspaces/:workspaceId/retry"
+    "/api/coding/workspaces/:workspaceId/retry",
+    "/api/coding/repository-credentials"
   ]) {
     app.options(route, async (_request, reply) => reply.code(204).send());
   }
@@ -40,6 +42,13 @@ export async function registerCodingWorkspaceRoutes(
     mode: "coding_agent",
     workspaces: await resolver.listWorkspaces(request.actor.ownerId)
   }));
+
+  app.get("/api/coding/repository-credentials", async (request) =>
+    repositoryCredentialListResponseSchema.parse({
+      mode: "coding_agent",
+      credentials: await repository.listRepositoryCredentials(request.actor.ownerId)
+    })
+  );
 
   app.get<{ Params: { workspaceId: string } }>(
     "/api/coding/workspaces/:workspaceId",

@@ -100,6 +100,21 @@ export const workspaceRuntimeSelectionSchema = z.object({
   runtimeMode: userSelectableRuntimeModeSchema
 });
 
+export const repositoryCredentialMetadataSchema = z.object({
+  id: z.string().trim().min(1),
+  provider: z.literal("https_token"),
+  label: z.string().trim().min(1),
+  keyVersion: z.string().trim().min(1),
+  createdAt: z.string().datetime(),
+  updatedAt: z.string().datetime(),
+  revokedAt: z.string().datetime().optional()
+});
+
+export const repositoryCredentialListResponseSchema = z.object({
+  mode: appModeSchema.default("coding_agent"),
+  credentials: z.array(repositoryCredentialMetadataSchema)
+});
+
 export const workspaceRefSchema = codingWorkspaceSummarySchema;
 
 export type WorkspaceImageProfile = z.infer<
@@ -128,5 +143,8 @@ export type CloudRuntimeWorkspaceStatus = z.infer<
 >;
 export type WorkspaceRuntimeSelection = z.infer<
   typeof workspaceRuntimeSelectionSchema
+>;
+export type RepositoryCredentialMetadata = z.infer<
+  typeof repositoryCredentialMetadataSchema
 >;
 export type WorkspaceRef = z.infer<typeof workspaceRefSchema>;

@@ -6,7 +6,6 @@ import {
   Bot,
   FileCode2,
   FileText,
-  FolderOpen,
   GitCompare,
   MessageSquare,
   PanelLeft,
@@ -15,11 +14,14 @@ import {
   Terminal
 } from "lucide-react";
 
+import type { RuntimeLifecycleStatus, RuntimeMode } from "@seekdesk/shared";
+
 import {
   getRuntimeApiBaseUrl,
   selectedContextLabel,
   statusLabel
 } from "@/features/daily-work/domain";
+import { compareWorkspaceConversations } from "@/features/daily-work/domain/workspace-runtime";
 
 import { useChatController } from "@/features/daily-work/chat/hooks/useChatController";
 import { AgentTracePanel } from "@/features/daily-work/chat/components/ChatThread";
@@ -65,6 +67,7 @@ import {
 import { DailyWorkAssistantView } from "@/features/daily-work/components/DailyWorkAssistantView";
 import { DailyWorkModuleStack } from "@/features/daily-work/components/DailyWorkModuleStack";
 import { DailyWorkSettingsSection } from "@/features/daily-work/components/DailyWorkSettingsSection";
+import { NewConversationWorkspaceDialog } from "@/features/daily-work/components/NewConversationWorkspaceDialog";
 
 export default function Page() {
   const [activeView, setActiveView] = useState<DailyWorkView>("assistant");
@@ -74,6 +77,7 @@ export default function Page() {
     Record<string, string>
   >({});
   const [selectedWorkspaceId, setSelectedWorkspaceId] = useState("");
+  const [selectedRuntimeMode, setSelectedRuntimeMode] = useState<RuntimeMode>();
   const [newConversationDialogOpen, setNewConversationDialogOpen] = useState(false);
   const handleSessionTitleChanged = useCallback(
     (session: { sessionId: string; title: string }) => {
@@ -138,6 +142,7 @@ export default function Page() {
     setError,
     setInput,
     startCurrentConversation,
+    submitCurrentInput,
     status
   } = useChatController({
     apiBaseUrl,
@@ -146,7 +151,8 @@ export default function Page() {
       contextItemIds: selectedContextId ? [selectedContextId] : [],
       artifactIds: selectedArtifactId ? [selectedArtifactId] : [],
       workflowIds: selectedWorkflowActionId ? [selectedWorkflowActionId] : [],
-      ...(selectedWorkspaceId ? { workspaceId: selectedWorkspaceId } : {})
+      ...(selectedWorkspaceId ? { workspaceId: selectedWorkspaceId } : {}),
+      ...(selectedRuntimeMode ? { runtimeMode: selectedRuntimeMode } : {})
     },
     onActivityChanged: refreshActivityFeed,
     onSessionTitleChanged: handleSessionTitleChanged
@@ -408,6 +414,10 @@ export default function Page() {
       workspaceId: item.workspaceId,
       workspaceName: item.workspaceName ?? workspaceLabelFromPath(item.workspaceRoot) ?? item.workspaceId,
       workspaceRoot: item.workspaceRoot ?? item.workspaceId,
+      runtimeMode: item.workspaceRuntimeMode,
+      runtimeStatus: codingWorkbench.state.workspaces.find(
+        (workspace) => workspace.workspaceId === item.workspaceId
+      )?.status,
       createdAt: item.createdAt,
       sourceIndex,
       item: {
@@ -420,23 +430,7 @@ export default function Page() {
         pinned: Boolean(item.pinned)
       }
     }))
-    .sort((left, right) => {
-      const leftPinned = left.item.pinned ? 1 : 0;
-      const rightPinned = right.item.pinned ? 1 : 0;
-
-      if (leftPinned !== rightPinned) {
-        return rightPinned - leftPinned;
-      }
-
-      const createdAtOrder =
-        parseConversationCreatedAt(right.createdAt, right.sourceIndex) -
-        parseConversationCreatedAt(left.createdAt, left.sourceIndex);
-      if (createdAtOrder !== 0) {
-        return createdAtOrder;
-      }
-
-      return left.sourceIndex - right.sourceIndex;
-    });
+    .sort(compareWorkspaceConversations);
   const sidebarConversationItems = sidebarConversationRecords.map((record) => record.item);
   const sidebarConversationGroups = buildConversationGroups(sidebarConversationRecords);
   const assistantConversationTitle =
@@ -504,6 +498,8 @@ export default function Page() {
     );
 
     if (conversation) {
+      setSelectedWorkspaceId(conversation.workspaceId);
+      setSelectedRuntimeMode(conversation.workspaceRuntimeMode);
       selectSessionHistory(conversation);
     }
 
@@ -602,6 +598,10 @@ export default function Page() {
                 selectedContextTitle={selectedContextTitle}
                 selectedTemplateTitle={selectedTemplate?.title ?? null}
                 status={status}
+                workspaceReady={Boolean(
+                  codingWorkbench.state.workspace?.status === "ready" &&
+                  codingWorkbench.state.workspace.connected
+                )}
                 onApplyPrompt={applyPrompt}
                 onAuthorizeToolCall={authorizeToolCallForSession}
                 onCancelRequest={cancelRequest}
@@ -609,6 +609,7 @@ export default function Page() {
                 onExecuteToolCall={executeToolCall}
                 onInputChange={setInput}
                 onRetry={retryLastPrompt}
+                onSend={() => void submitCurrentInput()}
               />
             ) : null}
 
@@ -747,7 +748,7 @@ export default function Page() {
                       <ModeSnapshotPanel
                         pendingToolCount={pendingCodingToolCount}
                         runtimeMode={codingWorkbench.state.workspace?.runtimeMode}
-                        workspaceName={codingWorkbench.state.workspace?.workspaceName}
+                        workspaceName={codingWorkbench.state.workspace?.name}
                       />
                     </>
                   ) : null}
@@ -780,32 +781,18 @@ export default function Page() {
     </DailyWorkDashboardShell>
     <NewConversationWorkspaceDialog
       apiBaseUrl={apiBaseUrl}
+      controller={codingWorkbench}
       open={newConversationDialogOpen}
-      state={codingWorkbench.state}
-      onBrowseWorkspace={(path, workspaceId) => void codingWorkbench.actions.browseWorkspace(path, workspaceId)}
       onClose={() => setNewConversationDialogOpen(false)}
-      onCreate={async (workspaceId) => {
-        const manualPath = codingWorkbench.state.workspaceBrowser.manualPath.trim();
-        let targetWorkspaceId = workspaceId || selectedWorkspaceId || codingWorkbench.state.workspaces[0]?.workspaceId || "";
-        if (!targetWorkspaceId && !manualPath) {
-          const refreshedWorkspaces = await codingWorkbench.actions.refreshWorkspaces();
-          targetWorkspaceId = refreshedWorkspaces[0]?.workspaceId || "";
-        }
-        if (manualPath) {
-          await codingWorkbench.actions.selectWorkspace(manualPath, targetWorkspaceId);
-        } else if (targetWorkspaceId) {
-          setSelectedWorkspaceId(targetWorkspaceId);
-        } else if (codingWorkbench.state.workspaces[0]) {
-          setSelectedWorkspaceId(codingWorkbench.state.workspaces[0].workspaceId);
-        }
-        selectCurrentConversation();
+      onCreate={async (workspace) => {
+        setSelectedWorkspaceId(workspace.workspaceId);
+        setSelectedRuntimeMode(workspace.runtimeMode);
+        setSelectedSessionHistoryId(null);
+        setCurrentConversationTitle("新对话");
+        startCurrentConversation();
+        setActiveView("assistant");
         setNewConversationDialogOpen(false);
       }}
-      onPickWorkspace={(workspaceId) => void codingWorkbench.actions.pickWorkspace(workspaceId)}
-      onSelectExistingWorkspace={(workspaceId) => {
-        codingWorkbench.actions.setActiveWorkspace(workspaceId);
-      }}
-      onUpdateWorkspacePath={codingWorkbench.actions.updateWorkspacePathDraft}
     />
     </>
   );
@@ -817,6 +804,8 @@ function buildConversationGroups(
     workspaceId: string;
     workspaceName: string;
     workspaceRoot: string;
+    runtimeMode: RuntimeMode | undefined;
+    runtimeStatus: RuntimeLifecycleStatus | undefined;
     item: {
       id: string;
       title: string;
@@ -835,6 +824,8 @@ function buildConversationGroups(
       id: record.workspaceId,
       label: record.workspaceName,
       description: record.workspaceRoot,
+      ...(record.runtimeMode ? { runtimeMode: record.runtimeMode } : {}),
+      ...(record.runtimeStatus ? { runtimeStatus: record.runtimeStatus } : {}),
       items: []
     };
     group.items.push(record.item);
@@ -851,179 +842,4 @@ function workspaceLabelFromPath(pathValue: string | undefined) {
 
   const normalized = pathValue.replace(/\\/g, "/");
   return normalized.split("/").filter(Boolean).pop() ?? normalized;
-}
-
-type CodingWorkbenchController = ReturnType<typeof useCodingWorkbench>;
-
-function NewConversationWorkspaceDialog({
-  apiBaseUrl,
-  open,
-  state,
-  onBrowseWorkspace,
-  onClose,
-  onCreate,
-  onPickWorkspace,
-  onSelectExistingWorkspace,
-  onUpdateWorkspacePath
-}: {
-  apiBaseUrl: string;
-  open: boolean;
-  state: CodingWorkbenchController["state"];
-  onBrowseWorkspace: (path?: string, workspaceId?: string) => void;
-  onClose: () => void;
-  onCreate: (workspaceId?: string) => Promise<void>;
-  onPickWorkspace: (workspaceId?: string) => void;
-  onSelectExistingWorkspace: (workspaceId: string) => void;
-  onUpdateWorkspacePath: (path: string) => void;
-}) {
-  if (!open) {
-    return null;
-  }
-
-  const activeWorkspaceId = state.activeWorkspaceId || state.workspace?.workspaceId || "";
-  const activeWorkspace = state.workspaces.find(
-    (workspace) => workspace.workspaceId === activeWorkspaceId
-  );
-  const preferredLocalWorkspace =
-    activeWorkspace?.runtimeMode === "local_daemon"
-      ? activeWorkspace
-      : state.workspaces.find((workspace) => workspace.runtimeMode === "local_daemon");
-  const workspaceForLocalSelection = preferredLocalWorkspace?.workspaceId || activeWorkspaceId;
-  const hasConnectedLocalDaemon = Boolean(preferredLocalWorkspace);
-  const createDisabled = state.workspaceBrowser.status === "selecting";
-  const daemonStartCommand =
-    'seekdesk-daemon start --api ' +
-    apiBaseUrl +
-    ' --token seekdesk-local-dev --workspace "C:\\path\\to\\project"';
-
-  return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-950/45 p-4">
-      <div className="w-full max-w-3xl rounded-[10px] border border-slate-200 bg-white shadow-2xl">
-        <div className="flex items-center justify-between border-b border-slate-200 px-5 py-4">
-          <div>
-            <h2 className="font-heading text-base font-semibold text-slate-950">新建编程对话</h2>
-            <p className="mt-1 text-sm text-slate-600">先绑定一个本机工作区，后续文件、搜索、Diff、终端都会限定在该目录。</p>
-          </div>
-          <button type="button" onClick={onClose} className="rounded-[6px] border border-transparent px-3 py-1.5 text-sm font-medium text-slate-600 hover:border-slate-200 hover:bg-slate-50">
-            关闭
-          </button>
-        </div>
-
-        <div className="grid gap-4 p-5 lg:grid-cols-[minmax(0,0.9fr)_minmax(0,1.1fr)]">
-          <section className="rounded-[8px] border border-slate-200 p-4">
-            <div className="mb-3 flex items-center gap-2 text-sm font-semibold text-slate-900">
-              <FolderOpen className="size-4 text-teal-600" aria-hidden="true" />
-              已连接工作区
-            </div>
-            {!hasConnectedLocalDaemon ? (
-              <div className="mb-3 rounded-[8px] border border-amber-200 bg-amber-50 p-3 text-xs text-amber-900">
-                <div className="font-semibold">未检测到本机 daemon</div>
-                <p className="mt-1 leading-5">先在本机项目目录启动 daemon，再回到这里选择本机工作区。</p>
-                <code className="mt-2 block select-all break-all rounded-[6px] bg-white/80 px-2 py-1 font-mono text-[11px] text-slate-800">
-                  {daemonStartCommand}
-                </code>
-              </div>
-            ) : null}
-            <div className="space-y-2">
-              {state.workspaces.map((workspace) => {
-                const active = activeWorkspaceId === workspace.workspaceId;
-                return (
-                  <button
-                    key={workspace.workspaceId}
-                    type="button"
-                    data-coding-dialog-workspace={workspace.workspaceId}
-                    onClick={() => onSelectExistingWorkspace(workspace.workspaceId)}
-                    className={
-                      "w-full rounded-[8px] border px-3 py-2 text-left transition-colors " +
-                      (active
-                        ? "border-teal-300 bg-teal-50 text-teal-950"
-                        : "border-slate-200 text-slate-700 hover:border-teal-200 hover:bg-teal-50/60")
-                    }
-                  >
-                    <div className="truncate text-sm font-semibold">{workspace.name}</div>
-                    <div className="mt-1 truncate text-xs text-slate-500">{workspace.rootPath}</div>
-                    <div className="mt-1 text-[11px] text-slate-500">
-                      {workspace.runtimeMode === "local_daemon" ? "本机 daemon" : "远程 fallback"}
-                      {workspace.machineName ? " / " + workspace.machineName : ""}
-                    </div>
-                  </button>
-                );
-              })}
-            </div>
-          </section>
-
-          <section className="rounded-[8px] border border-slate-200 p-4">
-            <div className="mb-3 text-sm font-semibold text-slate-900">选择文件夹</div>
-            <div className="flex flex-wrap gap-2">
-              <button
-                type="button"
-                onClick={() => onPickWorkspace(workspaceForLocalSelection || undefined)}
-                disabled={!hasConnectedLocalDaemon}
-                className={
-                  "h-9 rounded-[6px] border px-3 text-sm font-semibold " +
-                  (hasConnectedLocalDaemon
-                    ? "border-teal-200 bg-teal-50 text-teal-800 hover:bg-teal-100"
-                    : "cursor-not-allowed border-slate-200 bg-slate-100 text-slate-400")
-                }
-              >
-                打开本机选择器
-              </button>
-              <button type="button" onClick={() => onBrowseWorkspace(state.workspaceBrowser.currentPath || preferredLocalWorkspace?.rootPath || state.workspace?.workspaceRoot, workspaceForLocalSelection || undefined)} className="h-9 rounded-[6px] border border-slate-200 px-3 text-sm font-semibold text-slate-700 hover:bg-slate-50">
-                浏览目录
-              </button>
-            </div>
-            <input
-              value={state.workspaceBrowser.manualPath ?? ""}
-              onChange={(event) => onUpdateWorkspacePath(event.target.value)}
-              placeholder="输入本机工作区路径"
-              className="mt-3 h-10 w-full rounded-[6px] border border-slate-200 px-3 text-sm outline-none focus:border-teal-400"
-            />
-            <div className="mt-2 text-xs text-slate-500">
-              {state.workspaceBrowser.notice ||
-                (preferredLocalWorkspace
-                  ? "\u9009\u62e9\u5668\u5c06\u4f7f\u7528 " + (preferredLocalWorkspace.machineName ?? "\u672c\u673a") + " / " + preferredLocalWorkspace.rootPath
-                  : "\u672c\u673a\u9009\u62e9\u5668\u9700\u8981\u5df2\u8fde\u63a5\u7684\u672c\u673a daemon\uff1b\u8fdc\u7a0b fallback \u53ea\u80fd\u6d4f\u89c8\u670d\u52a1\u5668\u76ee\u5f55\u3002")}
-            </div>
-
-            <div className="mt-3 max-h-48 overflow-y-auto rounded-[8px] border border-slate-100">
-              {state.workspaceBrowser.parentPath ? (
-                <button type="button" onClick={() => onBrowseWorkspace(state.workspaceBrowser.parentPath ?? undefined, workspaceForLocalSelection || undefined)} className="block w-full border-b border-slate-100 px-3 py-2 text-left text-sm text-slate-700 hover:bg-slate-50">
-                  ../
-                </button>
-              ) : null}
-              {state.workspaceBrowser.entries.map((entry) => (
-                <button key={entry.path} type="button" onClick={() => onBrowseWorkspace(entry.path, workspaceForLocalSelection || undefined)} className="block w-full border-b border-slate-100 px-3 py-2 text-left text-sm text-slate-700 last:border-b-0 hover:bg-slate-50">
-                  {entry.name}
-                </button>
-              ))}
-            </div>
-          </section>
-        </div>
-
-        <div className="flex items-center justify-end gap-2 border-t border-slate-200 px-5 py-4">
-          <button type="button" onClick={onClose} className="h-9 rounded-[6px] border border-slate-200 px-4 text-sm font-semibold text-slate-700 hover:bg-slate-50">
-            取消
-          </button>
-          <button
-            type="button"
-            data-coding-dialog-create
-            onClick={() => void onCreate(workspaceForLocalSelection || undefined)}
-            disabled={createDisabled}
-            className={
-              "h-9 rounded-[6px] border px-4 text-sm font-semibold text-white " +
-              (createDisabled
-                ? "cursor-not-allowed border-slate-300 bg-slate-300"
-                : "border-orange-500 bg-orange-500 hover:bg-orange-600")
-            }
-          >
-            {state.workspaceBrowser.status === "selecting" ? "\u6b63\u5728\u7ed1\u5b9a..." : "\u521b\u5efa\u5bf9\u8bdd"}
-          </button>
-        </div>
-      </div>
-    </div>
-  );
-}
-function parseConversationCreatedAt(value: string, fallbackIndex: number) {
-  const timestamp = Date.parse(value);
-  return Number.isNaN(timestamp) ? fallbackIndex : timestamp;
 }

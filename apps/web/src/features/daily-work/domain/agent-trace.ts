@@ -14,7 +14,7 @@ const defaultPermissionBoundary: AgentPermissionBoundary = {
   previewOnly: true,
   externalEffects: ["none"],
   statement:
-    "Coding tools can inspect the workspace. File writes, shell commands, git writes, and tests require same-session authorization and are audited in trace/activity/artifacts."
+    "读取与 Git 检查限定在当前工作区；文件写入、命令和测试需要同一会话授权，并写入运行记录。"
 };
 
 const emptyUsageSummary: AgentModelUsageSummary = {
@@ -32,6 +32,9 @@ export function createEmptyAgentTraceState(
   return {
     sessionId: null,
     provider: null,
+    workspaceId: null,
+    runtimeMode: null,
+    workspace: null,
     syncStatus: "idle",
     toolCalls: [],
     toolActivityEvents: [],
@@ -39,7 +42,7 @@ export function createEmptyAgentTraceState(
     modelUsageSummary: emptyUsageSummary,
     permissionGrants: [],
     permissionBoundary: defaultPermissionBoundary,
-    notice: "Agent trace is ready for the next coding request.",
+    notice: "运行详情已准备就绪。",
     ...overrides
   };
 }
@@ -63,6 +66,9 @@ export function mapAgentTraceResponse(
   return createEmptyAgentTraceState({
     sessionId: payload.sessionId ?? fallback.sessionId,
     provider: fallback.provider ?? summary.provider,
+    workspaceId: payload.workspaceId ?? payload.workspace?.workspaceId ?? null,
+    runtimeMode: payload.runtimeMode ?? payload.workspace?.runtimeMode ?? null,
+    workspace: payload.workspace ?? null,
     syncStatus: "live",
     toolCalls: (payload.toolCalls ?? [])
       .map(mapToolCallRecord)
@@ -76,7 +82,7 @@ export function mapAgentTraceResponse(
       .map(mapPermissionGrant)
       .filter((item): item is AgentPermissionGrantTraceItem => Boolean(item)),
     permissionBoundary: mapPermissionBoundary(payload.permissionBoundary),
-    notice: "Agent trace synced from the API."
+    notice: "运行详情已从 API 同步。"
   });
 }
 
@@ -89,7 +95,7 @@ export function createAgentTraceDegradedState(input: {
     sessionId: input.sessionId,
     provider: input.provider ?? null,
     syncStatus: "degraded",
-    notice: `Agent trace could not be refreshed: ${input.reason}`
+    notice: `运行详情刷新失败：${input.reason}`
   });
 }
 
@@ -102,6 +108,9 @@ function mapToolCallRecord(value: unknown): AgentToolCallTraceItem | null {
     id: stringValue(value.id, "tool-call"),
     name: stringValue(value.name, "unknown_tool"),
     status: stringValue(value.status, "unknown"),
+    workspaceId: nullableString(value.workspaceId),
+    runtimeMode: runtimeModeValue(value.runtimeMode),
+    requestId: nullableString(value.requestId),
     inputJson: value.inputJson,
     outputJson: value.outputJson,
     previewOnly: booleanValue(value.previewOnly, true),
@@ -145,8 +154,10 @@ function mapPermissionGrant(value: unknown): AgentPermissionGrantTraceItem | nul
 
   return {
     id: stringValue(value.id, "permission-grant"),
-    provider: stringValue(value.provider, "microsoft"),
+    provider: stringValue(value.provider, "unknown"),
     sessionId: stringValue(value.sessionId, ""),
+    workspaceId: nullableString(value.workspaceId),
+    runtimeMode: runtimeModeValue(value.runtimeMode),
     action: stringValue(value.action, "unknown_action"),
     decision: stringValue(value.decision, "allow_for_session"),
     status: stringValue(value.status, "unknown"),
@@ -210,6 +221,23 @@ function mapPermissionBoundary(
 
 function stringValue(value: unknown, fallback: string) {
   return typeof value === "string" && value.trim() ? value : fallback;
+}
+
+function nullableString(value: unknown) {
+  return typeof value === "string" && value.trim() ? value : null;
+}
+
+function runtimeModeValue(value: unknown) {
+  if (value === "local_daemon" || value === "cloud_runtime" || value === "server_local") {
+    return value;
+  }
+  if (value === "cloud_workspace") {
+    return "cloud_runtime" as const;
+  }
+  if (value === "local_runtime") {
+    return "server_local" as const;
+  }
+  return null;
 }
 
 function booleanValue(value: unknown, fallback: boolean) {
