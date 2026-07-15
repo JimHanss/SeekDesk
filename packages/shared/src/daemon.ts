@@ -76,14 +76,17 @@ export const daemonRequestCommandSchema = z.enum([
   "workspace.browse",
   "workspace.select",
   "workspace.pick",
-  "tool.execute"
+  "tool.execute",
+  "request.cancel"
 ]);
 
 export const daemonRequestMessageSchema = z.object({
   type: z.literal("daemon.request"),
   requestId: z.string().trim().min(1),
+  protocolVersion: daemonProtocolVersionSchema,
   command: daemonRequestCommandSchema,
-  payload: z.unknown().optional()
+  payload: z.unknown().optional(),
+  timeoutMs: z.number().int().min(1000).max(300_000).default(30_000)
 });
 
 export const daemonRegisteredMessageSchema = z.object({

@@ -182,11 +182,26 @@ export class DaemonRegistry {
     return new Promise<unknown>((resolve, reject) => {
       const timer = setTimeout(() => {
         this.pending.delete(requestId);
+        client.socket.send(JSON.stringify({
+          type: "daemon.request",
+          requestId: `cancel-${requestId}`,
+          protocolVersion: 1,
+          command: "request.cancel",
+          payload: { requestId },
+          timeoutMs: 5_000
+        }));
         reject(new CodingRuntimeError("Daemon request timed out.", "daemon_request_timeout", { workspaceId, command }));
       }, timeoutMs);
 
       this.pending.set(requestId, { resolve, reject, timer });
-      client.socket.send(JSON.stringify({ type: "daemon.request", requestId, command, payload }));
+      client.socket.send(JSON.stringify({
+        type: "daemon.request",
+        requestId,
+        protocolVersion: 1,
+        command,
+        payload,
+        timeoutMs
+      }));
     });
   }
 

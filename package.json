@@ -8,6 +8,7 @@
     "packages/shared",
     "packages/agent",
     "packages/config",
+    "packages/runtime-core",
     "apps/web",
     "apps/api",
     "apps/daemon"

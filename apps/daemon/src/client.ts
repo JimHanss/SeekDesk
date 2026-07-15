@@ -1,6 +1,7 @@
 import process from "node:process";
 import { setTimeout as delay } from "node:timers/promises";
 
+import { RuntimeError } from "@seekdesk/runtime-core";
 import {
   codingToolNameSchema,
   daemonRequestMessageSchema,
@@ -30,22 +31,17 @@ export async function startDaemonClient(options: DaemonClientOptions) {
     } catch (error) {
       console.error("[seekdesk-daemon] connection failed:", formatUnknownError(error));
     }
-
     if (!reconnect) {
       return;
     }
-
     await delay(1500);
   }
 }
 
-function runDaemonSocket(input: {
-  url: string;
-  token: string;
-  runtime: DaemonLocalRuntime;
-}) {
+function runDaemonSocket(input: { url: string; token: string; runtime: DaemonLocalRuntime }) {
   return new Promise<void>((resolve, reject) => {
     const socket = new WebSocket(input.url);
+    const requests = new Map<string, AbortController>();
     let heartbeat: ReturnType<typeof setInterval> | null = null;
     let settled = false;
 
@@ -54,6 +50,10 @@ function runDaemonSocket(input: {
         clearInterval(heartbeat);
         heartbeat = null;
       }
+      for (const controller of requests.values()) {
+        controller.abort("socket_closed");
+      }
+      requests.clear();
       if (settled) {
         return;
       }
@@ -71,7 +71,6 @@ function runDaemonSocket(input: {
         token: input.token,
         status: input.runtime.status()
       }));
-
       heartbeat = setInterval(() => {
         if (socket.readyState === WebSocket.OPEN) {
           socket.send(JSON.stringify({ type: "daemon.heartbeat", status: input.runtime.status() }));
@@ -80,9 +79,8 @@ function runDaemonSocket(input: {
     });
 
     socket.addEventListener("message", (event) => {
-      void handleMessage(socket, input.runtime, String(event.data));
+      void handleMessage(socket, input.runtime, requests, String(event.data));
     });
-
     socket.addEventListener("close", () => finish());
     socket.addEventListener("error", () => finish(new Error("WebSocket error")));
   });
@@ -91,6 +89,7 @@ function runDaemonSocket(input: {
 async function handleMessage(
   socket: WebSocket,
   runtime: DaemonLocalRuntime,
+  requests: Map<string, AbortController>,
   rawMessage: string
 ) {
   let request: DaemonRequestMessage;
@@ -104,15 +103,55 @@ async function handleMessage(
     return;
   }
 
+  if (request.protocolVersion !== runtime.status().protocolVersion) {
+    sendResponse(socket, request.requestId, false, undefined, {
+      code: "runtime_protocol_mismatch",
+      message: `Unsupported daemon protocol version ${request.protocolVersion}.`
+    });
+    return;
+  }
+
+  if (request.command === "request.cancel") {
+    const targetRequestId = getTargetRequestId(request.payload);
+    const controller = targetRequestId ? requests.get(targetRequestId) : undefined;
+    controller?.abort("remote_cancelled");
+    sendResponse(socket, request.requestId, true, { targetRequestId, cancelled: Boolean(controller) });
+    return;
+  }
+
+  const controller = new AbortController();
+  requests.set(request.requestId, controller);
+  const timeout = setTimeout(() => controller.abort("request_timeout"), request.timeoutMs);
+
   try {
-    const result = await executeRequest(runtime, request);
+    const result = await executeRequest(runtime, request, controller.signal);
+    if (controller.signal.aborted) {
+      throw cancellationError(controller.signal.reason, request.requestId);
+    }
     sendResponse(socket, request.requestId, true, result);
   } catch (error) {
-    sendResponse(socket, request.requestId, false, undefined, formatDaemonError(error));
+    sendResponse(
+      socket,
+      request.requestId,
+      false,
+      undefined,
+      formatDaemonError(
+        controller.signal.aborted
+          ? cancellationError(controller.signal.reason, request.requestId)
+          : error
+      )
+    );
+  } finally {
+    clearTimeout(timeout);
+    requests.delete(request.requestId);
   }
 }
 
-async function executeRequest(runtime: DaemonLocalRuntime, request: DaemonRequestMessage) {
+async function executeRequest(
+  runtime: DaemonLocalRuntime,
+  request: DaemonRequestMessage,
+  signal: AbortSignal
+) {
   switch (request.command) {
     case "workspace.browse":
       return runtime.browseWorkspaceDirectories(request.payload as CodingWorkspaceBrowseInput);
@@ -123,8 +162,10 @@ async function executeRequest(runtime: DaemonLocalRuntime, request: DaemonReques
     case "tool.execute": {
       const payload = request.payload as { toolName?: unknown; input?: unknown };
       const toolName = codingToolNameSchema.parse(payload.toolName);
-      return runtime.execute(toolName, payload.input ?? {});
+      return runtime.execute(toolName, payload.input ?? {}, { requestId: request.requestId, signal });
     }
+    case "request.cancel":
+      return undefined;
   }
 }
 
@@ -138,7 +179,6 @@ function sendResponse(
   if (socket.readyState !== WebSocket.OPEN) {
     return;
   }
-
   socket.send(JSON.stringify({
     type: "daemon.response",
     requestId,
@@ -146,6 +186,23 @@ function sendResponse(
     ...(result === undefined ? {} : { result }),
     ...(error ? { error } : {})
   }));
+}
+
+function getTargetRequestId(payload: unknown) {
+  if (!payload || typeof payload !== "object") {
+    return null;
+  }
+  const value = (payload as { requestId?: unknown }).requestId;
+  return typeof value === "string" && value.trim() ? value : null;
+}
+
+function cancellationError(reason: unknown, requestId: string) {
+  const timedOut = reason === "request_timeout";
+  return new RuntimeError(
+    timedOut ? "Daemon request timed out." : "Daemon request was cancelled.",
+    timedOut ? "runtime_request_timeout" : "runtime_request_cancelled",
+    { requestId }
+  );
 }
 
 function createDaemonWebSocketUrl(apiUrl: string) {
@@ -157,18 +214,10 @@ function createDaemonWebSocketUrl(apiUrl: string) {
 }
 
 function formatDaemonError(error: unknown) {
-  if (error instanceof DaemonRuntimeError) {
-    return {
-      code: error.code,
-      message: error.message,
-      details: error.details
-    };
+  if (error instanceof DaemonRuntimeError || error instanceof RuntimeError) {
+    return { code: error.code, message: error.message, details: error.details };
   }
-
-  return {
-    code: "daemon_request_failed",
-    message: formatUnknownError(error)
-  };
+  return { code: "daemon_request_failed", message: formatUnknownError(error) };
 }
 
 function formatUnknownError(error: unknown) {

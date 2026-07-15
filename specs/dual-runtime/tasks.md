@@ -40,19 +40,19 @@
 
 ## 阶段 2：共享 Runtime Core
 
-- [ ] T016 创建 `packages/runtime-core` workspace、TypeScript 配置、package scripts 和公共导出。
-- [ ] T017 在 `runtime-core` 定义统一 `WorkspaceRuntime`、`RuntimeExecutionContext`、`RuntimeError` 和结构化执行结果。
-- [ ] T018 提取 workspace root 解析、路径穿越拦截、ignore 目录、symlink 边界和相对路径规范化逻辑。
-- [ ] T019 提取文件树、文本读取、文件大小限制、二进制检测、写文件和精确替换实现。
-- [ ] T020 提取文本搜索、glob 过滤、最大结果数、单行截断和大目录遍历限制。
-- [ ] T021 提取只读 `git status`、`git diff` 和 Git 仓库错误映射。
-- [ ] T022 提取 Shell/test 调用、危险命令拒绝、cwd 锁定、timeout、输出截断、环境变量脱敏和 Windows 隐藏窗口逻辑。
-- [ ] T023 为 `runtime-core` 增加路径越界、symlink、ignore、二进制、大文件、替换数量、危险命令、超时和截断单测。
-- [ ] T024 将 `apps/daemon/src/local-runtime.ts` 改为组合 `runtime-core`，只保留 daemon 状态和系统文件夹选择器。
-- [ ] T025 更新 `apps/daemon/src/client.ts`，增加协议版本、request id、取消/超时处理和结构化 Runtime error 映射。
-- [ ] T026 将 `apps/api/src/services/coding-runtime.ts` 的 `server_local` 实现改为组合 `runtime-core`，删除重复工具逻辑。
-- [ ] T027 更新 daemon 与 server-local 测试，证明两种 adapter 对相同 fixture 返回一致结果。
-- [ ] T028 启动真实 local daemon，验证注册、心跳、文件、搜索、Git 和审批执行链路保持通过。
+- [x] T016 创建 `packages/runtime-core` workspace、TypeScript 配置、package scripts 和公共导出。
+- [x] T017 在 `runtime-core` 定义统一 `WorkspaceRuntime`、`RuntimeExecutionContext`、`RuntimeError` 和结构化执行结果。
+- [x] T018 提取 workspace root 解析、路径穿越拦截、ignore 目录、symlink 边界和相对路径规范化逻辑。
+- [x] T019 提取文件树、文本读取、文件大小限制、二进制检测、写文件和精确替换实现。
+- [x] T020 提取文本搜索、glob 过滤、最大结果数、单行截断和大目录遍历限制。
+- [x] T021 提取只读 `git status`、`git diff` 和 Git 仓库错误映射。
+- [x] T022 提取 Shell/test 调用、危险命令拒绝、cwd 锁定、timeout、输出截断、环境变量脱敏和 Windows 隐藏窗口逻辑。
+- [x] T023 为 `runtime-core` 增加路径越界、symlink、ignore、二进制、大文件、替换数量、危险命令、超时和截断单测。
+- [x] T024 将 `apps/daemon/src/local-runtime.ts` 改为组合 `runtime-core`，只保留 daemon 状态和系统文件夹选择器。
+- [x] T025 更新 `apps/daemon/src/client.ts`，增加协议版本、request id、取消/超时处理和结构化 Runtime error 映射。
+- [x] T026 将 `apps/api/src/services/coding-runtime.ts` 的 `server_local` 实现改为组合 `runtime-core`，删除重复工具逻辑。
+- [x] T027 更新 daemon 与 server-local 测试，证明两种 adapter 对相同 fixture 返回一致结果。
+- [x] T028 启动真实 local daemon，验证注册、心跳、文件、搜索、Git 和审批执行链路保持通过。
 
 ## 阶段 3：数据模型、凭据与身份
 

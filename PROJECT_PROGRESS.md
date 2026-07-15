@@ -5,7 +5,7 @@
 - 功能：`dual-runtime`
 - 分支：`codex/dual-runtime`
 - 任务范围：`T001-T124`
-- 当前批次：`T001-T015`
+- 当前批次：`T016-T028` 已完成，准备进入 `T029-T041`
 - 基线 HEAD：`855c888606ca933acf4879dc933d3b2b3852f13b`
 
 ## 2026-07-15 基线检查
@@ -34,6 +34,7 @@
 - `T003`：已执行并记录现有自动化基线。
 - `T004`：等待 Docker Engine 恢复后完成。
 - `T005-T015`：已完成。新增统一 Runtime/workspace/session/grant/tool/chat contract，并保留旧 runtime 名称和旧记录兼容。
+- `T016-T028`：已完成。新增共享 `runtime-core`，daemon 与 server-local adapter 使用同一执行实现，并完成真实 daemon 审批执行验收。
 
 ## T001-T015 批次验证
 
@@ -44,3 +45,12 @@
 - `npm run build`：通过。
 - `git diff --check`：通过。
 - `T004` 仍未完成：Docker socket 无响应，真实 Postgres/Docker 验证将在环境恢复后补跑。
+
+## T016-T028 批次验证
+
+- Runtime Core tests：`7` 项通过，覆盖路径越界、symlink、ignore、二进制、大文件、精确替换、危险命令、timeout 与输出截断。
+- Adapter tests：daemon `8` 项通过；API `97` 项通过、`3` 项按环境跳过。
+- 真实 daemon：在 `4310` 端口完成注册、heartbeat、文件树、文件读取、搜索、Git status/diff 验证。
+- 真实审批链：`coding.run_shell` 未授权保持 pending，创建同会话授权后由 local daemon 执行，stdout 返回 `dual-runtime-approved`。
+- `npm run typecheck`、`npm run lint`、`npm run build`、`npm run verify:secrets`、`git diff --check`：全部通过。
+- `T004` 仍由 Docker Engine 环境阻塞；本批次不依赖 Docker。
