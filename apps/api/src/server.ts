@@ -36,8 +36,14 @@ import {
 import { registerDailyWorkRoutes } from "./routes/daily-work-routes.js";
 import { registerCodingRoutes } from "./routes/coding-routes.js";
 import { registerCodingWorkspaceRoutes } from "./routes/coding-workspace-routes.js";
+import { registerDaemonPairingRoutes } from "./routes/daemon-pairing-routes.js";
 import { sendRuntimeError } from "./routes/runtime-http.js";
 import { DaemonRegistry } from "./services/daemon-registry.js";
+import {
+  createDaemonDeviceTokenServiceFromEnv,
+  type DaemonDeviceTokenService
+} from "./services/daemon-device-token.js";
+import { DaemonPairingService } from "./services/daemon-pairing-service.js";
 import {
   createCloudRuntimeClientFromEnv,
   type CloudRuntimeClient
@@ -71,6 +77,8 @@ export async function buildServer(options?: {
   dailyWorkRepository?: DailyWorkRepository;
   actorContextResolver?: ActorContextResolver;
   daemonRegistry?: DaemonRegistry;
+  daemonDeviceTokenService?: DaemonDeviceTokenService;
+  daemonPairingService?: DaemonPairingService;
   cloudRuntimeClient?: CloudRuntimeClient;
   credentialCipher?: Pick<CredentialCipher, "decrypt">;
   runtimeResolver?: RuntimeResolver;
@@ -80,7 +88,12 @@ export async function buildServer(options?: {
   const app = Fastify({
     logger: true
   });
-  const daemonRegistry = options?.daemonRegistry ?? new DaemonRegistry();
+  const daemonDeviceTokenService =
+    options?.daemonDeviceTokenService ?? createDaemonDeviceTokenServiceFromEnv();
+  const daemonPairingService =
+    options?.daemonPairingService ?? new DaemonPairingService(daemonDeviceTokenService);
+  const daemonRegistry =
+    options?.daemonRegistry ?? new DaemonRegistry(undefined, daemonDeviceTokenService);
   const actorContextResolver = options?.actorContextResolver ?? createActorContextResolver();
   const cloudRuntimeClient = options?.cloudRuntimeClient ?? createCloudRuntimeClientFromEnv();
   const credentialCipher = options?.credentialCipher ?? (
@@ -120,6 +133,7 @@ export async function buildServer(options?: {
 
   await registerDailyWorkRoutes(app, dailyWorkRepository);
   await registerCodingRoutes(app, dailyWorkRepository, runtimeResolver);
+  await registerDaemonPairingRoutes(app, daemonPairingService);
   await registerCodingWorkspaceRoutes(
     app,
     dailyWorkRepository,
@@ -134,6 +148,7 @@ export async function buildServer(options?: {
     version: "0.1.0",
     ...(await dailyWorkRepository.getDataLayerStatus()),
     auth: actorContextResolver.readiness,
+    daemonPairing: daemonPairingService.readiness,
     runtime: await runtimeResolver.health()
   }));
 
@@ -356,7 +371,10 @@ function applyCorsHeaders(request: FastifyRequest, reply: FastifyReply) {
 
 function isPublicRequest(request: FastifyRequest) {
   const path = request.url.split("?", 1)[0];
-  return request.method === "OPTIONS" || path === "/health" || path === "/ws/daemon";
+  return request.method === "OPTIONS" ||
+    path === "/health" ||
+    path === "/ws/daemon" ||
+    path === "/api/coding/daemon-pairings/claim";
 }
 
 function getAllowedOrigins() {

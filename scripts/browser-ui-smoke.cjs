@@ -250,6 +250,13 @@ async function main() {
       fail("Conversation creation must stay disabled without a ready cloud workspace.");
     }
     await page.getByRole("tab", { name: "本机项目" }).click();
+    await page.waitForSelector("[data-daemon-onboarding]", { timeout: 15_000 });
+    if (await page.locator("[data-daemon-installer]").count() !== 2) {
+      fail("Local runtime onboarding did not render Windows and macOS installers.");
+    }
+    if (!(await page.locator("[data-daemon-status]").innerText()).trim()) {
+      fail("Local runtime onboarding did not render daemon connection status.");
+    }
     const workspaceSelector = `[data-coding-dialog-workspace="${workspace.workspaceId}"]`;
     if (await page.locator(workspaceSelector).count()) {
       await page.click(workspaceSelector);

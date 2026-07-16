@@ -94,6 +94,23 @@ export const daemonRegisteredMessageSchema = z.object({
   workspace: daemonWorkspaceSchema
 });
 
+export const daemonReadyMessageSchema = z.object({
+  type: z.literal("daemon.ready"),
+  service: z.string().trim().min(1)
+});
+
+export const daemonErrorMessageSchema = z.object({
+  type: z.literal("daemon.error"),
+  error: z.string().trim().min(1)
+});
+
+export const daemonServerMessageSchema = z.discriminatedUnion("type", [
+  daemonReadyMessageSchema,
+  daemonRegisteredMessageSchema,
+  daemonErrorMessageSchema,
+  daemonRequestMessageSchema
+]);
+
 export type DaemonRuntimeMode = z.infer<typeof daemonRuntimeModeSchema>;
 export type DaemonProtocolVersion = z.infer<typeof daemonProtocolVersionSchema>;
 export type DaemonWorkspace = z.infer<typeof daemonWorkspaceSchema>;
@@ -102,3 +119,4 @@ export type DaemonClientMessage = z.infer<typeof daemonClientMessageSchema>;
 export type DaemonRequestCommand = z.infer<typeof daemonRequestCommandSchema>;
 export type DaemonRequestMessage = z.infer<typeof daemonRequestMessageSchema>;
 export type DaemonRegisteredMessage = z.infer<typeof daemonRegisteredMessageSchema>;
+export type DaemonServerMessage = z.infer<typeof daemonServerMessageSchema>;

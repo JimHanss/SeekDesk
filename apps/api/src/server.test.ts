@@ -75,6 +75,10 @@ describe("api server", () => {
       postgresConfigured: false,
       postgresReady: false,
       futureDatabaseReady: false,
+      daemonPairing: {
+        codeTtlSeconds: 600,
+        deviceTokenConfigured: true
+      },
        auth: {
          mode: "development",
          configured: true,
@@ -129,6 +133,10 @@ describe("api server", () => {
           postgresConfigured: false,
           postgresReady: false,
           futureDatabaseReady: false,
+          daemonPairing: {
+            codeTtlSeconds: 600,
+            deviceTokenConfigured: true
+          },
            auth: {
              mode: "development",
              configured: true,

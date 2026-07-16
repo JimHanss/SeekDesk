@@ -1,4 +1,4 @@
-import { createHash, randomUUID } from "node:crypto";
+import { createHash, randomUUID, timingSafeEqual } from "node:crypto";
 import {
   daemonClientMessageSchema,
   type CodingGitDiffInput,
@@ -17,6 +17,10 @@ import {
   type CodingRuntime,
   type CodingRuntimeExecutionContext
 } from "./coding-runtime.js";
+import {
+  createDaemonDeviceTokenServiceFromEnv,
+  type DaemonDeviceTokenService
+} from "./daemon-device-token.js";
 
 interface WebSocketLike {
   readyState: number;
@@ -29,6 +33,7 @@ interface WebSocketLike {
 
 interface ConnectedDaemon {
   socket: WebSocketLike;
+  ownerId: string;
   status: DaemonStatus;
   workspace: DaemonWorkspace;
   connectedAt: string;
@@ -59,7 +64,10 @@ export class DaemonRegistry {
   private readonly workspaceToDaemon = new Map<string, string>();
   private readonly pending = new Map<string, PendingDaemonRequest>();
 
-  constructor(readonly ownerId = resolveDaemonOwnerId()) {}
+  constructor(
+    readonly ownerId = resolveDaemonOwnerId(),
+    private readonly deviceTokens: DaemonDeviceTokenService = createDaemonDeviceTokenServiceFromEnv()
+  ) {}
 
   handleConnection(socket: WebSocketLike) {
     let daemonId: string | null = null;
@@ -71,11 +79,17 @@ export class DaemonRegistry {
         const parsed = daemonClientMessageSchema.parse(JSON.parse(message.toString()));
 
         if (parsed.type === "daemon.register") {
-          validatePairingToken(parsed.token);
+          const ownerId = validatePairingToken(
+            parsed.token,
+            parsed.status.daemonId,
+            this.ownerId,
+            this.deviceTokens
+          );
           daemonId = parsed.status.daemonId;
           const workspace = createWorkspace(parsed.status);
           this.daemons.set(daemonId, {
             socket,
+            ownerId,
             status: parsed.status,
             workspace,
             connectedAt: new Date().toISOString(),
@@ -137,26 +151,26 @@ export class DaemonRegistry {
   }
 
   listWorkspaces(ownerId?: string) {
-    if (ownerId && ownerId !== this.ownerId) {
-      return [];
-    }
-    return [...this.daemons.values()].map((client) => ({
-      ...client.workspace,
-      connected: true,
-      updatedAt: client.lastSeenAt
-    }));
+    return [...this.daemons.values()]
+      .filter((client) => !ownerId || client.ownerId === ownerId)
+      .map((client) => ({
+        ...client.workspace,
+        connected: true,
+        updatedAt: client.lastSeenAt
+      }));
   }
 
   getWorkspace(workspaceId: string | undefined, ownerId?: string) {
-    if (ownerId && ownerId !== this.ownerId) {
-      return null;
-    }
     if (!workspaceId) {
-      return this.listWorkspaces()[0] ?? null;
+      return this.listWorkspaces(ownerId)[0] ?? null;
     }
 
     const daemonId = this.workspaceToDaemon.get(workspaceId);
-    return daemonId ? this.daemons.get(daemonId)?.workspace ?? null : null;
+    const client = daemonId ? this.daemons.get(daemonId) : undefined;
+    if (!client || (ownerId && client.ownerId !== ownerId)) {
+      return null;
+    }
+    return client.workspace;
   }
 
   createRuntime(workspaceId: string, ownerId = this.ownerId): CodingRuntime {
@@ -346,11 +360,28 @@ export class LocalDaemonRuntimeAdapter implements CodingRuntime {
   }
 }
 
-function validatePairingToken(token: string) {
-  const expected = process.env.SEEKDESK_DAEMON_PAIRING_TOKEN?.trim() || "seekdesk-local-dev";
-  if (token !== expected) {
+function validatePairingToken(
+  token: string,
+  daemonId: string,
+  legacyOwnerId: string,
+  deviceTokens: DaemonDeviceTokenService
+) {
+  const expected = process.env.SEEKDESK_DAEMON_PAIRING_TOKEN?.trim() ||
+    (process.env.NODE_ENV === "production" ? "" : "seekdesk-local-dev");
+  if (expected && secureTokenEqual(token, expected)) {
+    return legacyOwnerId;
+  }
+  try {
+    return deviceTokens.verify(token, daemonId).ownerId;
+  } catch {
     throw new CodingRuntimeError("Invalid daemon pairing token.", "invalid_pairing_token");
   }
+}
+
+function secureTokenEqual(left: string, right: string) {
+  const leftBuffer = Buffer.from(left);
+  const rightBuffer = Buffer.from(right);
+  return leftBuffer.length === rightBuffer.length && timingSafeEqual(leftBuffer, rightBuffer);
 }
 
 function resolveDaemonOwnerId(env: NodeJS.ProcessEnv = process.env) {

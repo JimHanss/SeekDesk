@@ -53,6 +53,7 @@ npm run dev
 npm run dev:web
 npm run dev:api
 npm run dev:daemon
+npm run dev:daemon-desktop
 npm run dev:cloud-runtime
 npm run dev:runtime-worker
 npm run db:migrate
@@ -63,6 +64,7 @@ npm run build
 npm run test:runtime-container
 npm run test:cloud-runtime
 npm run test:browser-smoke
+npm run test:daemon-installer
 npm run verify:secrets
 ```
 
@@ -86,7 +88,17 @@ SEEKDESK_BROWSER_SMOKE_CLOUD=1 npm run test:browser-smoke
 
 ## 使用 Local Daemon
 
-在需要操作项目文件的用户电脑上执行：
+普通用户不需要配置长期 token：
+
+1. 在 SeekDesk 点击“新对话”，选择“本机项目”。
+2. 下载并安装 Windows 或 macOS 版 SeekDesk Daemon。
+3. Web 生成 10 分钟有效的一次性配对码；点击“打开 Daemon”或在桌面端输入配对码。
+4. Daemon 使用系统目录选择器选择项目文件夹，并在后台连接 API。
+5. Web 自动发现工作区，选中后创建对话。
+
+设备凭据绑定用户与 daemonId，默认有效 30 天，并由 Electron `safeStorage` 加密保存。配对码只可领取一次，API 不向 Web 返回设备 token。
+
+开发环境仍可使用 CLI：
 
 ```bash
 npm run build
@@ -96,13 +108,22 @@ npm --workspace @seekdesk/daemon run start -- start \
   --workspace /path/to/project
 ```
 
-Windows 示例：
+daemon 会主动注册、发送心跳并在断线后重连。路径解析、symlink、ignore 目录、二进制和大文件限制都在 daemon 内再次执行。
 
-```powershell
-npm --workspace @seekdesk/daemon run start -- start --api http://API_HOST:4000 --token seekdesk-local-dev --workspace "E:\Project\MyApp"
+### 构建安装包
+
+安装包必须在目标系统构建：Windows 生成 Squirrel `Setup.exe`，macOS 生成 DMG 和 ZIP。
+
+```bash
+npm run make:daemon
+npm run test:daemon-installer -- --require-artifacts
 ```
 
-daemon 会主动注册、发送心跳并在断线后重连。新建对话时选择“本机”，再选择该 daemon 暴露的工作区。路径解析、symlink、ignore 目录、二进制和大文件限制都在 daemon 内再次执行。
+产物位于 `apps/daemon/out/make/`。GitHub Actions 的 `Daemon installers` workflow 会在 Windows 与 macOS runner 分别生成产物；Web 下载地址通过 `NEXT_PUBLIC_SEEKDESK_DAEMON_WINDOWS_URL` 和 `NEXT_PUBLIC_SEEKDESK_DAEMON_MACOS_URL` 配置。
+
+本地开发产物使用 ad-hoc 签名。正式发布前需配置 Apple Developer ID、公证与 Windows Authenticode；macOS 构建可通过 `SEEKDESK_MACOS_SIGNING_IDENTITY` 指定正式签名 identity。
+
+升级时先退出托盘中的旧 Daemon，再安装新版本；加密设备配置会保留。Windows 可在“已安装的应用”卸载，macOS 可将应用移到废纸篓。若电脑不再使用，应先在托盘执行“重新配对”以清除本机设备凭据；后续设备控制台将补充服务端撤销能力。
 
 ## 使用 Cloud Runtime
 
@@ -130,7 +151,10 @@ npm run db:migrate
 
 ## 故障排查
 
-- `daemon_offline`：确认 daemon 进程、API 地址和 pairing token，等待心跳恢复。
+- 配对码过期：在“新对话”中重新生成；旧码不会恢复或重复使用。
+- `invalid_pairing_token`：桌面端执行“重新配对”，不要在日志或聊天中粘贴设备 token。
+- `daemon_offline`：确认 Daemon 正在托盘运行、API 地址可访问，等待自动重连。
+- 安装器被系统拦截：开发包未做正式公证；生产发布必须使用平台签名证书。
 - `runtime_unavailable`：检查 API 到 cloud runtime internal service 的网络和 service token。
 - `runtime_not_ready`：等待 cloning/starting 完成，或在工作区列表执行重试。
 - `repository_clone_failed`：检查 HTTPS URL、分支、凭据状态和 clone 超时。

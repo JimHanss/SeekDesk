@@ -14,7 +14,10 @@
 - `POST /api/chat`：流式 coding chat；校验 session/workspace 绑定，保存 messages、tool calls 和 model usage。
 - `GET /api/chat/sessions/:sessionId/trace`：聚合 workspace、runtime operation、messages、tools、grants、activity、artifacts 和 model usage。
 - `GET /ws`：活动快照兼容 WebSocket。
-- `GET /ws/daemon`：daemon register/heartbeat/request/response/cancel 通道，使用 pairing token。
+- `GET /ws/daemon`：daemon register/heartbeat/request/response/cancel 通道；支持开发静态 token 和 owner/daemonId 绑定的签名设备 token。
+- `POST /api/coding/daemon-pairings`：为当前 actor 创建 10 分钟一次性配对会话，返回 code、过期时间和深链；不返回设备 token。
+- `GET /api/coding/daemon-pairings/:pairingId`：按 owner 查询 pending/claimed/expired 和领取设备摘要。
+- `POST /api/coding/daemon-pairings/claim`：桌面端公开单次领取；校验 code 后签发设备 token，重复或过期领取失败。
 
 ### 工作区与生命周期
 
@@ -92,6 +95,8 @@ API 只通过 `CloudRuntimeClient` 调用这些接口。cloud service 使用 `Cl
 
 - `services/runtime-resolver.ts`：选择 local daemon、cloud 或显式 server-local adapter。
 - `services/daemon-registry.ts`：在线连接、heartbeat、pending request 和断线清理。
+- `services/daemon-pairing-service.ts`：内存短期配对记录、code digest、过期与单次领取；不使用数据库表。
+- `services/daemon-device-token.ts`：HMAC 设备 token；payload 含 ownerId、daemonId、tokenId 和有效期，不落 Postgres。
 - `services/cloud-runtime-client.ts`：internal API、service token、timeout 和错误映射。
 - `services/coding-tools.ts`：tool plan、grant 校验、原子执行和审计写回。
 - `services/actor-context.ts`：开发身份和生产 OIDC/JWT。

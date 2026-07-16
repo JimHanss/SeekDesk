@@ -7,6 +7,7 @@
 - `runtime.ts`：Runtime mode/status/capability/error、execute request/response。
 - `workspaces.ts`：workspace record/summary/detail、cloud create、lifecycle operation、credential metadata。
 - `daemon.ts`：daemon register、heartbeat、request/response/cancel 协议。
+- `daemon-pairing.ts`：一次性配对码、设备摘要、领取响应和设备 token payload。
 - `sessions.ts`：session workspace/runtime 绑定与历史摘要。
 - `permissions.ts`：owner/session/workspace/runtime/action grant。
 - `tools.ts`：coding tool name、输入、tool call 状态和执行关联。
@@ -35,10 +36,15 @@
 路径：`apps/daemon/src/`
 
 - `cli.ts`：`health` 与 `start --api --token --workspace`。
-- `client.ts`：WebSocket 注册、heartbeat、重连、request/cancel/response。
+- `client.ts`：WebSocket 注册、heartbeat、状态回调、取消、自动重连和 request/response。
 - `local-runtime.ts`：组合 runtime-core，并提供本机目录 browse/select/pick。
+- `src/desktop/main.ts`：Electron 单实例、深链、safeStorage、目录选择器、托盘和开机启动。
+- `src/desktop/preload.ts`：context-isolated IPC bridge，不向 renderer 暴露设备 token。
+- `src/desktop/renderer.ts`：安装后配对、工作区和在线状态三步向导。
+- `src/desktop/config-store.ts`：加密设备凭据的原子配置存储。
+- `forge.config.cjs`：Squirrel、DMG/ZIP、Vite、asar、协议、签名和安全 fuses。
 
-测试：`cli.test.ts`、`local-runtime.test.ts`。
+测试：`cli.test.ts`、`client.test.ts`、`local-runtime.test.ts` 与 `src/desktop/*.test.ts`。
 
 ## Runtime Worker
 
@@ -77,6 +83,7 @@
 ### Public Coding Routes
 
 - `routes/coding-workspace-routes.ts`：workspace list/detail、cloud create/start/stop/retry/delete、credential metadata。
+- `routes/daemon-pairing-routes.ts`：创建/查询一次性配对会话和公开单次领取。
 - `routes/coding-routes.ts`：workspace browse/select/pick、files/search/Git、grant 和 tool execution。
 - `routes/daily-work-routes.ts`：session/activity/artifact/model usage 等历史兼容聚合。
 
@@ -84,6 +91,8 @@
 
 - `services/runtime-resolver.ts`：按可信 owner/workspace/runtime 选择唯一 adapter。
 - `services/daemon-registry.ts`：在线 daemon、heartbeat、workspace/request 路由和断线清理。
+- `services/daemon-pairing-service.ts`：10 分钟配对会话、哈希 code、过期与原子单次领取。
+- `services/daemon-device-token.ts`：owner/daemonId 绑定的 HMAC 设备 token 签发与验证。
 - `services/cloud-runtime-client.ts`：internal service token、status/lifecycle/execute/cancel。
 - `services/coding-runtime.ts`：显式 server-local adapter 和稳定 Runtime error。
 - `services/coding-tools.ts`：tool plan、grant、原子 claim、执行和审计关联。
@@ -109,6 +118,7 @@
 - `features/daily-work/components/DailyWorkDashboardShell.tsx`：全屏三段布局和按需侧栏。
 - `components/DailyWorkAssistantView.tsx`：聊天窗口。
 - `components/NewConversationWorkspaceDialog.tsx`：local/cloud 选择、cloud lifecycle 和 session 创建。
+- `hooks/useDaemonPairing.ts`：创建配对码、倒计时、状态轮询、过期恢复和成功回调。
 
 ### 状态 Hooks
 
@@ -141,6 +151,8 @@
 - `scripts/browser-ui-smoke.cjs`：真实 Chrome UI、console/network、ready cloud/local dialog 和写入审批检查。
 - `scripts/runtime-container-smoke.mjs`：真实 worker image 的 9 工具、只读 rootfs、资源限制、无网络和无 Docker socket 验证。
 - `scripts/cloud-runtime-integration.mjs`：真实 HTTPS Git、provision/execute/stop/service restart/start/delete 与残留资源验证。
+- `scripts/daemon-installer-smoke.mjs`：安装器配置、产物、asar、签名、协议和 Electron fuses 验证。
+- `.github/workflows/daemon-installers.yml`：Windows Squirrel 与 macOS DMG/ZIP 双平台构建。
 - `scripts/cleanup-smoke-data.mjs`：精确清理 browser/coding smoke session、activity、usage、operation 和 cloud workspace。
 - `scripts/verify-secret-hygiene.mjs`：secret 与已删除连接器痕迹检查。
 - `specs/dual-runtime/spec.md`：需求。

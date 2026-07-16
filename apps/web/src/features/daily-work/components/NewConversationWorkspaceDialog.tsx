@@ -1,9 +1,14 @@
 "use client";
 
-import { useEffect, useMemo, useState, type ReactNode } from "react";
+import { useCallback, useEffect, useMemo, useState, type ReactNode } from "react";
 import {
+  CheckCircle2,
   Cloud,
+  Copy,
+  Download,
+  ExternalLink,
   FolderOpen,
+  KeyRound,
   Laptop,
   LoaderCircle,
   Play,
@@ -21,6 +26,7 @@ import type {
 import {
   type CodingWorkbenchController
 } from "../hooks/useCodingWorkbench";
+import { useDaemonPairing } from "../hooks/useDaemonPairing";
 import {
   createWorkspaceSessionBinding,
   isWorkspaceReady,
@@ -52,6 +58,9 @@ const emptyCloudDraft: CloudWorkspaceDraft = {
   credentialId: ""
 };
 
+const windowsInstallerUrl = process.env.NEXT_PUBLIC_SEEKDESK_DAEMON_WINDOWS_URL ?? "";
+const macosInstallerUrl = process.env.NEXT_PUBLIC_SEEKDESK_DAEMON_MACOS_URL ?? "";
+
 export function NewConversationWorkspaceDialog({
   apiBaseUrl,
   controller,
@@ -60,6 +69,8 @@ export function NewConversationWorkspaceDialog({
   onCreate
 }: NewConversationWorkspaceDialogProps) {
   const { state, actions } = controller;
+  const refreshWorkspaces = actions.refreshWorkspaces;
+  const setActiveWorkspace = actions.setActiveWorkspace;
   const [runtimeMode, setRuntimeMode] = useState<UserSelectableRuntimeMode>(
     state.preferredRuntimeMode
   );
@@ -67,6 +78,28 @@ export function NewConversationWorkspaceDialog({
   const [cloudDraft, setCloudDraft] = useState<CloudWorkspaceDraft>(emptyCloudDraft);
   const [formError, setFormError] = useState("");
   const [creatingConversation, setCreatingConversation] = useState(false);
+
+  const handleDaemonClaimed = useCallback(async (daemonId: string | undefined) => {
+    const workspaces = await refreshWorkspaces();
+    const pairedWorkspace = workspaces.find(
+      (workspace) => workspace.runtimeMode === "local_daemon" && workspace.daemonId === daemonId
+    );
+    if (pairedWorkspace) {
+      setSelectedWorkspaceId(pairedWorkspace.workspaceId);
+      setActiveWorkspace(pairedWorkspace.workspaceId);
+    }
+  }, [refreshWorkspaces, setActiveWorkspace]);
+  const daemonPairing = useDaemonPairing(
+    apiBaseUrl,
+    open && runtimeMode === "local_daemon",
+    (status) => void handleDaemonClaimed(status.device?.daemonId)
+  );
+  const pairedDaemonWorkspace = state.workspaces.find(
+    (workspace) =>
+      workspace.runtimeMode === "local_daemon" &&
+      workspace.daemonId === daemonPairing.state.device?.daemonId &&
+      workspace.connected
+  );
 
   const selectableWorkspaces = useMemo(
     () => state.workspaces.filter((workspace) => workspace.runtimeMode === runtimeMode),
@@ -79,9 +112,6 @@ export function NewConversationWorkspaceDialog({
     selectedWorkspace?.runtimeMode === "local_daemon"
       ? selectedWorkspace
       : selectableWorkspaces[0];
-  const daemonStartCommand =
-    `seekdesk-daemon start --api ${apiBaseUrl} ` +
-    '--token <pairing-token> --workspace "C:\\path\\to\\project"';
   const canCreateConversation = Boolean(
     createWorkspaceSessionBinding(selectedWorkspace)
   ) && !creatingConversation;
@@ -103,6 +133,35 @@ export function NewConversationWorkspaceDialog({
     setSelectedWorkspaceId(active?.workspaceId ?? firstReady?.workspaceId ?? "");
     setFormError("");
   }, [open, state.activeWorkspaceId, state.preferredRuntimeMode, state.workspaces]);
+
+  useEffect(() => {
+    const daemonId = daemonPairing.state.device?.daemonId;
+    if (
+      !open ||
+      runtimeMode !== "local_daemon" ||
+      daemonPairing.state.status !== "claimed" ||
+      !daemonId ||
+      pairedDaemonWorkspace
+    ) {
+      return;
+    }
+    const refresh = async () => {
+      const workspaces = await refreshWorkspaces();
+      const next = workspaces.find(
+        (workspace) =>
+          workspace.runtimeMode === "local_daemon" &&
+          workspace.daemonId === daemonId &&
+          workspace.connected
+      );
+      if (next) {
+        setSelectedWorkspaceId(next.workspaceId);
+        setActiveWorkspace(next.workspaceId);
+      }
+    };
+    void refresh();
+    const timer = window.setInterval(() => void refresh(), 2_000);
+    return () => window.clearInterval(timer);
+  }, [daemonPairing.state.device?.daemonId, daemonPairing.state.status, open, pairedDaemonWorkspace, refreshWorkspaces, runtimeMode, setActiveWorkspace]);
 
   if (!open) {
     return null;
@@ -233,7 +292,7 @@ export function NewConversationWorkspaceDialog({
           {runtimeMode === "local_daemon" ? (
             <LocalRuntimeContent
               controller={controller}
-              daemonStartCommand={daemonStartCommand}
+              pairing={daemonPairing}
               selectedWorkspaceId={selectedWorkspaceId}
               onBindManual={() => void bindManualLocalFolder()}
               onPick={() => void pickLocalFolder()}
@@ -281,14 +340,14 @@ export function NewConversationWorkspaceDialog({
 
 function LocalRuntimeContent({
   controller,
-  daemonStartCommand,
+  pairing,
   selectedWorkspaceId,
   onBindManual,
   onPick,
   onSelect
 }: {
   controller: CodingWorkbenchController;
-  daemonStartCommand: string;
+  pairing: ReturnType<typeof useDaemonPairing>;
   selectedWorkspaceId: string;
   onBindManual: () => void;
   onPick: () => void;
@@ -299,24 +358,123 @@ function LocalRuntimeContent({
     (workspace) => workspace.runtimeMode === "local_daemon"
   );
   const hasOnlineDaemon = localWorkspaces.some((workspace) => workspace.connected);
+  const [copiedCode, setCopiedCode] = useState(false);
+
+  async function copyPairingCode() {
+    if (!pairing.state.pairing?.code) {
+      return;
+    }
+    try {
+      await navigator.clipboard.writeText(pairing.state.pairing.code);
+      setCopiedCode(true);
+      window.setTimeout(() => setCopiedCode(false), 1_500);
+    } catch {
+      setCopiedCode(false);
+    }
+  }
 
   return (
     <div className="grid gap-5 lg:grid-cols-[minmax(0,0.95fr)_minmax(0,1.05fr)]">
-      <section>
-        <div className="mb-3 flex items-center justify-between">
-          <h3 className="text-sm font-semibold text-slate-950">本机 daemon</h3>
-          <span className={hasOnlineDaemon ? "text-xs text-emerald-700" : "text-xs text-amber-700"}>
-            {hasOnlineDaemon ? "已连接" : "未连接"}
+      <section data-daemon-onboarding>
+        <div className="mb-3 flex min-h-8 items-center justify-between gap-3">
+          <h3 className="text-sm font-semibold text-slate-950">连接这台电脑</h3>
+          <span data-daemon-status className={hasOnlineDaemon ? "text-xs text-emerald-700" : "text-xs text-amber-700"}>
+            {hasOnlineDaemon ? "Daemon 已在线" : "等待连接"}
           </span>
         </div>
-        {!hasOnlineDaemon ? (
-          <div className="mb-3 border-l-2 border-amber-400 bg-amber-50 px-3 py-2 text-xs text-amber-950">
-            <div className="font-semibold">先在要编辑的电脑上启动 daemon</div>
-            <code className="mt-2 block select-all break-all rounded-[4px] bg-white px-2 py-1.5 font-mono text-[11px] text-slate-800">
-              {daemonStartCommand}
-            </code>
+
+        <div className="divide-y divide-slate-200 border-y border-slate-200">
+          <div className="grid grid-cols-[28px_minmax(0,1fr)] gap-3 py-3">
+            <span className="grid size-7 place-items-center rounded-full bg-slate-100 text-xs font-semibold text-slate-700">1</span>
+            <div className="min-w-0">
+              <div className="text-sm font-semibold text-slate-900">安装本机 Daemon</div>
+              <p className="mt-1 text-xs leading-5 text-slate-500">Daemon 只访问你随后选择的项目目录。</p>
+              <div className="mt-2 flex flex-wrap gap-2">
+                <InstallerLink href={windowsInstallerUrl} label="Windows" />
+                <InstallerLink href={macosInstallerUrl} label="macOS" />
+              </div>
+            </div>
           </div>
-        ) : null}
+
+          <div className="grid grid-cols-[28px_minmax(0,1fr)] gap-3 py-3">
+            <span className="grid size-7 place-items-center rounded-full bg-slate-100 text-xs font-semibold text-slate-700">2</span>
+            <div className="min-w-0">
+              <div className="text-sm font-semibold text-slate-900">安全配对</div>
+              {hasOnlineDaemon ? (
+                <div className="mt-2 flex items-center gap-2 text-sm text-emerald-700">
+                  <CheckCircle2 className="size-4" aria-hidden="true" />
+                  已连接，可直接选择工作区
+                </div>
+              ) : pairing.state.status === "pending" && pairing.state.pairing ? (
+                <div className="mt-2">
+                  <div className="flex min-h-12 items-center justify-between gap-2 border border-teal-200 bg-teal-50 px-3">
+                    <code data-daemon-pairing-code className="select-all font-mono text-base font-semibold tracking-[0.08em] text-teal-950">
+                      {pairing.state.pairing.code}
+                    </code>
+                    <button
+                      type="button"
+                      title="复制配对码"
+                      aria-label="复制配对码"
+                      onClick={() => void copyPairingCode()}
+                      className="grid size-8 shrink-0 place-items-center rounded-[5px] border border-transparent text-teal-800 hover:border-teal-200 hover:bg-white"
+                    >
+                      {copiedCode ? <CheckCircle2 className="size-4" aria-hidden="true" /> : <Copy className="size-4" aria-hidden="true" />}
+                    </button>
+                  </div>
+                  <div className="mt-2 flex min-h-9 items-center justify-between gap-3 text-xs text-slate-500">
+                    <span>剩余 {pairing.expiresLabel}</span>
+                    <a
+                      href={pairing.state.pairing.deepLink}
+                      className="inline-flex h-8 items-center gap-1.5 rounded-[5px] border border-teal-200 px-2.5 font-semibold text-teal-800 hover:bg-teal-50"
+                    >
+                      打开 Daemon
+                      <ExternalLink className="size-3.5" aria-hidden="true" />
+                    </a>
+                  </div>
+                </div>
+              ) : pairing.state.status === "claimed" ? (
+                <div className="mt-2 text-sm text-emerald-700">
+                  <div className="flex items-center gap-2 font-semibold">
+                    <CheckCircle2 className="size-4" aria-hidden="true" />
+                    {pairing.state.device?.machineName || "设备"} 已配对
+                  </div>
+                  <p className="mt-1 text-xs leading-5 text-slate-500">请在 Daemon 中选择项目文件夹，页面会自动发现工作区。</p>
+                </div>
+              ) : (
+                <div className="mt-2">
+                  <button
+                    type="button"
+                    data-daemon-pairing-create
+                    onClick={() => void pairing.actions.createPairing()}
+                    disabled={pairing.state.status === "creating"}
+                    className="inline-flex h-9 min-w-32 items-center justify-center gap-2 rounded-[6px] border border-teal-600 bg-teal-600 px-3 text-sm font-semibold text-white hover:bg-teal-700 disabled:cursor-wait disabled:border-slate-300 disabled:bg-slate-300"
+                  >
+                    {pairing.state.status === "creating" ? <LoaderCircle className="size-4 animate-spin" aria-hidden="true" /> : <KeyRound className="size-4" aria-hidden="true" />}
+                    {pairing.state.status === "creating" ? "正在生成..." : pairing.state.status === "expired" ? "重新生成配对码" : "生成配对码"}
+                  </button>
+                </div>
+              )}
+              {pairing.state.error ? (
+                <p className="mt-2 text-xs leading-5 text-rose-700">{pairing.state.error}</p>
+              ) : null}
+            </div>
+          </div>
+        </div>
+      </section>
+
+      <section className="border-t border-slate-200 pt-5 lg:border-l lg:border-t-0 lg:pl-5 lg:pt-0">
+        <div className="mb-3 flex min-h-8 items-center justify-between gap-3">
+          <h3 className="text-sm font-semibold text-slate-950">选择项目文件夹</h3>
+          <button
+            type="button"
+            title="刷新本机工作区"
+            aria-label="刷新本机工作区"
+            onClick={() => void actions.refreshWorkspaces()}
+            className="grid size-8 place-items-center rounded-[6px] border border-transparent text-slate-500 hover:border-slate-200 hover:bg-slate-50"
+          >
+            <RefreshCw className="size-4" aria-hidden="true" />
+          </button>
+        </div>
         <div className="space-y-2">
           {localWorkspaces.map((workspace) => (
             <WorkspaceOption
@@ -327,13 +485,11 @@ function LocalRuntimeContent({
             />
           ))}
           {localWorkspaces.length === 0 ? (
-            <p className="py-8 text-center text-sm text-slate-500">没有已登记的本机工作区。</p>
+            <p className="border-y border-slate-200 py-5 text-center text-sm text-slate-500">
+              配对后，在 Daemon 中选择一个本机项目。
+            </p>
           ) : null}
         </div>
-      </section>
-
-      <section className="border-t border-slate-200 pt-5 lg:border-l lg:border-t-0 lg:pl-5 lg:pt-0">
-        <h3 className="text-sm font-semibold text-slate-950">选择项目文件夹</h3>
         <div className="mt-3 flex flex-wrap gap-2">
           <button
             type="button"
@@ -578,6 +734,28 @@ function CloudRuntimeContent({
         </div>
       </section>
     </div>
+  );
+}
+
+function InstallerLink({ href, label }: { href: string; label: string }) {
+  const className =
+    "inline-flex h-9 min-w-28 items-center justify-center gap-2 rounded-[6px] border px-3 text-sm font-semibold " +
+    (href
+      ? "border-slate-200 text-slate-700 hover:border-teal-200 hover:bg-teal-50 hover:text-teal-800"
+      : "cursor-not-allowed border-slate-200 bg-slate-50 text-slate-400");
+  if (!href) {
+    return (
+      <span data-daemon-installer={label.toLowerCase()} className={className} title={`${label} 安装包地址尚未配置`}>
+        <Download className="size-4" aria-hidden="true" />
+        {label}
+      </span>
+    );
+  }
+  return (
+    <a data-daemon-installer={label.toLowerCase()} className={className} href={href} target="_blank" rel="noreferrer">
+      <Download className="size-4" aria-hidden="true" />
+      {label}
+    </a>
   );
 }
 

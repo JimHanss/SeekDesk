@@ -7,6 +7,7 @@ out/
 dist/
 build/
 coverage/
+.vite/
 
 # Environment
 .env
@@ -38,6 +39,7 @@ Thumbs.db
 tmp/runtime-fixtures/
 *.runtime-token
 *.runtime-secret
+apps/daemon/out/
 
 # Local research artifacts
 .firecrawl/

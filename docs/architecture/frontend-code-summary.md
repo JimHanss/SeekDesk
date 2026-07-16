@@ -13,7 +13,8 @@
 
 - `components/DailyWorkDashboardShell.tsx`：全屏外壳、左侧工作区/会话列表、顶部工具入口和按需右侧面板。
 - `components/DailyWorkAssistantView.tsx`：当前会话标题、消息流、输入框、发送、流式状态与错误恢复。
-- `components/NewConversationWorkspaceDialog.tsx`：新建对话；在“本机/云端”间切换，选择 local daemon 工作区或创建/管理 cloud workspace。
+- `components/NewConversationWorkspaceDialog.tsx`：新建对话；本机 tab 提供安装下载、一次性配对、工作区发现与选择，云端 tab 创建/管理 cloud workspace。
+- `hooks/useDaemonPairing.ts`：创建配对会话、10 分钟倒计时、轮询 claimed/expired、网络错误收敛和成功刷新。
 - `components/DailyWorkSettingsSection.tsx`：模型、持久化、Runtime、审批与安全策略设置；不负责工作区选择。
 - `components/DailyWorkModuleStack.tsx`：兼容功能模块的组合容器。
 - `components/DailyWorkPrimitives.tsx`：面板标题、状态标签、空状态等轻量展示原语。

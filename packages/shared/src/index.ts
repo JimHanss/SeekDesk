@@ -4,6 +4,7 @@ export * from "./chat.js";
 export * from "./connectors.js";
 export * from "./daily-events.js";
 export * from "./daemon.js";
+export * from "./daemon-pairing.js";
 export * from "./daily-work.js";
 export * from "./model-usage.js";
 export * from "./permissions.js";

@@ -13,7 +13,10 @@ ownerId + sessionId + workspaceId + runtimeMode + toolCallId/requestId
 ## Local Daemon 边界
 
 - daemon 主动连接 API，服务器不能直接浏览用户电脑。
-- pairing token 只用于 v1 配对；生产需要升级为用户登录、短期 token、轮换和设备撤销。
+- 已登录 Web 创建 10 分钟一次性配对码；API 只保存 code 的 SHA-256 摘要，领取成功后立即失效。
+- 设备 token 使用 HMAC 签名，包含 ownerId、daemonId、tokenId、签发和过期时间；注册时 daemonId 不匹配即拒绝。
+- 设备 token 不返回 Web，不写日志；Electron 使用系统 `safeStorage` 加密后再原子写入当前用户配置。
+- 生产环境非本机 API 必须使用 HTTPS；开发静态 pairing token 仅保留给 CLI 和自动化 smoke。
 - daemon 注册稳定 workspaceId、绝对 root、平台和能力；所有相对路径在本机再次解析。
 - root 外路径、`..` traversal、越界 symlink、ignore 目录、二进制和超限文件被拒绝。
 - 系统目录选择器在用户电脑执行，浏览器不获取任意绝对路径访问权。
@@ -78,7 +81,8 @@ grant 必须绑定同一 owner/session/workspace/runtime/action，且状态 acti
 
 ## 已知限制
 
-- v1 pairing token 不是完整设备身份方案。
+- v1 设备 token 默认 30 天，尚未实现设备撤销控制台、自动轮换和企业设备策略。
+- 开发安装包使用 ad-hoc 签名；正式发布需 Apple/Windows 平台证书和公证。
 - v1 cloud runtime 依赖单机 Docker Engine，不具备跨节点调度和高可用。
 - `daily_work` 历史 payload 表仍在兼容层，新的 coding 记录必须使用结构化 scope 列。
 - 网络隔离与资源限制必须在实际 Docker Engine 上做最终验收，单元测试不能替代容器级验证。
