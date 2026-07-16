@@ -56,4 +56,4 @@
 - [x] T037 运行 diff、lint、test、typecheck、build 和 secret hygiene。
 - [x] T038 运行 API 配对、daemon 重连和现有双 Runtime 回归。
 - [x] T039 清理安装产物之外的临时文件并检查 Git 状态。
-- [ ] T040 提交、push、合并 main 并在 main 回归。
+- [x] T040 提交、push、合并 main 并在 main 回归。

@@ -5,8 +5,8 @@
 - 功能：`daemon-installer-onboarding`
 - 开发分支：`codex/daemon-installer-onboarding`
 - 任务范围：T001-T040
-- 已完成：T001-T039（T040 待提交、合并与 main 回归）
-- 当前阶段：功能分支验收与临时文件清理完成，待合并 main 回归
+- 已完成：T001-T040
+- 当前阶段：本机 Daemon 安装包与一次性配对引导已完成
 - 强制验收阻塞：无
 
 ## 已完成能力
