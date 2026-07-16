@@ -7,7 +7,9 @@ export default [
     ignores: [
       "**/node_modules/**",
       "**/.next/**",
+      "**/.vite/**",
       "**/dist/**",
+      "apps/daemon/out/**",
       "**/coverage/**",
       "**/*.d.ts"
     ]

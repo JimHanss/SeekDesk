@@ -1,0 +1,125 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <meta name="color-scheme" content="light" />
+    <title>SeekDesk Daemon</title>
+    <link rel="stylesheet" href="./styles.css" />
+  </head>
+  <body>
+    <div class="app-shell">
+      <header class="app-header">
+        <div class="brand-mark" aria-hidden="true"><span></span></div>
+        <div class="brand-copy">
+          <h1>SeekDesk Daemon</h1>
+          <p>连接本机项目与 SeekDesk</p>
+        </div>
+        <div id="status-pill" class="status-pill" data-phase="unpaired">
+          <span class="status-dot" aria-hidden="true"></span>
+          <span id="status-label">未配对</span>
+        </div>
+      </header>
+
+      <main>
+        <nav class="stepper" aria-label="设置进度">
+          <div id="step-indicator-1" class="step-indicator is-active">
+            <span>1</span><strong>配对设备</strong>
+          </div>
+          <div class="step-line" aria-hidden="true"></div>
+          <div id="step-indicator-2" class="step-indicator">
+            <span>2</span><strong>选择项目</strong>
+          </div>
+          <div class="step-line" aria-hidden="true"></div>
+          <div id="step-indicator-3" class="step-indicator">
+            <span>3</span><strong>保持在线</strong>
+          </div>
+        </nav>
+
+        <section id="pair-section" class="setup-section" aria-labelledby="pair-title">
+          <div class="section-heading">
+            <div>
+              <p class="section-kicker">步骤 1</p>
+              <h2 id="pair-title">配对这台电脑</h2>
+            </div>
+            <span id="paired-device" class="meta-value"></span>
+          </div>
+          <p class="section-description">
+            在 SeekDesk Web 的“新建对话”中生成一次性配对码。配对码有效期为 10 分钟，成功后立即失效。
+          </p>
+          <form id="pair-form" class="pair-form">
+            <label>
+              <span>SeekDesk API 地址</span>
+              <input id="api-url" name="apiUrl" type="url" autocomplete="url" placeholder="https://api.example.com" required />
+            </label>
+            <label>
+              <span>一次性配对码</span>
+              <input id="pairing-code" name="pairingCode" type="text" inputmode="text" autocomplete="one-time-code" spellcheck="false" maxlength="14" placeholder="ABCD-EFGH-JK23" required />
+            </label>
+            <button id="pair-button" class="primary-button" type="submit">完成配对</button>
+          </form>
+          <div id="paired-summary" class="summary-row is-hidden">
+            <div>
+              <span>已连接服务</span>
+              <strong id="paired-api"></strong>
+            </div>
+            <button id="disconnect-button" class="secondary-button" type="button">重新配对</button>
+          </div>
+        </section>
+
+        <section id="workspace-section" class="setup-section" aria-labelledby="workspace-title">
+          <div class="section-heading">
+            <div>
+              <p class="section-kicker">步骤 2</p>
+              <h2 id="workspace-title">选择本机项目</h2>
+            </div>
+          </div>
+          <p class="section-description">
+            Daemon 只允许 SeekDesk 在这个目录内读取和执行操作。写入文件、Shell 和测试仍需在会话中审批。
+          </p>
+          <div class="workspace-row">
+            <div class="path-display">
+              <span>当前工作区</span>
+              <code id="workspace-path">尚未选择</code>
+            </div>
+            <button id="select-workspace-button" class="secondary-button" type="button">选择文件夹</button>
+          </div>
+        </section>
+
+        <section id="runtime-section" class="setup-section" aria-labelledby="runtime-title">
+          <div class="section-heading">
+            <div>
+              <p class="section-kicker">步骤 3</p>
+              <h2 id="runtime-title">保持安全连接</h2>
+            </div>
+          </div>
+          <div class="runtime-grid">
+            <div class="runtime-detail">
+              <span>Runtime 状态</span>
+              <strong id="runtime-status">等待设置</strong>
+            </div>
+            <div class="runtime-detail">
+              <span>工作区 ID</span>
+              <code id="workspace-id">—</code>
+            </div>
+          </div>
+          <label class="toggle-row">
+            <span>
+              <strong>开机自动启动</strong>
+              <small>登录系统后在托盘中启动，不自动打开窗口。</small>
+            </span>
+            <input id="auto-start" type="checkbox" role="switch" />
+          </label>
+        </section>
+
+        <div id="message" class="message" role="status" aria-live="polite"></div>
+      </main>
+
+      <footer class="app-footer">
+        <span id="version-label">SeekDesk Daemon</span>
+        <button id="hide-button" class="primary-button" type="button">完成并在后台运行</button>
+      </footer>
+    </div>
+    <script type="module" src="./renderer.ts"></script>
+  </body>
+</html>

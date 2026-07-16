@@ -549,12 +549,63 @@ function assertNoEmailConnectorText(label, value) {
   }
 }
 
+async function verifyDaemonPairingApi() {
+  const daemonId = `browser-pairing-${process.pid}`;
+  const created = await fetchJson(`${apiUrl}/api/coding/daemon-pairings`, {
+    method: "POST",
+    body: JSON.stringify({ apiUrl })
+  });
+  if (!/^[A-Z2-9]{4}(?:-[A-Z2-9]{4}){2}$/.test(created.json.code || "")) {
+    fail("daemon pairing API did not return a valid one-time code.");
+  }
+  if (created.json.status !== "pending" || !created.json.deepLink?.startsWith("seekdesk://pair")) {
+    fail("daemon pairing API did not return pending status and deep link.");
+  }
+
+  const claimed = await fetchJson(`${apiUrl}/api/coding/daemon-pairings/claim`, {
+    method: "POST",
+    body: JSON.stringify({
+      code: created.json.code,
+      daemonId,
+      machineName: "browser-smoke",
+      platform: process.platform
+    })
+  });
+  if (claimed.json.daemonId !== daemonId || typeof claimed.json.deviceToken !== "string") {
+    fail("daemon pairing claim did not return a device-bound token.");
+  }
+
+  const status = await fetchJson(
+    `${apiUrl}/api/coding/daemon-pairings/${encodeURIComponent(created.json.pairingId)}`
+  );
+  if (status.json.status !== "claimed" || status.json.device?.daemonId !== daemonId) {
+    fail("daemon pairing status did not expose the claimed device summary.");
+  }
+
+  const duplicate = await fetch(`${apiUrl}/api/coding/daemon-pairings/claim`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({
+      code: created.json.code,
+      daemonId,
+      machineName: "browser-smoke",
+      platform: process.platform
+    }),
+    signal: AbortSignal.timeout(8_000)
+  });
+  if (duplicate.status !== 409) {
+    fail(`daemon pairing code was reusable; received HTTP ${duplicate.status}.`);
+  }
+  log("daemon one-time pairing API passed");
+}
+
 async function main() {
   await ensureServers();
   try {
 
   const { json: health } = await fetchJson(`${apiUrl}/health`);
   if (health.status !== "ok") fail("/health did not return ok.");
+  await verifyDaemonPairingApi();
 
   const { body: pageHtml } = await fetchText(webUrl);
   if (!pageHtml.includes("SeekDesk")) fail("web page did not render SeekDesk shell.");

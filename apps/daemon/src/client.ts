@@ -1,13 +1,13 @@
 import process from "node:process";
-import { setTimeout as delay } from "node:timers/promises";
-
 import { RuntimeError } from "@seekdesk/runtime-core";
 import {
   codingToolNameSchema,
   daemonRequestMessageSchema,
+  daemonServerMessageSchema,
   type CodingWorkspaceBrowseInput,
   type CodingWorkspaceSelectInput,
-  type DaemonRequestMessage
+  type DaemonRequestMessage,
+  type DaemonWorkspace
 } from "@seekdesk/shared";
 
 import { DaemonLocalRuntime, DaemonRuntimeError } from "./local-runtime.js";
@@ -18,32 +18,86 @@ export interface DaemonClientOptions {
   workspaceRoot: string;
   daemonId?: string;
   reconnect?: boolean;
+  reconnectDelayMs?: number;
+  signal?: AbortSignal;
+  onStatus?: (status: DaemonClientStatus) => void;
+}
+
+export type DaemonClientPhase =
+  | "connecting"
+  | "connected"
+  | "reconnecting"
+  | "error"
+  | "stopped";
+
+export interface DaemonClientStatus {
+  phase: DaemonClientPhase;
+  attempt: number;
+  message?: string;
+  workspace?: DaemonWorkspace;
 }
 
 export async function startDaemonClient(options: DaemonClientOptions) {
   const runtime = new DaemonLocalRuntime(options.workspaceRoot, options.daemonId);
   const url = createDaemonWebSocketUrl(options.apiUrl);
   const reconnect = options.reconnect ?? true;
+  const reconnectDelayMs = options.reconnectDelayMs ?? 1500;
+  let attempt = 0;
 
   for (;;) {
-    try {
-      await runDaemonSocket({ url, token: options.token, runtime });
-    } catch (error) {
-      console.error("[seekdesk-daemon] connection failed:", formatUnknownError(error));
-    }
-    if (!reconnect) {
+    if (options.signal?.aborted) {
+      emitStatus(options, { phase: "stopped", attempt });
       return;
     }
-    await delay(1500);
+    attempt += 1;
+    emitStatus(options, {
+      phase: attempt === 1 ? "connecting" : "reconnecting",
+      attempt
+    });
+    try {
+      await runDaemonSocket({
+        url,
+        token: options.token,
+        runtime,
+        attempt,
+        ...(options.signal ? { signal: options.signal } : {}),
+        ...(options.onStatus ? { onStatus: options.onStatus } : {})
+      });
+    } catch (error) {
+      const message = formatUnknownError(error);
+      emitStatus(options, { phase: "error", attempt, message });
+      console.error("[seekdesk-daemon] connection failed:", message);
+    }
+    if (options.signal?.aborted || !reconnect) {
+      emitStatus(options, { phase: "stopped", attempt });
+      return;
+    }
+    emitStatus(options, { phase: "reconnecting", attempt });
+    await waitForReconnect(reconnectDelayMs, options.signal);
   }
 }
 
-function runDaemonSocket(input: { url: string; token: string; runtime: DaemonLocalRuntime }) {
+function runDaemonSocket(input: {
+  url: string;
+  token: string;
+  runtime: DaemonLocalRuntime;
+  signal?: AbortSignal;
+  attempt: number;
+  onStatus?: (status: DaemonClientStatus) => void;
+}) {
   return new Promise<void>((resolve, reject) => {
+    if (input.signal?.aborted) {
+      resolve();
+      return;
+    }
     const socket = new WebSocket(input.url);
     const requests = new Map<string, AbortController>();
     let heartbeat: ReturnType<typeof setInterval> | null = null;
     let settled = false;
+    const abortSocket = () => {
+      socket.close(1000, "daemon_stopped");
+      finish();
+    };
 
     const finish = (error?: unknown) => {
       if (heartbeat) {
@@ -54,6 +108,7 @@ function runDaemonSocket(input: { url: string; token: string; runtime: DaemonLoc
         controller.abort("socket_closed");
       }
       requests.clear();
+      input.signal?.removeEventListener("abort", abortSocket);
       if (settled) {
         return;
       }
@@ -64,6 +119,8 @@ function runDaemonSocket(input: { url: string; token: string; runtime: DaemonLoc
         resolve();
       }
     };
+
+    input.signal?.addEventListener("abort", abortSocket, { once: true });
 
     socket.addEventListener("open", () => {
       socket.send(JSON.stringify({
@@ -79,7 +136,17 @@ function runDaemonSocket(input: { url: string; token: string; runtime: DaemonLoc
     });
 
     socket.addEventListener("message", (event) => {
-      void handleMessage(socket, input.runtime, requests, String(event.data));
+      void handleMessage(
+        socket,
+        input.runtime,
+        requests,
+        String(event.data),
+        input.attempt,
+        input.onStatus
+      ).catch((error) => {
+        socket.close(1008, "daemon_protocol_error");
+        finish(error);
+      });
     });
     socket.addEventListener("close", () => finish());
     socket.addEventListener("error", () => finish(new Error("WebSocket error")));
@@ -90,11 +157,39 @@ async function handleMessage(
   socket: WebSocket,
   runtime: DaemonLocalRuntime,
   requests: Map<string, AbortController>,
-  rawMessage: string
+  rawMessage: string,
+  attempt: number,
+  onStatus?: (status: DaemonClientStatus) => void
 ) {
+  let serverMessage: ReturnType<typeof daemonServerMessageSchema.parse>;
+  try {
+    serverMessage = daemonServerMessageSchema.parse(JSON.parse(rawMessage));
+  } catch (error) {
+    sendResponse(socket, "unknown", false, undefined, {
+      code: "invalid_request",
+      message: formatUnknownError(error)
+    });
+    return;
+  }
+
+  if (serverMessage.type === "daemon.ready") {
+    return;
+  }
+  if (serverMessage.type === "daemon.registered") {
+    onStatus?.({
+      phase: "connected",
+      attempt,
+      workspace: serverMessage.workspace
+    });
+    return;
+  }
+  if (serverMessage.type === "daemon.error") {
+    throw new Error(serverMessage.error);
+  }
+
   let request: DaemonRequestMessage;
   try {
-    request = daemonRequestMessageSchema.parse(JSON.parse(rawMessage));
+    request = daemonRequestMessageSchema.parse(serverMessage);
   } catch (error) {
     sendResponse(socket, "unknown", false, undefined, {
       code: "invalid_request",
@@ -205,12 +300,33 @@ function cancellationError(reason: unknown, requestId: string) {
   );
 }
 
-function createDaemonWebSocketUrl(apiUrl: string) {
+export function createDaemonWebSocketUrl(apiUrl: string) {
   const url = new URL(apiUrl);
   url.protocol = url.protocol === "https:" ? "wss:" : "ws:";
   url.pathname = "/ws/daemon";
   url.search = "";
   return url.toString();
+}
+
+function emitStatus(options: DaemonClientOptions, status: DaemonClientStatus) {
+  options.onStatus?.(status);
+}
+
+function waitForReconnect(delayMs: number, signal?: AbortSignal) {
+  return new Promise<void>((resolve) => {
+    if (signal?.aborted) {
+      resolve();
+      return;
+    }
+    const timer = setTimeout(finish, delayMs);
+    const onAbort = () => finish();
+    signal?.addEventListener("abort", onAbort, { once: true });
+    function finish() {
+      clearTimeout(timer);
+      signal?.removeEventListener("abort", onAbort);
+      resolve();
+    }
+  });
 }
 
 function formatDaemonError(error: unknown) {

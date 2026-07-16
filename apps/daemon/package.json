@@ -3,12 +3,15 @@
   "version": "0.1.0",
   "private": true,
   "type": "module",
-  "main": "./dist/cli.js",
+  "main": ".vite/main/main.js",
   "bin": {
     "seekdesk-daemon": "./dist/cli.js"
   },
   "scripts": {
     "dev": "tsx --conditions=development src/cli.ts",
+    "desktop:dev": "electron-forge start",
+    "desktop:package": "electron-forge package",
+    "desktop:make": "electron-forge make",
     "build": "tsc -p tsconfig.build.json",
     "typecheck": "tsc --noEmit -p tsconfig.json",
     "lint": "eslint . --max-warnings=0",
@@ -17,6 +20,18 @@
   },
   "dependencies": {
     "@seekdesk/runtime-core": "0.1.0",
-    "@seekdesk/shared": "0.1.0"
+    "@seekdesk/shared": "0.1.0",
+    "electron-squirrel-startup": "^1.0.1"
+  },
+  "devDependencies": {
+    "@electron-forge/cli": "^7.11.2",
+    "@electron-forge/maker-dmg": "^7.11.2",
+    "@electron-forge/maker-squirrel": "^7.11.2",
+    "@electron-forge/maker-zip": "^7.11.2",
+    "@electron-forge/plugin-fuses": "^7.11.2",
+    "@electron-forge/plugin-vite": "^7.11.2",
+    "@electron/fuses": "^1.8.0",
+    "electron": "^43.1.1",
+    "vite": "^8.1.5"
   }
 }
